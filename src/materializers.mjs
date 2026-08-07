@@ -17,7 +17,7 @@ export const MATERIALIZER_EXCEPTIONS = [{
 }];
 
 export async function selectedMaterializerExceptions(profile) {
-  const capabilitiesPath = profile?.catalogs?.capabilitiesPath;
+  const capabilitiesPath = profile?.catalog?.capabilities;
   if (!capabilitiesPath) return [];
   const declared = new Set();
   const text = await fs.readFile(capabilitiesPath, 'utf8');
