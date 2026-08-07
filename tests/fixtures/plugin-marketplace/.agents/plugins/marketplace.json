@@ -1,0 +1,19 @@
+{
+  "name": "fixture-marketplace",
+  "plugins": [
+    {
+      "name": "fixture-plugin",
+      "source": {
+        "source": "local",
+        "path": "./plugins/fixture-plugin"
+      }
+    },
+    {
+      "name": "unmanaged-plugin",
+      "source": {
+        "source": "local",
+        "path": "./plugins/unmanaged-plugin"
+      }
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+# host	target	sha256	source-commit
+codex	.codex/agents/pac-reviewer.toml	2c407f54ea2c5518023ead9e1f209784bdabe4ce6e579e360f47ae4f46ce9304	c135dfb0107cd6ea9dea266b5dd4a318498f0517
+claude	.claude/agents/pac-reviewer.md	2a60dea112fae4605457dc62291b1d129df6a3981ffb59196e627814b60c8d74	c135dfb0107cd6ea9dea266b5dd4a318498f0517

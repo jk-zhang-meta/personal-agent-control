@@ -1,0 +1,12 @@
+{{- $agents := env "PAC_AGENTS" | default "codex,claude" -}}
+{{- if not (or (eq $agents "codex") (eq $agents "claude") (eq $agents "codex,claude") (eq $agents "claude,codex")) -}}
+{{- fail "PAC_AGENTS must be codex, claude, or codex,claude" -}}
+{{- end -}}
+cacheDir = {{ joinPath (dir .chezmoi.configFile) "cache" | quote }}
+persistentState = {{ joinPath (dir .chezmoi.configFile) "state.boltdb" | quote }}
+umask = 63
+
+[data.pac]
+agents = {{ $agents | quote }}
+codex = {{ contains "codex" $agents }}
+claude = {{ contains "claude" $agents }}

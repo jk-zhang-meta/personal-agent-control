@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+script=$0
+while [ -L "$script" ]; do
+    if [ -x /usr/bin/readlink ]; then
+        link=$(/usr/bin/readlink "$script")
+    else
+        link=$(/bin/readlink "$script")
+    fi
+    case "$link" in
+        /*) script=$link ;;
+        *)
+            script_dir=${script%/*}
+            [ "$script_dir" != "$script" ] || script_dir=.
+            script=$script_dir/$link
+            ;;
+    esac
+done
+script_dir=${script%/*}
+[ "$script_dir" != "$script" ] || script_dir=.
+root=$(unset CDPATH; cd -- "$script_dir/.." && pwd -P)
+
+if [ -n "${PAC_NODE:-}" ]; then
+    exec "$PAC_NODE" "$root/src/entry.mjs" "$@"
+fi
+mise=${PAC_MISE:-${HOME:?HOME is required}/.local/bin/mise}
+if [ -x "$mise" ]; then
+    exec "$mise" --cd "$root" exec -- node "$root/src/entry.mjs" "$@"
+fi
+exec node "$root/src/entry.mjs" "$@"

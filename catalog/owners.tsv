@@ -1,0 +1,30 @@
+# target-pattern	owner	policy
+~/.codex/AGENTS.md	chezmoi	generated Codex global instructions
+~/.codex/agents/independent-reviewer.toml	chezmoi	generated Codex reviewer definition
+~/.codex/agents/pac-reviewer.toml	chezmoi-migration	backup-before-retire legacy Codex reviewer; later reappearance blocks
+~/.claude/CLAUDE.md	chezmoi	generated Claude global instructions
+~/.claude/agents/independent-reviewer.md	chezmoi	generated Claude reviewer definition
+~/.claude/agents/pac-reviewer.md	chezmoi-migration	backup-before-retire legacy Claude reviewer; later reappearance blocks
+~/.local/share/agent-skills/.agents/skills/<catalogued-name>	personal-agent-control	physical Skill lifecycle; APM manages 20 packages and Vercel Skills only the PPT exception
+~/.local/share/agent-skills/apm.lock.yaml	apm	deployed package identities and per-file runtime hashes under PAC transaction control
+~/.local/share/agent-skills/apm_modules/**	apm	APM package deployment state under PAC transaction control
+~/.agents/skills/<catalogued-name>	personal-agent-control	filtered Codex symlink projection
+~/.claude/skills/<catalogued-name>	personal-agent-control	filtered Claude symlink projection
+~/.codex/skills/<catalogued-name>	forbidden	legacy duplicate location; Codex uses the filtered .agents view
+~/.local/bin/mise	chezmoi	pinned platform binary
+~/.local/bin/pac	chezmoi	portable launcher into the canonical PAC source and pinned mise graph
+~/.local/share/agent-skills/.local/state/skills/.skill-lock.json	vercel-skills	derived source lock for the sole PPT materializer exception; not canonical desired state
+~/.local/state/personal-agent-control/owned-skills.txt	personal-agent-control	prior ownership manifest for safe retirement
+~/.local/state/personal-agent-control/external-skills.json	personal-agent-control	legacy pre-APM state retained only so old snapshots remain recoverable
+~/.local/share/agent-plugins/sources/<marketplace>	personal-agent-control	one pinned source checkout per managed native marketplace
+~/.local/state/personal-agent-control/owned-plugins.tsv	personal-agent-control	per-host Plugin ownership used for safe reconciliation and retirement
+~/.local/state/personal-agent-control/migrations/<plugin-marker>-<host>	personal-agent-control	one-time distribution migration proof
+~/.local/state/personal-agent-control/migrations/independent-reviewer-codex-v1	chezmoi-migration	one-time Codex reviewer rename state
+~/.local/state/personal-agent-control/migrations/independent-reviewer-claude-v1	chezmoi-migration	one-time Claude reviewer rename state
+~/.local/state/personal-agent-control/migrations/neutral-skill-store-v1	chezmoi-migration	one-time physical Skill-store migration state
+~/.cache/personal-agent-control/capabilities-v1.sqlite	personal-agent-control	derived capability index; atomically rebuilt from catalog source and excluded from backup
+~/.cache/personal-agent-control/capabilities-v1.sqlite-journal	personal-agent-control	transient SQLite journal for the derived capability index; excluded from backup and invalidated on restore
+~/.cache/personal-agent-control/capabilities-v1.sqlite-wal	personal-agent-control	transient SQLite WAL for the derived capability index; excluded from backup and invalidated on restore
+~/.cache/personal-agent-control/capabilities-v1.sqlite-shm	personal-agent-control	transient SQLite shared-memory sidecar for the derived capability index; excluded from backup and invalidated on restore
+~/.local/share/mise/**	mise	shared machine-level tool installs and shims
+agent-auth-session-plugin-cache	host-native	auth and sessions stay native; Plugin registration and cache are reconciled from the PAC catalog but never vendored

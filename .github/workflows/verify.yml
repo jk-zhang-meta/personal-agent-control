@@ -1,0 +1,55 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    env:
+      MISE_LOCKED: "1"
+      MISE_PARANOID: "1"
+    steps:
+      - name: Check out the reviewed source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install the pinned shared tool graph
+        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db
+        with:
+          version: 2026.8.2
+          install: false
+          cache: true
+
+      - name: Install the pinned shared tool graph
+        shell: bash
+        run: |
+          mise trust --yes "$GITHUB_WORKSPACE/mise.toml"
+          mise install 'aqua:astral-sh/uv@0.12.1' --locked --yes
+          mise install --locked --yes
+
+      - name: Install pinned Chezmoi for the deployment fixture
+        shell: bash
+        run: |
+          sh -c "$(curl -fsLS https://get.chezmoi.io)" -- \
+            -b "$RUNNER_TEMP/bin" -t v2.72.0
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Static, integrity, compiler, and secret checks
+        run: mise run check
+
+      - name: Isolated deployment, deduplication, and recovery test
+        env:
+          CHEZMOI_BIN: ${{ runner.temp }}/bin/chezmoi
+          PAC_TEST_MISE_DATA_DIR: ${{ runner.tool_cache }}/pac-mise-data
+          PAC_TEST_MISE_CACHE_DIR: ${{ runner.temp }}/pac-mise-cache
+          PAC_TEST_MISE_STATE_DIR: ${{ runner.temp }}/pac-mise-state
+        run: mise run test-install

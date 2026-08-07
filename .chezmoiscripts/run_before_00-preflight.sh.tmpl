@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+{{ $selection := includeTemplate "pac-host-selection.json.tmpl" . | fromJson -}}
+home={{ .chezmoi.destDir | quote }}
+codex={{ $selection.codex | quote }}
+
+for command_name in git curl tar; do
+    command -v "$command_name" >/dev/null 2>&1 || {
+        echo "Personal Agent Control: bootstrap prerequisite is missing: $command_name" >&2
+        exit 1
+    }
+done
+
+if [ "$codex" = "true" ] && [ -s "$home/.codex/AGENTS.override.md" ]; then
+    echo "Personal Agent Control: non-empty $home/.codex/AGENTS.override.md would shadow the managed file" >&2
+    exit 1
+fi

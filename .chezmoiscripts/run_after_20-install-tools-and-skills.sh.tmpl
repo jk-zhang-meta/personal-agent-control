@@ -1,0 +1,359 @@
+#!/bin/sh
+set -eu
+
+{{ $selection := includeTemplate "pac-host-selection.json.tmpl" . | fromJson -}}
+home={{ .chezmoi.destDir | quote }}
+source_dir={{ .chezmoi.sourceDir | quote }}
+agents={{ $selection.agents | quote }}
+codex={{ $selection.codex | quote }}
+claude={{ $selection.claude | quote }}
+mise="$home/.local/bin/mise"
+pac_source="$source_dir/bin/pac"
+pac_link="$home/.local/bin/pac"
+# shellcheck source=/dev/null
+. "$source_dir/scripts/path-safety.sh"
+
+state="$home/.local/state/personal-agent-control"
+migrations="$state/migrations"
+backup_root="$home/.agent-work/backups/personal-agent-control"
+transaction="$state/chezmoi-transaction-$PPID"
+outer_lock="$state/pac.lock"
+outer_backup=
+outer_token=
+inner_restored=false
+pac_result=
+migration_tmp=
+
+if [ -e "$transaction" ] || [ -L "$transaction" ]; then
+    [ -f "$transaction" ] && [ ! -L "$transaction" ] || {
+        echo "unsafe PAC Chezmoi transaction marker: $transaction" >&2
+        exit 1
+    }
+    outer_backup=$(sed -n '1p' "$transaction")
+    outer_token=$(sed -n '2p' "$transaction")
+    [ -n "$outer_backup" ] && \
+        [ -n "$outer_token" ] && \
+        [ "$(wc -l < "$transaction" | tr -d ' ')" = 2 ] || {
+        echo "invalid PAC Chezmoi transaction marker: $transaction" >&2
+        exit 1
+    }
+    case "$outer_token" in *[!A-Za-z0-9]*|'')
+        echo "invalid PAC Chezmoi transaction token" >&2
+        exit 1
+        ;;
+    esac
+    case "$outer_backup" in "$backup_root/"*) ;; *)
+        echo "PAC Chezmoi transaction points outside $backup_root" >&2
+        exit 1
+        ;;
+    esac
+    if ! { [ -f "$state/last-backup" ] && \
+        [ ! -L "$state/last-backup" ] && \
+        [ "$(wc -l < "$state/last-backup" | tr -d ' ')" = 1 ] && \
+        [ "$(sed -n '1p' "$state/last-backup")" = "$outer_backup" ]; }; then
+        echo "PAC Chezmoi transaction does not own last-backup" >&2
+        exit 1
+    fi
+    HOME="$home" "$source_dir/scripts/restore-backup.sh" \
+        --validate "$outer_backup" >/dev/null
+    if ! { [ -d "$outer_lock" ] && [ ! -L "$outer_lock" ] && \
+        [ -f "$outer_lock/owner.json" ] && [ ! -L "$outer_lock/owner.json" ] && \
+        grep -Fq "\"token\":\"$outer_token\"" "$outer_lock/owner.json" && \
+        grep -Fq "\"pid\":$PPID," "$outer_lock/owner.json" && \
+        grep -Fq '"kind":"chezmoi-outer"' "$outer_lock/owner.json"; }; then
+        echo "PAC Chezmoi transaction does not own the PAC lock" >&2
+        exit 1
+    fi
+else
+    echo "missing PAC Chezmoi outer transaction: $transaction" >&2
+    exit 1
+fi
+
+release_outer_lock() {
+    [ -n "$outer_token" ] || return 0
+    if ! { [ -d "$outer_lock" ] && [ ! -L "$outer_lock" ] && \
+        [ -f "$outer_lock/owner.json" ] && [ ! -L "$outer_lock/owner.json" ] && \
+        grep -Fq "\"token\":\"$outer_token\"" "$outer_lock/owner.json" && \
+        grep -Fq '"kind":"chezmoi-outer"' "$outer_lock/owner.json"; }; then
+        echo "refusing to release a PAC lock with changed ownership: $outer_lock" >&2
+        return 1
+    fi
+    quarantine="$state/.pac.lock.release-$outer_token"
+    [ ! -e "$quarantine" ] && [ ! -L "$quarantine" ] || {
+        echo "PAC lock release quarantine already exists: $quarantine" >&2
+        return 1
+    }
+    mv -- "$outer_lock" "$quarantine"
+    rm -rf -- "$quarantine"
+}
+
+finish_transaction() {
+    result=$?
+    transaction_safe=true
+    trap - EXIT HUP INT TERM
+    if [ -n "$outer_backup" ] && [ "$result" -ne 0 ] && \
+        [ "$inner_restored" != true ]; then
+        if ! HOME="$home" "$source_dir/scripts/restore-backup.sh" \
+            "$outer_backup" >&2; then
+            echo "PAC outer Chezmoi rollback also failed: $outer_backup" >&2
+            result=1
+            transaction_safe=false
+        fi
+    fi
+    [ -z "${pac_result:-}" ] || rm -f -- "$pac_result"
+    [ -z "${migration_tmp:-}" ] || rm -f -- "$migration_tmp"
+    if [ -n "$outer_backup" ] && [ "$transaction_safe" = true ]; then
+        if release_outer_lock; then
+            rm -f -- "$transaction.claim" "$transaction"
+        else
+            echo "PAC outer transaction state was retained for explicit recovery" >&2
+            result=1
+        fi
+    elif [ -n "$outer_backup" ]; then
+        echo "PAC outer transaction state was retained for explicit recovery" >&2
+    fi
+    exit "$result"
+}
+trap finish_transaction EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+[ -x "$mise" ] || {
+    echo "Personal Agent Control: pinned mise binary is missing at $mise" >&2
+    exit 1
+}
+[ -x "$pac_source" ] || {
+    echo "Personal Agent Control: PAC launcher is missing at $pac_source" >&2
+    exit 1
+}
+
+pac_assert_safe_ancestors "$home" \
+    ".local/state/personal-agent-control/migrations/.guard" "PAC migration state"
+mkdir -p "$migrations"
+pac_assert_real_directory "$migrations" "PAC migration state"
+
+legacy_backup_matches() {
+    rel=$1
+    target=$2
+    [ -f "$state/last-backup" ] && [ ! -L "$state/last-backup" ] || return 1
+    saved=$(sed -n '1p' "$state/last-backup")
+    case "$saved" in "$backup_root/"*) ;; *) return 1 ;; esac
+    [ -d "$saved/home" ] && [ ! -L "$saved/home" ] || return 1
+    [ -f "$saved/managed-paths.txt" ] && [ ! -L "$saved/managed-paths.txt" ] || return 1
+    grep -Fqx "$rel" "$saved/managed-paths.txt" || return 1
+    [ -f "$saved/home/$rel" ] && [ ! -L "$saved/home/$rel" ] || return 1
+    cmp -s "$target" "$saved/home/$rel"
+}
+
+sha256_file() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
+    else
+        echo "no SHA-256 tool is available for legacy reviewer validation" >&2
+        return 1
+    fi
+}
+
+legacy_catalog="$source_dir/catalog/legacy-reviewers.tsv"
+pac_assert_safe_ancestors "$source_dir" "catalog/legacy-reviewers.tsv" \
+    "legacy reviewer catalog"
+[ -f "$legacy_catalog" ] && [ ! -L "$legacy_catalog" ] || {
+    echo "unsafe legacy reviewer catalog: $legacy_catalog" >&2
+    exit 1
+}
+expected_header=$(printf '# host\ttarget\tsha256\tsource-commit')
+[ "$(sed -n '1p' "$legacy_catalog")" = "$expected_header" ] || {
+    echo "invalid legacy reviewer catalog header" >&2
+    exit 1
+}
+seen_codex=false
+seen_claude=false
+while IFS="$(printf '\t')" read -r host target digest commit extra; do
+    case "$host" in ''|'#'*) continue ;; esac
+    [ -z "${extra:-}" ] || { echo "invalid legacy reviewer catalog row" >&2; exit 1; }
+    case "$host:$target" in
+        codex:.codex/agents/pac-reviewer.toml)
+            [ "$seen_codex" = false ] || { echo "duplicate Codex legacy reviewer" >&2; exit 1; }
+            seen_codex=true
+            ;;
+        claude:.claude/agents/pac-reviewer.md)
+            [ "$seen_claude" = false ] || { echo "duplicate Claude legacy reviewer" >&2; exit 1; }
+            seen_claude=true
+            ;;
+        *) echo "invalid legacy reviewer identity: $host:$target" >&2; exit 1 ;;
+    esac
+    case "$digest" in *[!0-9a-f]*|'') echo "invalid legacy reviewer digest" >&2; exit 1 ;; esac
+    [ "${#digest}" -eq 64 ] || { echo "invalid legacy reviewer digest length" >&2; exit 1; }
+    case "$commit" in *[!0-9a-f]*|'') echo "invalid legacy reviewer source commit" >&2; exit 1 ;; esac
+    [ "${#commit}" -eq 40 ] || { echo "invalid legacy reviewer source commit length" >&2; exit 1; }
+done < "$legacy_catalog"
+[ "$seen_codex" = true ] && [ "$seen_claude" = true ] || {
+    echo "incomplete legacy reviewer catalog" >&2
+    exit 1
+}
+
+migrate_reviewer() {
+    rel=$1
+    marker_name=$2
+    expected_digest=$3
+    target="$home/$rel"
+    marker="$migrations/$marker_name"
+    pac_assert_safe_ancestors "$home" "$rel" "legacy reviewer"
+    [ ! -L "$marker" ] || { echo "unsafe migration marker: $marker" >&2; exit 1; }
+    if [ -f "$marker" ]; then
+        if [ -e "$target" ] || [ -L "$target" ]; then
+            echo "legacy reviewer reappeared; preserving it: $target" >&2
+            exit 1
+        fi
+        return
+    fi
+    [ ! -e "$marker" ] || { echo "invalid migration marker: $marker" >&2; exit 1; }
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        [ -f "$target" ] && [ ! -L "$target" ] || {
+            echo "refusing unsafe legacy reviewer: $target" >&2
+            exit 1
+        }
+        legacy_backup_matches "$rel" "$target" || {
+            echo "legacy reviewer lacks a byte-identical backup: $target" >&2
+            exit 1
+        }
+        actual_digest=$(sha256_file "$target")
+        [ "$actual_digest" = "$expected_digest" ] || {
+            echo "legacy reviewer is not a known PAC-owned version; preserving it: $target" >&2
+            exit 1
+        }
+        rm -f -- "$target"
+    fi
+    migration_tmp=$(mktemp "$migrations/.${marker_name}.XXXXXX")
+    printf 'replacement=independent-reviewer\n' > "$migration_tmp"
+    chmod 600 "$migration_tmp"
+    mv -f -- "$migration_tmp" "$marker"
+    migration_tmp=
+}
+
+codex_legacy_digest=$(awk -F '\t' '$1 == "codex" { print $3 }' "$legacy_catalog")
+claude_legacy_digest=$(awk -F '\t' '$1 == "claude" { print $3 }' "$legacy_catalog")
+[ "$codex" != true ] || migrate_reviewer \
+    .codex/agents/pac-reviewer.toml independent-reviewer-codex-v1 \
+    "$codex_legacy_digest"
+[ "$claude" != true ] || migrate_reviewer \
+    .claude/agents/pac-reviewer.md independent-reviewer-claude-v1 \
+    "$claude_legacy_digest"
+
+run_mise() {
+    env \
+        HOME="$home" \
+        XDG_CONFIG_HOME="$home/.config" \
+        XDG_DATA_HOME="$home/.local/share" \
+        XDG_CACHE_HOME="$home/.cache" \
+        XDG_STATE_HOME="$home/.local/state" \
+        "$mise" --cd "$source_dir" "$@"
+}
+
+run_mise trust --yes "$source_dir/mise.toml"
+# mise's pipx backend needs uv before it can install the locked graph.
+MISE_PARANOID=1 MISE_LOCKED=1 \
+    run_mise install 'aqua:astral-sh/uv@0.12.1' --locked --yes
+MISE_PARANOID=1 MISE_LOCKED=1 run_mise install --locked --yes
+
+pac_assert_safe_ancestors "$home" ".local/bin/pac" "PAC launcher"
+mkdir -p "$home/.local/bin"
+pac_assert_real_directory "$home/.local/bin" "user executable directory"
+if [ -L "$pac_link" ]; then
+    [ "$(readlink "$pac_link")" = "$pac_source" ] || {
+        echo "unmanaged PAC launcher link is preserved: $pac_link" >&2
+        exit 1
+    }
+elif [ -e "$pac_link" ]; then
+    echo "unmanaged PAC launcher is preserved: $pac_link" >&2
+    exit 1
+else
+    ln -s "$pac_source" "$pac_link"
+fi
+
+case "$agents" in
+    codex)
+        enabled_hosts='    "codex"'
+        ;;
+    claude)
+        enabled_hosts='    "claude"'
+        ;;
+    codex,claude)
+        enabled_hosts='    "codex",
+    "claude"'
+        ;;
+    '')
+        enabled_hosts=
+        ;;
+    *) echo "invalid effective host selection: $agents" >&2; exit 2 ;;
+esac
+
+machine_rel=.config/personal-agent-control/machine.json
+machine_config="$home/$machine_rel"
+pac_assert_safe_ancestors "$home" "$machine_rel" "PAC machine profile"
+if [ -L "$machine_config" ]; then
+    echo "unsafe PAC machine profile: $machine_config" >&2
+    exit 1
+elif [ -e "$machine_config" ]; then
+    [ -f "$machine_config" ] || {
+        echo "invalid PAC machine profile: $machine_config" >&2
+        exit 1
+    }
+else
+    machine_dir=${machine_config%/*}
+    mkdir -p "$machine_dir"
+    pac_assert_real_directory "$machine_dir" "PAC machine profile directory"
+    machine_tmp=$(mktemp "$machine_dir/.machine.json.XXXXXX")
+    printf '{\n  "schemaVersion": 1,\n  "enabledHosts": [\n%s\n  ]\n}\n' \
+        "$enabled_hosts" > "$machine_tmp"
+    chmod 600 "$machine_tmp"
+    if ! ln "$machine_tmp" "$machine_config"; then
+        rm -f -- "$machine_tmp"
+        echo "PAC machine profile appeared during installation: $machine_config" >&2
+        exit 1
+    fi
+    rm -f -- "$machine_tmp"
+fi
+
+# PAC reads the validated machine profile without the stale first-install
+# seed.  When a Chezmoi outer snapshot exists, PAC consumes it as the one
+# transaction backup and keeps its mutation lock held through rollback.
+pac_result=$(mktemp "${TMPDIR:-/tmp}/pac-chezmoi-apply.XXXXXX")
+run_pac_apply() {
+    if [ -n "$outer_backup" ]; then
+        HOME="$home" PAC_ROOT="$source_dir" \
+            PAC_HOST_ADAPTER_MODE="${PAC_HOST_ADAPTER_MODE:-adopt}" \
+            PAC_PRECREATED_BACKUP="$outer_backup" \
+            PAC_CHEZMOI_TRANSACTION="$transaction" \
+            PAC_CHEZMOI_TOKEN="$outer_token" \
+            "$pac_link" --json --home "$home" apply
+    else
+        HOME="$home" PAC_ROOT="$source_dir" \
+            PAC_HOST_ADAPTER_MODE="${PAC_HOST_ADAPTER_MODE:-adopt}" \
+            "$pac_link" --json --home "$home" apply
+    fi
+}
+if run_pac_apply > "$pac_result"; then
+    :
+else
+    pac_exit=$?
+    cat "$pac_result" >&2
+    if [ -n "$outer_backup" ] && run_mise exec -- node - \
+        "$pac_result" "$outer_backup" <<'NODE'
+const fs = require('node:fs');
+const [file, backup] = process.argv.slice(2);
+const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+const rollback = value.error?.details?.rollback;
+if (!rollback?.succeeded || rollback.backup !== backup) process.exit(1);
+NODE
+    then
+        inner_restored=true
+    fi
+    exit "$pac_exit"
+fi
+echo "Personal Agent Control installed and verified for $agents"

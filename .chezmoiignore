@@ -1,0 +1,22 @@
+{{- $selection := includeTemplate "pac-host-selection.json.tmpl" . | fromJson -}}
+README.md
+bin
+catalog
+docs
+generated
+packages
+pac.json
+payload
+scripts
+src
+tests
+tooling
+mise.toml
+mise.lock
+rulesync.jsonc
+{{ if not $selection.codex }}
+.codex
+{{ end }}
+{{ if not $selection.claude }}
+.claude
+{{ end }}

@@ -1,0 +1,412 @@
+#!/bin/sh
+set -eu
+
+# Desired rules: {{ include "generated/codex/AGENTS.md" | sha256sum }}
+# Desired Claude rules: {{ include "generated/claude/CLAUDE.md" | sha256sum }}
+# Desired reviewer: {{ include "generated/codex/agents/independent-reviewer.toml" | sha256sum }}
+# Desired Claude reviewer: {{ include "generated/claude/agents/independent-reviewer.md" | sha256sum }}
+# Desired APM manifest: {{ include "packages/skills/apm.yml" | sha256sum }}
+# Desired APM lock: {{ include "packages/skills/apm.lock.yaml" | sha256sum }}
+# Desired Plugins: {{ include "catalog/plugins.tsv" | sha256sum }}
+# Desired Plugin migrations: {{ include "catalog/plugin-migrations.tsv" | sha256sum }}
+# Known legacy reviewers: {{ include "catalog/legacy-reviewers.tsv" | sha256sum }}
+
+{{ $selection := includeTemplate "pac-host-selection.json.tmpl" . | fromJson -}}
+home={{ .chezmoi.destDir | quote }}
+source_dir={{ .chezmoi.sourceDir | quote }}
+chezmoi={{ .chezmoi.executable | quote }}
+agents={{ $selection.agents | quote }}
+codex={{ $selection.codex | quote }}
+claude={{ $selection.claude | quote }}
+# shellcheck source=/dev/null
+. "$source_dir/scripts/path-safety.sh"
+
+umask 077
+stamp=$(date -u '+%Y%m%dT%H%M%SZ')
+backup_root="$home/.agent-work/backups/personal-agent-control"
+backup="$backup_root/$stamp-$$"
+state="$home/.local/state/personal-agent-control"
+manifest="$backup/managed-paths.txt"
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/pac-backup.XXXXXX")
+paths="$tmp/paths.tsv"
+paths_sorted="$tmp/paths-sorted.tsv"
+last_backup_tmp=
+transaction_tmp=
+transaction_rel=".local/state/personal-agent-control/chezmoi-transaction-$PPID"
+transaction="$home/$transaction_rel"
+lock="$state/pac.lock"
+outer_token=
+committed=false
+backup_owned=false
+transaction_owned=false
+lock_owned=false
+state_created=false
+cleanup() {
+    rm -rf -- "$tmp"
+    [ -z "${last_backup_tmp:-}" ] || rm -f -- "$last_backup_tmp"
+    [ -z "${transaction_tmp:-}" ] || rm -f -- "$transaction_tmp"
+    if [ "$committed" != true ]; then
+        [ "$transaction_owned" != true ] || rm -f -- "$transaction"
+        [ "$backup_owned" != true ] || rm -rf -- "$backup"
+        [ "$lock_owned" != true ] || rm -rf -- "$lock"
+        [ "$state_created" != true ] || rmdir "$state" 2>/dev/null || :
+    fi
+}
+trap cleanup EXIT HUP INT TERM
+: > "$paths"
+
+valid_name() {
+    case "$1" in ''|-*|*-|*/*|*[!a-z0-9-]*) return 1 ;; *) return 0 ;; esac
+}
+
+add_path() {
+    printf '%s\t%s\n' "$1" "$2" >> "$paths"
+}
+
+preflight_target() {
+    rel=$1
+    kind=$2
+    target="$home/$rel"
+    pac_assert_safe_ancestors "$home" "$rel" "PAC backup source $rel"
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        case "$kind" in
+            file)
+                [ -f "$target" ] && [ ! -L "$target" ] || {
+                    echo "PAC backup source must be a real regular file: $target" >&2
+                    return 1
+                }
+                ;;
+            directory)
+                [ -d "$target" ] && [ ! -L "$target" ] || {
+                    echo "PAC backup source must be a real directory: $target" >&2
+                    return 1
+                }
+                ;;
+            any)
+                [ -f "$target" ] || [ -d "$target" ] || [ -L "$target" ] || {
+                    echo "PAC backup source has an unsupported object type: $target" >&2
+                    return 1
+                }
+                ;;
+            *) echo "invalid PAC backup object contract: $kind" >&2; return 1 ;;
+        esac
+    fi
+}
+
+# This list mirrors restore-backup.sh.  State is intentionally explicit:
+# pac.lock and receipts are live coordination/derived data, never snapshots.
+add_path .local/bin/pac any
+add_path .local/bin/mise any
+add_path .config/personal-agent-control/machine.json file
+add_path .config/personal-agent-control/profile.json file
+add_path .config/personal-agent-control/profile-bootstrap.md file
+add_path .config/personal-agent-control/state.boltdb file
+add_path .local/share/agent-skills directory
+add_path .local/state/personal-agent-control/last-backup file
+add_path .local/state/personal-agent-control/owned-host-adapters.json file
+add_path .local/state/personal-agent-control/profile-bootstrap.json file
+add_path .local/state/personal-agent-control/owned-skills.txt file
+add_path .local/state/personal-agent-control/owned-skill-map.json file
+add_path .local/state/personal-agent-control/owned-plugins.tsv file
+add_path .local/state/personal-agent-control/external-skills.json file
+add_path .local/state/personal-agent-control/migrations/neutral-skill-store-v1 file
+
+if [ "$codex" = true ]; then
+    add_path .codex/config.toml file
+    add_path .codex/AGENTS.md file
+    add_path .codex/agents/independent-reviewer.toml file
+    add_path .codex/agents/pac-reviewer.toml file
+    add_path .local/state/personal-agent-control/migrations/independent-reviewer-codex-v1 file
+fi
+if [ "$claude" = true ]; then
+    add_path .claude.json file
+    add_path .claude/.claude.json file
+    add_path .claude/settings.json file
+    add_path .claude/plugins/installed_plugins.json file
+    add_path .claude/plugins/known_marketplaces.json file
+    add_path .claude/CLAUDE.md file
+    add_path .claude/agents/independent-reviewer.md file
+    add_path .claude/agents/pac-reviewer.md file
+    add_path .local/state/personal-agent-control/migrations/independent-reviewer-claude-v1 file
+fi
+
+# Validate the fixed inventory before reading ownership files from it.
+while IFS="$(printf '\t')" read -r rel kind; do
+    preflight_target "$rel" "$kind"
+done < "$paths"
+
+if [ -e "$state" ] || [ -L "$state" ]; then
+    pac_assert_real_directory "$state" "PAC state"
+else
+    mkdir -p "$state"
+    state_created=true
+    pac_assert_real_directory "$state" "PAC state"
+fi
+for existing_transaction in "$state"/chezmoi-transaction-*; do
+    if [ -e "$existing_transaction" ] || [ -L "$existing_transaction" ]; then
+        echo "an unresolved PAC Chezmoi transaction requires explicit recovery: $existing_transaction" >&2
+        exit 1
+    fi
+done
+outer_token_file=$(mktemp "$tmp/outer-token.XXXXXX")
+outer_token=${outer_token_file##*.}
+rm -f -- "$outer_token_file"
+case "$outer_token" in ''|*[!A-Za-z0-9]*) echo "invalid outer transaction token" >&2; exit 1 ;; esac
+if ! mkdir "$lock"; then
+    echo "another PAC mutation or Chezmoi transaction is active: $lock" >&2
+    exit 1
+fi
+lock_owned=true
+printf '{"token":"%s","pid":%s,"startedAt":"%s","command":["chezmoi","apply"],"kind":"chezmoi-outer"}\n' \
+    "$outer_token" "$PPID" "$stamp" > "$lock/owner.json"
+chmod 600 "$lock/owner.json"
+
+[ -x "$chezmoi" ] || { echo "Chezmoi executable is unavailable: $chezmoi" >&2; exit 1; }
+selection_json=$(printf '{"pac":{"agents":"%s","codex":%s,"claude":%s}}' \
+    "$agents" "$codex" "$claude")
+"$chezmoi" --source "$source_dir" --destination "$home" --no-tty \
+    --override-data "$selection_json" \
+    --output "$tmp/current-hosts.tsv" execute-template --file \
+    "$source_dir/.chezmoitemplates/pac-host-selection.tsv.tmpl"
+inventory_codex=$codex
+inventory_claude=$claude
+grep -Fqx codex "$tmp/current-hosts.tsv" && inventory_codex=true
+grep -Fqx claude "$tmp/current-hosts.tsv" && inventory_claude=true
+if [ "$inventory_codex" = true ]; then
+    add_path .codex/config.toml file
+    add_path .codex/AGENTS.md file
+    add_path .codex/agents/independent-reviewer.toml file
+    add_path .codex/agents/pac-reviewer.toml file
+    add_path .local/state/personal-agent-control/migrations/independent-reviewer-codex-v1 file
+fi
+if [ "$inventory_claude" = true ]; then
+    add_path .claude.json file
+    add_path .claude/.claude.json file
+    add_path .claude/settings.json file
+    add_path .claude/plugins/installed_plugins.json file
+    add_path .claude/plugins/known_marketplaces.json file
+    add_path .claude/CLAUDE.md file
+    add_path .claude/agents/independent-reviewer.md file
+    add_path .claude/agents/pac-reviewer.md file
+    add_path .local/state/personal-agent-control/migrations/independent-reviewer-claude-v1 file
+fi
+if [ "$inventory_codex" = true ] && [ "$inventory_claude" = true ]; then
+    inventory_agents=codex,claude
+elif [ "$inventory_codex" = true ]; then
+    inventory_agents=codex
+elif [ "$inventory_claude" = true ]; then
+    inventory_agents=claude
+else
+    inventory_agents=
+fi
+
+"$chezmoi" --source "$source_dir" --destination "$home" --no-tty \
+    --override-data "$selection_json" \
+    --output "$tmp/ownership.tsv" execute-template --file \
+    "$source_dir/.chezmoitemplates/pac-owned-cleanup.tsv.tmpl"
+
+managed_projection() {
+    rel=$1
+    physical=$2
+    link="$home/$rel"
+    [ -L "$link" ] || return 1
+    target=$(readlink "$link")
+    case "$target" in
+        "../../.local/share/agent-skills/.agents/skills/$physical"|\
+        "$home/.local/share/agent-skills/.agents/skills/$physical") ;;
+        *) return 1 ;;
+    esac
+}
+
+codex_cleanup=false
+claude_cleanup=false
+awk -F '\t' '$1 == "skill" { print $2 "\t" $3 }' "$tmp/ownership.tsv" > "$tmp/skills"
+while IFS="$(printf '\t')" read -r name physical; do
+    case "$name" in
+        ''|-*|*-|*[!a-z0-9-]*) echo "unsafe Skill name: $name" >&2; exit 1 ;;
+    esac
+    valid_name "$physical" || { echo "unsafe physical Skill name: $physical" >&2; exit 1; }
+    if [ "$inventory_codex" = true ]; then
+        add_path ".agents/skills/$name" any
+    elif managed_projection ".agents/skills/$name" "$physical"; then
+        add_path ".agents/skills/$name" any
+        codex_cleanup=true
+    fi
+    if [ "$inventory_claude" = true ]; then
+        add_path ".claude/skills/$name" any
+    elif managed_projection ".claude/skills/$name" "$physical"; then
+        add_path ".claude/skills/$name" any
+        claude_cleanup=true
+    fi
+done < "$tmp/skills"
+
+while IFS="$(printf '\t')" read -r record host target; do
+    [ "$record" = adapter ] || continue
+    case "$host" in
+        codex)
+            if [ "$inventory_codex" != true ]; then add_path "$target" file; codex_cleanup=true; fi
+            ;;
+        claude)
+            if [ "$inventory_claude" != true ]; then add_path "$target" file; claude_cleanup=true; fi
+            ;;
+        *) echo "unsafe adapter ownership host: $host" >&2; exit 1 ;;
+    esac
+done < "$tmp/ownership.tsv"
+
+plugins_file="$source_dir/catalog/plugins.tsv"
+pac_assert_safe_ancestors "$source_dir" "catalog/plugins.tsv" "Plugin catalog"
+[ -f "$plugins_file" ] && [ ! -L "$plugins_file" ] || {
+    echo "unsafe Plugin catalog: $plugins_file" >&2
+    exit 1
+}
+plugin_migrations="$source_dir/catalog/plugin-migrations.tsv"
+pac_assert_safe_ancestors "$source_dir" "catalog/plugin-migrations.tsv" \
+    "Plugin migration catalog"
+[ -f "$plugin_migrations" ] && [ ! -L "$plugin_migrations" ] || {
+    echo "unsafe Plugin migration catalog: $plugin_migrations" >&2
+    exit 1
+}
+owned_plugins="$state/owned-plugins.tsv"
+if [ -e "$owned_plugins" ] || [ -L "$owned_plugins" ]; then
+    [ -f "$owned_plugins" ] && [ ! -L "$owned_plugins" ] || {
+        echo "unsafe owned Plugin inventory: $owned_plugins" >&2
+        exit 1
+    }
+    while IFS="$(printf '\t')" read -r plugin marketplace targets extra; do
+        case "$plugin" in ''|'#'*) continue ;; esac
+        [ -z "${extra:-}" ] || { echo "invalid owned Plugin inventory" >&2; exit 1; }
+        valid_name "$plugin" || { echo "unsafe owned Plugin: $plugin" >&2; exit 1; }
+        valid_name "$marketplace" || { echo "unsafe owned marketplace: $marketplace" >&2; exit 1; }
+        case "$targets" in
+            codex|claude|codex,claude|claude,codex) ;;
+            *) echo "unsafe owned Plugin targets: $targets" >&2; exit 1 ;;
+        esac
+        case ",$targets," in *,codex,*) [ "$inventory_codex" = true ] || codex_cleanup=true ;; esac
+        case ",$targets," in *,claude,*) [ "$inventory_claude" = true ] || claude_cleanup=true ;; esac
+    done < "$owned_plugins"
+fi
+
+{
+    awk -F '\t' '$0 !~ /^#/ && NF { print $2 "\t" $9 "\tcurrent" }' "$plugins_file"
+    if [ -f "$owned_plugins" ] && [ ! -L "$owned_plugins" ]; then
+        awk -F '\t' '$0 !~ /^#/ && NF { print $2 "\t" $3 "\towned" }' "$owned_plugins"
+    fi
+    awk -F '\t' '$0 !~ /^#/ && NF { print $2 "\t" $3 "\tmigration" }' "$plugin_migrations"
+} | LC_ALL=C sort -u > "$tmp/marketplaces"
+
+while IFS="$(printf '\t')" read -r marketplace targets origin; do
+    case "$marketplace" in
+        ''|-*|*-|*[!a-z0-9-]*)
+            echo "unsafe Plugin marketplace: $marketplace" >&2
+            exit 1
+            ;;
+    esac
+    case "$targets" in
+        codex|claude|codex,claude|claude,codex) ;;
+        *) echo "unsafe Plugin targets: $targets" >&2; exit 1 ;;
+    esac
+    relevant=false
+    case ",$targets," in
+        *,codex,*)
+            if [ "$inventory_codex" = true ] || { [ "$origin" = owned ] && [ "$codex_cleanup" = true ]; }; then
+                relevant=true
+                add_path .codex/config.toml file
+                add_path ".codex/plugins/cache/$marketplace" directory
+                add_path ".codex/.tmp/marketplaces/$marketplace" directory
+            fi
+            ;;
+    esac
+    case ",$targets," in
+        *,claude,*)
+            if [ "$inventory_claude" = true ] || { [ "$origin" = owned ] && [ "$claude_cleanup" = true ]; }; then
+                relevant=true
+                add_path .claude.json file
+                add_path .claude/.claude.json file
+                add_path .claude/settings.json file
+                add_path .claude/plugins/installed_plugins.json file
+                add_path .claude/plugins/known_marketplaces.json file
+                add_path ".claude/plugins/cache/$marketplace" directory
+                add_path ".claude/plugins/marketplaces/$marketplace" directory
+            fi
+            ;;
+    esac
+    [ "$relevant" != true ] || add_path ".local/share/agent-plugins/sources/$marketplace" directory
+done < "$tmp/marketplaces"
+
+awk -F '\t' '$0 !~ /^#/ && NF { print $3 "\t" $5 }' "$plugin_migrations" \
+    > "$tmp/migrations"
+while IFS="$(printf '\t')" read -r targets marker; do
+    valid_name "$marker" || { echo "unsafe migration marker: $marker" >&2; exit 1; }
+    case "$targets" in
+        codex|claude|codex,claude|claude,codex) ;;
+        *) echo "unsafe migration targets: $targets" >&2; exit 1 ;;
+    esac
+    for host in codex claude; do
+        case ",$targets," in
+            *",$host,"*)
+                case "$host" in
+                    codex) enabled=$inventory_codex ;;
+                    claude) enabled=$inventory_claude ;;
+                esac
+                [ "$enabled" != true ] || \
+                    add_path ".local/state/personal-agent-control/migrations/$marker-$host" file
+                ;;
+        esac
+    done
+done < "$tmp/migrations"
+
+LC_ALL=C sort -u "$paths" > "$paths_sorted"
+awk -F '\t' 'prior == $1 && prior_kind != $2 { exit 1 } { prior=$1; prior_kind=$2 }' \
+    "$paths_sorted" || { echo "conflicting PAC backup object contracts" >&2; exit 1; }
+
+# Validate every final object and ancestor before creating backup/state paths.
+while IFS="$(printf '\t')" read -r rel kind; do
+    preflight_target "$rel" "$kind"
+done < "$paths_sorted"
+pac_assert_safe_ancestors "$home" \
+    ".agent-work/backups/personal-agent-control/$stamp-$$/home/.guard" \
+    "backup destination"
+pac_assert_safe_ancestors "$home" \
+    ".local/state/personal-agent-control/.guard" "PAC state"
+pac_assert_safe_ancestors "$home" "$transaction_rel" "Chezmoi transaction marker"
+[ ! -e "$backup" ] && [ ! -L "$backup" ] || {
+    echo "PAC backup destination already exists: $backup" >&2
+    exit 1
+}
+[ ! -e "$transaction" ] && [ ! -L "$transaction" ] || {
+    echo "PAC Chezmoi transaction marker already exists: $transaction" >&2
+    exit 1
+}
+
+mkdir -p "$backup/home"
+backup_owned=true
+pac_assert_real_directory "$backup/home" "backup home"
+cut -f1 "$paths_sorted" > "$manifest"
+while IFS="$(printf '\t')" read -r rel kind; do
+    preflight_target "$rel" "$kind"
+    target="$home/$rel"
+    if [ -e "$target" ] || [ -L "$target" ]; then
+        mkdir -p "$backup/home/$(dirname -- "$rel")"
+        cp -Rp "$target" "$backup/home/$rel"
+    fi
+done < "$paths_sorted"
+
+printf 'kind=chezmoi-outer\nagents=%s\nsource=%s\ncreated=%s\n' \
+    "$inventory_agents" "$source_dir" "$stamp" > "$backup/metadata.txt"
+
+last_backup="$state/last-backup"
+last_backup_tmp=$(mktemp "$state/.last-backup.XXXXXX")
+chmod 600 "$last_backup_tmp"
+printf '%s\n' "$backup" > "$last_backup_tmp"
+transaction_tmp=$(mktemp "$state/.chezmoi-transaction-$PPID.XXXXXX")
+chmod 600 "$transaction_tmp"
+printf '%s\n%s\n' "$backup" "$outer_token" > "$transaction_tmp"
+mv -f -- "$transaction_tmp" "$transaction"
+transaction_tmp=
+transaction_owned=true
+mv -f -- "$last_backup_tmp" "$last_backup"
+last_backup_tmp=
+committed=true
+trap - EXIT HUP INT TERM
+rm -rf -- "$tmp"
+echo "Personal Agent Control backup: $backup"

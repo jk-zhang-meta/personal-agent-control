@@ -1,0 +1,4 @@
+interface:
+  display_name: "PAC Graph Workflow"
+  short_description: "Coordinate graphs with native host capabilities"
+  default_prompt: "Use $graph-workflow to coordinate this dependency graph with native host capabilities."

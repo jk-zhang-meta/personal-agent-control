@@ -1,0 +1,40 @@
+{{- $codex := .pac.codex -}}
+{{- $claude := .pac.claude -}}
+{{- $machine := joinPath .chezmoi.destDir ".config/personal-agent-control/machine.json" -}}
+{{- with (lstat $machine) -}}
+  {{- if ne .type "file" -}}
+    {{- fail (printf "PAC machine profile must be a real regular file: %s" $machine) -}}
+  {{- end -}}
+  {{- $profile := include $machine | fromJson -}}
+  {{- if not (kindIs "map" $profile) -}}
+    {{- fail "PAC machine profile must be a JSON object" -}}
+  {{- end -}}
+  {{- if or (not (hasKey $profile "schemaVersion")) (ne $profile.schemaVersion 1) -}}
+    {{- fail "PAC machine profile must use schemaVersion 1" -}}
+  {{- end -}}
+  {{- if or (not (hasKey $profile "enabledHosts")) (not (kindIs "slice" $profile.enabledHosts)) -}}
+    {{- fail "PAC machine profile enabledHosts must be an array" -}}
+  {{- end -}}
+  {{- $codex = false -}}
+  {{- $claude = false -}}
+  {{- range $host := $profile.enabledHosts -}}
+    {{- if eq $host "codex" -}}
+      {{- if $codex }}{{ fail "PAC machine profile contains duplicate host codex" }}{{ end -}}
+      {{- $codex = true -}}
+    {{- else if eq $host "claude" -}}
+      {{- if $claude }}{{ fail "PAC machine profile contains duplicate host claude" }}{{ end -}}
+      {{- $claude = true -}}
+    {{- else -}}
+      {{- fail (printf "PAC machine profile contains unknown host: %v" $host) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $agents := "" -}}
+{{- if and $codex $claude -}}
+  {{- $agents = "codex,claude" -}}
+{{- else if $codex -}}
+  {{- $agents = "codex" -}}
+{{- else if $claude -}}
+  {{- $agents = "claude" -}}
+{{- end -}}
+{{- dict "agents" $agents "codex" $codex "claude" $claude | toJson -}}

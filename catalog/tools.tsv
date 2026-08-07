@@ -1,0 +1,16 @@
+# name	version	owner	purpose	integrity-or-lock
+git	system	platform	private source acquisition bootstrap prerequisite	verified by preflight and host package manager
+curl	system	platform	Chezmoi and release bootstrap prerequisite	verified by preflight and host package manager
+tar	system	platform	archive extraction bootstrap prerequisite	verified by preflight and host package manager
+ssh	system	OpenSSH	private Git transport bootstrap prerequisite	verified by preflight and host package manager
+chezmoi	2.72.0	twpayne/chezmoi	cross-machine deployment	GitHub release checksum and .chezmoiversion
+mise	2026.8.2	jdx/mise	machine-level dependency graph	platform SHA-256 in .chezmoiexternal.toml.tmpl
+node	24.18.0	nodejs/node	runtime for JavaScript CLIs	mise.lock
+rulesync	16.7.0	dyoshikawa/rulesync	host adapter compiler	sha512-Qx9BKHhHIZ6nLERqVdZBN9cR6a48P7OR6eda5sKX67uozxsedIGzw224hPLhFXL8k8iwbJsJCJtZZ5K7gl7zZQ==
+apm	0.28.0	microsoft/apm	portable agent package dependency engine	mise.lock plus GitHub artifact attestation and SLSA provenance
+skills	1.5.22	vercel-labs/skills	local Skill materializer and linker	sha512-cHiLjwZEawWFvudIqeeMZlvZayTLbRouydMbblyrdiyH7ZLbqUrSrEEr+Tg+X265iztRlVMsyOYRwpD5JxBsvg==
+uv	0.12.1	astral-sh/uv	Python tool runtime for Skill validation	mise.lock
+skills-ref	0.1.1	agentskills/agentskills	official Agent Skills validator	PyPI wheel SHA-256 d35db5bb8de71ae301daf5ca9cb71f8a555e8c6f83a6d40e46a5bc09f8f461b5
+gitleaks	8.30.1	gitleaks/gitleaks	secret scanning	mise.lock
+shellcheck	0.11.0	koalaman/shellcheck	portable shell validation	mise.lock
+ripgrep	15.2.0	BurntSushi/ripgrep	shared exact-text search dependency	mise.lock

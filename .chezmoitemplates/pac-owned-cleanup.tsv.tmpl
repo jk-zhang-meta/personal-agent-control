@@ -1,0 +1,70 @@
+{{- $home := .chezmoi.destDir -}}
+{{- $state := joinPath $home ".local/state/personal-agent-control" -}}
+{{- $safeName := "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$" -}}
+{{- $skillNames := list -}}
+{{- $skillsFile := joinPath $state "owned-skills.txt" -}}
+{{- with (lstat $skillsFile) -}}
+  {{- if ne .type "file" }}{{ fail (printf "PAC owned Skills must be a real regular file: %s" $skillsFile) }}{{ end -}}
+  {{- $seen := dict -}}
+  {{- range $name := splitList "\n" (include $skillsFile) -}}
+    {{- if ne $name "" -}}
+      {{- if not (regexMatch $safeName $name) }}{{ fail (printf "unsafe owned Skill name: %s" $name) }}{{ end -}}
+      {{- if hasKey $seen $name }}{{ fail (printf "duplicate owned Skill name: %s" $name) }}{{ end -}}
+      {{- $_ := set $seen $name true -}}
+      {{- $skillNames = append $skillNames $name -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $physicalByID := dict -}}
+{{- $skillMapFile := joinPath $state "owned-skill-map.json" -}}
+{{- with (lstat $skillMapFile) -}}
+  {{- if ne .type "file" }}{{ fail (printf "PAC owned Skill map must be a real regular file: %s" $skillMapFile) }}{{ end -}}
+  {{- $value := include $skillMapFile | fromJson -}}
+  {{- if or (not (kindIs "map" $value)) (ne $value.schemaVersion 1) (not (kindIs "slice" $value.skills)) -}}
+    {{- fail "invalid PAC owned Skill map" -}}
+  {{- end -}}
+  {{- range $entry := $value.skills -}}
+    {{- if or (not (kindIs "map" $entry)) (not (kindIs "string" $entry.id)) (not (kindIs "string" $entry.physicalName)) -}}
+      {{- fail "invalid PAC owned Skill mapping" -}}
+    {{- end -}}
+    {{- if or (not (regexMatch $safeName $entry.id)) (not (regexMatch $safeName $entry.physicalName)) -}}
+      {{- fail (printf "unsafe PAC owned Skill mapping: %v" $entry) -}}
+    {{- end -}}
+    {{- if hasKey $physicalByID $entry.id }}{{ fail (printf "duplicate PAC owned Skill mapping: %s" $entry.id) }}{{ end -}}
+    {{- $_ := set $physicalByID $entry.id $entry.physicalName -}}
+  {{- end -}}
+{{- end -}}
+{{- range $name := $skillNames -}}
+  {{- $physical := get $physicalByID $name | default $name -}}
+{{ printf "skill\t%s\t%s\n" $name $physical -}}
+{{- end -}}
+{{- $adapterFile := joinPath $state "owned-host-adapters.json" -}}
+{{- with (lstat $adapterFile) -}}
+  {{- if ne .type "file" }}{{ fail (printf "PAC adapter ownership must be a real regular file: %s" $adapterFile) }}{{ end -}}
+  {{- $value := include $adapterFile | fromJson -}}
+  {{- if or (not (kindIs "map" $value)) (ne (len $value) 2) (ne $value.schemaVersion 1) (not (kindIs "map" $value.hosts)) -}}
+    {{- fail "invalid PAC adapter ownership" -}}
+  {{- end -}}
+  {{- range $host, $entries := $value.hosts -}}
+    {{- if not (or (eq $host "codex") (eq $host "claude")) }}{{ fail (printf "invalid PAC adapter host: %s" $host) }}{{ end -}}
+    {{- if not (kindIs "slice" $entries) }}{{ fail (printf "invalid %s adapter ownership" $host) }}{{ end -}}
+    {{- $seen := dict -}}
+    {{- range $entry := $entries -}}
+      {{- if or (not (kindIs "map" $entry)) (ne (len $entry) 2) (not (kindIs "string" $entry.targetRelative)) (not (kindIs "string" $entry.sha256)) -}}
+        {{- fail (printf "invalid %s adapter ownership entry" $host) -}}
+      {{- end -}}
+      {{- $allowed := false -}}
+      {{- if eq $host "codex" -}}
+        {{- $allowed = or (eq $entry.targetRelative ".codex/AGENTS.md") (eq $entry.targetRelative ".codex/agents/independent-reviewer.toml") -}}
+      {{- else -}}
+        {{- $allowed = or (eq $entry.targetRelative ".claude/CLAUDE.md") (eq $entry.targetRelative ".claude/agents/independent-reviewer.md") -}}
+      {{- end -}}
+      {{- if or (not $allowed) (not (regexMatch "^[0-9a-f]{64}$" $entry.sha256)) (hasKey $seen $entry.targetRelative) -}}
+        {{- fail (printf "invalid %s adapter ownership entry" $host) -}}
+      {{- end -}}
+      {{- $_ := set $seen $entry.targetRelative true -}}
+{{ printf "adapter\t%s\t%s\n" $host $entry.targetRelative -}}
+    {{- end -}}
+    {{- if ne (len $seen) 2 }}{{ fail (printf "incomplete %s adapter ownership" $host) }}{{ end -}}
+  {{- end -}}
+{{- end -}}

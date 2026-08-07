@@ -1,0 +1,2 @@
+# plugin	marketplace	targets	replacement	marker-base
+drawio	drawio	codex,claude	skill:drawio	drawio-plugin-to-skill-v1

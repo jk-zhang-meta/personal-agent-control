@@ -1,0 +1,5 @@
+{{- $selection := includeTemplate "pac-host-selection.json.tmpl" . | fromJson -}}
+{{- if $selection.codex }}codex
+{{ end -}}
+{{- if $selection.claude }}claude
+{{ end -}}

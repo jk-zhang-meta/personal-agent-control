@@ -1,0 +1,30 @@
+name: personal-agent-control-skills
+version: 1.0.0
+description: Standalone Skills managed by Personal Agent Control
+author: Personal Agent Control
+targets:
+  - agent-skills
+dependencies:
+  apm:
+    - ../../payload/skills/capability-resolver
+    - ../../payload/skills/canonical-state
+    - ../../payload/skills/graph-workflow
+    - ../../payload/skills/research
+    - ../../payload/skills/research-core
+    - ../../payload/skills/software-workflow
+    - ../../payload/skills/verified-operations
+    - ../../payload/skills/writing-skills
+    - mattpocock/skills/skills/engineering/codebase-design#8b36d4fb2635b3c21998dcd8144439c9e5ba7302
+    - mattpocock/skills/skills/engineering/diagnosing-bugs#8b36d4fb2635b3c21998dcd8144439c9e5ba7302
+    - jgraph/drawio-mcp/plugins/codex/drawio/skills/drawio#14b318b19cc37b159f841227b9d11fbd18ce18ea
+    - anthropics/skills/skills/frontend-design#b29e7cf65e5cb78a5ac33d582270551bc74a14eb
+    - DietrichGebert/ponytail/skills/ponytail#bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
+    - DietrichGebert/ponytail/skills/ponytail-review#bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
+    - mattpocock/skills/skills/engineering/tdd#8b36d4fb2635b3c21998dcd8144439c9e5ba7302
+    - vercel-labs/agent-skills/skills/composition-patterns#7c180d9044c9ae2b442b567aad4e42a28dd5ed62
+    - vercel-labs/agent-skills/skills/react-best-practices#7c180d9044c9ae2b442b567aad4e42a28dd5ed62
+    - softaworks/agent-toolkit/skills/requirements-clarity#3027f20f3181758385a1bb8c022d4041dfb4de84
+    - ayghri/i-have-adhd/skills/i-have-adhd#2d19ad205eb1d85fc9c3968bdeba4c2116518685
+  mcp: []
+includes: auto
+scripts: {}

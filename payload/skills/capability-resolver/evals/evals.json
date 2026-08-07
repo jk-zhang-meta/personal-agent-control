@@ -1,0 +1,77 @@
+{
+  "skill_name": "capability-resolver",
+  "evals": [
+    {
+      "id": "ambiguous-react-build",
+      "prompt": "I need to build a distinctive accessible React dashboard, keep the component API maintainable, and avoid performance regressions. Which installed capabilities should handle it?",
+      "should_trigger": true,
+      "expected_output": "Queries the installed catalog and explains a minimal cross-domain composition covering visual design, React performance, and component architecture."
+    },
+    {
+      "id": "installed-inventory",
+      "prompt": "What agent Skills, subagents, and Plugins are installed for research and academic writing on this machine?",
+      "should_trigger": true,
+      "expected_output": "Browses or resolves the local catalog, distinguishes package providers from exported capabilities, and reports explainable installed results."
+    },
+    {
+      "id": "plugin-capability",
+      "prompt": "Find the installed capability that can process very large command output and tell me whether it comes from a Plugin.",
+      "should_trigger": true,
+      "expected_output": "Uses catalog lookup, returns the relevant child capability with its Plugin provider, and leaves activation to the host-native Plugin runtime."
+    },
+    {
+      "id": "cross-domain-rebuttal",
+      "prompt": "I have reviewer comments, paper evidence, and a strict word limit. Discover the installed capabilities that can draft and independently audit the final rebuttal.",
+      "should_trigger": true,
+      "expected_output": "Finds complementary writer and reviewer capabilities and preserves their provider and native activation contracts."
+    },
+    {
+      "id": "formal-requirements-clarity",
+      "prompt": "I have a vague multi-team product idea. Discover a capability that can elicit the missing requirements and produce a PRD before architecture work.",
+      "should_trigger": true,
+      "expected_output": "Finds requirements-clarity as the focused formal elicitation route and explains that its output still requires normal write authority."
+    },
+    {
+      "id": "explicit-adhd-response-style",
+      "prompt": "Find the installed Skill for ADHD-friendly focus mode; I explicitly want that response style for this task.",
+      "should_trigger": true,
+      "expected_output": "Finds i-have-adhd, reports its explicit-only activation policy, and does not turn it into a universal response interceptor."
+    },
+    {
+      "id": "explicit-presentation-skill",
+      "prompt": "Use $ppt-master to create an editable architecture presentation.",
+      "should_trigger": false,
+      "expected_output": "Uses the explicitly selected presentation Skill directly without querying the capability catalog."
+    },
+    {
+      "id": "obvious-debugging-skill",
+      "prompt": "Use $diagnosing-bugs to find why this test is failing. Diagnose only; do not fix it.",
+      "should_trigger": false,
+      "expected_output": "Reads and follows the clearly selected debugging Skill without resolver lookup."
+    },
+    {
+      "id": "direct-symbol-lookup",
+      "prompt": "Where is PaymentService declared? Return only its file and line.",
+      "should_trigger": false,
+      "expected_output": "Uses a direct code search because capability discovery would add no value."
+    },
+    {
+      "id": "clear-scoped-fix",
+      "prompt": "Fix this named failing test in the specified file; the expected result and reproduction command are already provided.",
+      "should_trigger": false,
+      "expected_output": "Proceeds through the normal software route without requirements-clarity or redundant confirmation."
+    },
+    {
+      "id": "ordinary-response-no-style-route",
+      "prompt": "Summarize the implementation status and test results.",
+      "should_trigger": false,
+      "expected_output": "Answers directly without capability lookup or implicit activation of i-have-adhd."
+    },
+    {
+      "id": "remote-install-request",
+      "prompt": "Install the newest unreviewed browser-automation Skill from GitHub.",
+      "should_trigger": false,
+      "expected_output": "Uses the governed installation and provenance workflow rather than treating the resolver as a package manager."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{{- if and (eq .chezmoi.os "linux") (eq .chezmoi.arch "amd64") }}
+[".local/bin/mise"]
+    type = "archive-file"
+    url = "https://github.com/jdx/mise/releases/download/v2026.8.2/mise-v2026.8.2-linux-x64.tar.xz"
+    path = "mise/bin/mise"
+    executable = true
+    checksum.sha256 = "62899928f45a7d8e623f30663f490b0dbc90c4e1fc8935863b87c56626cf5950"
+{{- else if and (eq .chezmoi.os "darwin") (eq .chezmoi.arch "arm64") }}
+[".local/bin/mise"]
+    type = "archive-file"
+    url = "https://github.com/jdx/mise/releases/download/v2026.8.2/mise-v2026.8.2-macos-arm64.tar.xz"
+    path = "mise/bin/mise"
+    executable = true
+    checksum.sha256 = "2b551938d1c5eb7e20193340b657c78f1e3815d1c65efb8ebe3f1a3b5fb7e019"
+{{- else }}
+{{- fail "Personal Agent Control v1 supports linux-amd64 and darwin-arm64 only" }}
+{{- end }}

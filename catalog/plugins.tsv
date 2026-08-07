@@ -1,0 +1,2 @@
+# plugin	marketplace	acquisition	source	ref	resolved-commit	tree-id	version	targets	bundled-skills	license	visibility
+context-mode	context-mode	github-tag	https://github.com/mksglu/context-mode.git	v1.0.169	589d8214d56740a28b5f7bf63167743d586b0b40	2daa0e69cd0f5a3b030573be7bbbfd3d0aa30603	1.0.169	codex,claude	context-mode,ctx-doctor,ctx-index,ctx-insight,ctx-purge,ctx-search,ctx-stats,ctx-upgrade	Elastic-2.0	common

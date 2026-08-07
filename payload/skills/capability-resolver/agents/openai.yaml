@@ -1,0 +1,6 @@
+interface:
+  display_name: "Capability Resolver"
+  short_description: "Search and explain installed agent capabilities"
+  default_prompt: "Use $capability-resolver to find the smallest relevant installed capability set for this task."
+policy:
+  allow_implicit_invocation: true

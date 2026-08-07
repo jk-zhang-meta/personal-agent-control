@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "neutralSkillStore": "~/.local/share/agent-skills",
+  "hosts": {
+    "codex": {
+      "enabled": true,
+      "skillsDirectory": "~/.agents/skills"
+    },
+    "claude": {
+      "enabled": true,
+      "skillsDirectory": "~/.claude/skills"
+    }
+  },
+  "plugins": {
+    "enabled": [
+      "context-mode"
+    ]
+  }
+}
