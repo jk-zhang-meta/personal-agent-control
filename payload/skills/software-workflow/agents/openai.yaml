@@ -1,4 +1,0 @@
-interface:
-  display_name: "Software Workflow"
-  short_description: "Route software work to focused engineering skills"
-  default_prompt: "Use $software-workflow to select the minimum engineering skills and verify this software task."

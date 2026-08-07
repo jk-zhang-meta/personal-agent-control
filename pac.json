@@ -12,8 +12,6 @@
     }
   },
   "plugins": {
-    "enabled": [
-      "context-mode"
-    ]
+    "enabled": []
   }
 }

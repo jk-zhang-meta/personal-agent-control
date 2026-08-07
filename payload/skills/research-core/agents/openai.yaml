@@ -1,6 +1,0 @@
-interface:
-  display_name: "PAC Research Core"
-  short_description: "Route and verify evidence-based research workflows"
-  default_prompt: "Use $research-core to run an evidence-grounded review of this research question."
-policy:
-  allow_implicit_invocation: true

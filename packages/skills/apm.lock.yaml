@@ -1,165 +1,206 @@
 lockfile_version: '1'
-generated_at: '2026-08-07T12:50:31.072500+00:00'
+generated_at: '2026-08-07T19:27:05.939822+00:00'
 apm_version: 0.28.0
 dependencies:
-- repo_url: _local/canonical-state
-  name: canonical-state
-  version: 0.0.0
-  package_type: claude_skill
-  source: local
-  local_path: ../../payload/skills/canonical-state
 - repo_url: _local/capability-resolver
   name: capability-resolver
   version: 0.0.0
   package_type: claude_skill
+  deployed_files:
+  - .agents/skills/capability-resolver
+  - .agents/skills/capability-resolver/SKILL.md
+  - .agents/skills/capability-resolver/agents/openai.yaml
+  - .agents/skills/capability-resolver/evals/evals.json
+  - .agents/skills/capability-resolver/scripts/capability-resolver.mjs
+  - .agents/skills/capability-resolver/scripts/lib/capability-overlay.mjs
+  - .agents/skills/capability-resolver/scripts/lib/catalog.mjs
+  - .agents/skills/capability-resolver/scripts/lib/database.mjs
+  - .agents/skills/capability-resolver/scripts/lib/index.mjs
+  - .agents/skills/capability-resolver/scripts/lib/query.mjs
+  deployed_file_hashes:
+    .agents/skills/capability-resolver/SKILL.md: sha256:ec8abf0ed5f2915c8b01d2b56f936e02512f9ba1b03f1c3b920cc76eb302bdee
+    .agents/skills/capability-resolver/agents/openai.yaml: sha256:e3084c9e7b5879bafd95458408c53d06ff0782715b9ed3a4aad338e537cbc786
+    .agents/skills/capability-resolver/evals/evals.json: sha256:b59e74971993f6f6373453fd8dad02d0e25245dde0bc30cd3d9ee7b9496def8e
+    .agents/skills/capability-resolver/scripts/capability-resolver.mjs: sha256:42d7d5a9a2ab16aebcd0d379b31dda331a9a9b54f5594ddb099d770863274ee3
+    .agents/skills/capability-resolver/scripts/lib/capability-overlay.mjs: sha256:5974f14236831538dbb8a35dcbacf4e81a8aac700b65bbf2fc40a8609eed9c51
+    .agents/skills/capability-resolver/scripts/lib/catalog.mjs: sha256:5f1b83f792861131448e6d239e0bc7f842774d4518ebe75c53b325792ac2cc72
+    .agents/skills/capability-resolver/scripts/lib/database.mjs: sha256:0060cc4784668dbc3384a754dc7157f96315d77847a5c3ac64b456d9a511a4ce
+    .agents/skills/capability-resolver/scripts/lib/index.mjs: sha256:5e1611c598f19e06f543ed8d009b26c14a5218f86d94708fc3977459e36bd76e
+    .agents/skills/capability-resolver/scripts/lib/query.mjs: sha256:125251f3979a2fcdb4e1a63e3d3adcc08fe5b31f61692a44b56aca8f3155a77d
   source: local
   local_path: ../../payload/skills/capability-resolver
 - repo_url: _local/graph-workflow
   name: graph-workflow
   version: 0.0.0
   package_type: claude_skill
+  deployed_files:
+  - .agents/skills/graph-workflow
+  - .agents/skills/graph-workflow/SKILL.md
+  - .agents/skills/graph-workflow/agents/openai.yaml
+  - .agents/skills/graph-workflow/references/DURABLE_RUNTIME_ADAPTER.md
+  - .agents/skills/graph-workflow/references/GRAPH_CONTRACT.md
+  - .agents/skills/graph-workflow/references/RECOVERY_AND_EVALUATION.md
+  - .agents/skills/graph-workflow/scripts/select-execution-surface.mjs
+  deployed_file_hashes:
+    .agents/skills/graph-workflow/SKILL.md: sha256:2378af8ea1f2d3a9fb0ddfa0931e701b7cb4383c22b574bafe982a0e61a16681
+    .agents/skills/graph-workflow/agents/openai.yaml: sha256:d3f629254899b78bce5f990462e688384fd7b566cc7573098848c2a5f21eb335
+    .agents/skills/graph-workflow/references/DURABLE_RUNTIME_ADAPTER.md: sha256:0d674477c6d93020b4c748ff7efc1fcc0e0de64aabc2fda17caa3403b99c797e
+    .agents/skills/graph-workflow/references/GRAPH_CONTRACT.md: sha256:35763c1804c0b799ed116e06ac8034d9b0f19ae3941e9bdbbee086cc29aab9c1
+    .agents/skills/graph-workflow/references/RECOVERY_AND_EVALUATION.md: sha256:f81b7051f3a78934e914cdf42ed9986a8ec1a4dc3190d7516707a8874ed162d0
+    .agents/skills/graph-workflow/scripts/select-execution-surface.mjs: sha256:3d6765c3b71f392f1b14dfb2700da3e008f506c772b39bc9f1c8a7dc253edf95
   source: local
   local_path: ../../payload/skills/graph-workflow
-- repo_url: _local/research
-  name: research
-  version: 0.0.0
-  package_type: claude_skill
-  source: local
-  local_path: ../../payload/skills/research
-- repo_url: _local/research-core
-  name: research-core
-  version: 0.0.0
-  package_type: claude_skill
-  source: local
-  local_path: ../../payload/skills/research-core
-- repo_url: _local/software-workflow
-  name: software-workflow
-  version: 0.0.0
-  package_type: claude_skill
-  source: local
-  local_path: ../../payload/skills/software-workflow
-- repo_url: _local/verified-operations
-  name: verified-operations
-  version: 0.0.0
-  package_type: claude_skill
-  source: local
-  local_path: ../../payload/skills/verified-operations
-- repo_url: _local/writing-skills
-  name: writing-skills
-  version: 0.0.0
-  package_type: claude_skill
-  source: local
-  local_path: ../../payload/skills/writing-skills
-- repo_url: anthropics/skills
-  name: frontend-design
-  host: github.com
-  resolved_commit: b29e7cf65e5cb78a5ac33d582270551bc74a14eb
-  resolved_ref: b29e7cf65e5cb78a5ac33d582270551bc74a14eb
-  version: unknown
-  virtual_path: skills/frontend-design
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:4eabc66183767153e404b39d1b839b1c37f2d82d86f0a0d7e880a579d8d62336
-- repo_url: ayghri/i-have-adhd
-  name: i-have-adhd
-  host: github.com
-  resolved_commit: 2d19ad205eb1d85fc9c3968bdeba4c2116518685
-  resolved_ref: 2d19ad205eb1d85fc9c3968bdeba4c2116518685
-  version: unknown
-  virtual_path: skills/i-have-adhd
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:e2e40348490cbef2283996b1be16aa4f69544d38f5e9836e7d19a1edcc5b9bd9
-- repo_url: dietrichgebert/ponytail
-  materialization_repo_url: DietrichGebert/ponytail
-  name: ponytail
-  host: github.com
-  resolved_commit: bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
-  resolved_ref: bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
-  version: unknown
-  virtual_path: skills/ponytail
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:4503a9dba2dca5836469a104c90e0c32ae9cb8bb97d02806e6fa06d15ceed56a
-- repo_url: dietrichgebert/ponytail
-  materialization_repo_url: DietrichGebert/ponytail
-  name: ponytail-review
-  host: github.com
-  resolved_commit: bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
-  resolved_ref: bc9ee949d5f439e8b9f3bb92c6d6d3d1e6ebd324
-  version: unknown
-  virtual_path: skills/ponytail-review
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:4646594fcd75455533f7ff1425f4f1c5ba0fa65f88241bf262b1c4fc275f049a
-- repo_url: jgraph/drawio-mcp
-  name: drawio
-  host: github.com
-  resolved_commit: 14b318b19cc37b159f841227b9d11fbd18ce18ea
-  resolved_ref: 14b318b19cc37b159f841227b9d11fbd18ce18ea
-  version: unknown
-  virtual_path: plugins/codex/drawio/skills/drawio
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:013953b81f420dc3444604d03608f3c02672b94b8e753ec2027e3615a678591b
-- repo_url: mattpocock/skills
-  name: codebase-design
-  host: github.com
-  resolved_commit: 8b36d4fb2635b3c21998dcd8144439c9e5ba7302
-  resolved_ref: 8b36d4fb2635b3c21998dcd8144439c9e5ba7302
-  version: unknown
-  virtual_path: skills/engineering/codebase-design
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:c3aea0683a7dafd1a9a3413cfffcacd3edcbaf652ba70f5cf5be89fcdc15d85c
-- repo_url: mattpocock/skills
-  name: diagnosing-bugs
-  host: github.com
-  resolved_commit: 8b36d4fb2635b3c21998dcd8144439c9e5ba7302
-  resolved_ref: 8b36d4fb2635b3c21998dcd8144439c9e5ba7302
-  version: unknown
-  virtual_path: skills/engineering/diagnosing-bugs
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:4cfc9a76401a2c153cc650115523393cecf58f7ad67a0ac81c193bd3baad59d0
-- repo_url: mattpocock/skills
-  name: tdd
-  host: github.com
-  resolved_commit: 8b36d4fb2635b3c21998dcd8144439c9e5ba7302
-  resolved_ref: 8b36d4fb2635b3c21998dcd8144439c9e5ba7302
-  version: unknown
-  virtual_path: skills/engineering/tdd
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:c5cf96f8b9cb868817fdc2662280c69655ba1180a9d359ce318b19e8786180cf
-- repo_url: softaworks/agent-toolkit
-  name: requirements-clarity
-  host: github.com
-  resolved_commit: 3027f20f3181758385a1bb8c022d4041dfb4de84
-  resolved_ref: 3027f20f3181758385a1bb8c022d4041dfb4de84
-  version: unknown
-  virtual_path: skills/requirements-clarity
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:27ab2b19ebb31ff719c2e19d1ae3c4122f37d964a447b180bfb838d7b2198a02
-- repo_url: vercel-labs/agent-skills
-  name: vercel-composition-patterns
-  host: github.com
-  resolved_commit: 7c180d9044c9ae2b442b567aad4e42a28dd5ed62
-  resolved_ref: 7c180d9044c9ae2b442b567aad4e42a28dd5ed62
-  version: unknown
-  virtual_path: skills/composition-patterns
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:5b3564ca435f4714d5e65023351e1999e4744818603a9cfb6a6f6a61b7d84918
-- repo_url: vercel-labs/agent-skills
-  name: vercel-react-best-practices
-  host: github.com
-  resolved_commit: 7c180d9044c9ae2b442b567aad4e42a28dd5ed62
-  resolved_ref: 7c180d9044c9ae2b442b567aad4e42a28dd5ed62
-  version: unknown
-  virtual_path: skills/react-best-practices
-  is_virtual: true
-  package_type: claude_skill
-  content_hash: sha256:74f142d28d360d78e8bac4f239a84c87f0ced9015729bc72b5458d82ff45b015
-deployments: []
+deployments:
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: null
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: sha256:ec8abf0ed5f2915c8b01d2b56f936e02512f9ba1b03f1c3b920cc76eb302bdee
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: sha256:e3084c9e7b5879bafd95458408c53d06ff0782715b9ed3a4aad338e537cbc786
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver/evals/evals.json
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: sha256:b59e74971993f6f6373453fd8dad02d0e25245dde0bc30cd3d9ee7b9496def8e
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver/scripts/capability-resolver.mjs
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: sha256:42d7d5a9a2ab16aebcd0d379b31dda331a9a9b54f5594ddb099d770863274ee3
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver/scripts/lib/capability-overlay.mjs
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: sha256:5974f14236831538dbb8a35dcbacf4e81a8aac700b65bbf2fc40a8609eed9c51
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver/scripts/lib/catalog.mjs
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: sha256:5f1b83f792861131448e6d239e0bc7f842774d4518ebe75c53b325792ac2cc72
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver/scripts/lib/database.mjs
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: sha256:0060cc4784668dbc3384a754dc7157f96315d77847a5c3ac64b456d9a511a4ce
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver/scripts/lib/index.mjs
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: sha256:5e1611c598f19e06f543ed8d009b26c14a5218f86d94708fc3977459e36bd76e
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/capability-resolver/scripts/lib/query.mjs
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/capability-resolver
+  active_owner: ../../payload/skills/capability-resolver
+  content_hash: sha256:125251f3979a2fcdb4e1a63e3d3adcc08fe5b31f61692a44b56aca8f3155a77d
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/graph-workflow
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/graph-workflow
+  active_owner: ../../payload/skills/graph-workflow
+  content_hash: null
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/graph-workflow/SKILL.md
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/graph-workflow
+  active_owner: ../../payload/skills/graph-workflow
+  content_hash: sha256:2378af8ea1f2d3a9fb0ddfa0931e701b7cb4383c22b574bafe982a0e61a16681
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/graph-workflow/agents/openai.yaml
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/graph-workflow
+  active_owner: ../../payload/skills/graph-workflow
+  content_hash: sha256:d3f629254899b78bce5f990462e688384fd7b566cc7573098848c2a5f21eb335
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/graph-workflow/references/DURABLE_RUNTIME_ADAPTER.md
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/graph-workflow
+  active_owner: ../../payload/skills/graph-workflow
+  content_hash: sha256:0d674477c6d93020b4c748ff7efc1fcc0e0de64aabc2fda17caa3403b99c797e
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/graph-workflow/references/GRAPH_CONTRACT.md
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/graph-workflow
+  active_owner: ../../payload/skills/graph-workflow
+  content_hash: sha256:35763c1804c0b799ed116e06ac8034d9b0f19ae3941e9bdbbee086cc29aab9c1
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/graph-workflow/references/RECOVERY_AND_EVALUATION.md
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/graph-workflow
+  active_owner: ../../payload/skills/graph-workflow
+  content_hash: sha256:f81b7051f3a78934e914cdf42ed9986a8ec1a4dc3190d7516707a8874ed162d0
+- kind: project-relative
+  target: agent-skills
+  value: .agents/skills/graph-workflow/scripts/select-execution-surface.mjs
+  runtime: null
+  scope: project
+  owners:
+  - ../../payload/skills/graph-workflow
+  active_owner: ../../payload/skills/graph-workflow
+  content_hash: sha256:3d6765c3b71f392f1b14dfb2700da3e008f506c772b39bc9f1c8a7dc253edf95

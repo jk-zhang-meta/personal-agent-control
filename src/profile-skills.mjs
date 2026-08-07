@@ -102,7 +102,7 @@ export async function retireProfileSkills(context, neutralStore, priorOwnedMap, 
   const desiredPhysical = new Set(desiredSkills.map(({ physicalName }) => physicalName));
   const retired = [];
   for (const [id, mapping] of priorOwnedMap) {
-    if (!['profile', 'profile-apm'].includes(mapping.engine)
+    if (!['profile', 'profile-apm', 'skills'].includes(mapping.engine)
         || desiredPhysical.has(mapping.physicalName)) continue;
     const target = path.join(physicalRoot(neutralStore), mapping.physicalName);
     await assertSafeManagedObject(context.home, target, `retired Profile Skill ${id}`, 'directory');

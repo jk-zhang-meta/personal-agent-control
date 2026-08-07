@@ -16,6 +16,31 @@ export const MATERIALIZER_EXCEPTIONS = [{
   reason: 'APM 0.28.0 cannot safely reload the generated lock for this 12,230-file Skill.',
 }];
 
+export async function selectedMaterializerExceptions(profile) {
+  const capabilitiesPath = profile?.catalogs?.capabilitiesPath;
+  if (!capabilitiesPath) return [];
+  const declared = new Set();
+  const text = await fs.readFile(capabilitiesPath, 'utf8');
+  for (const [index, line] of text.split(/\r?\n/u).entries()) {
+    if (!line.trim()) continue;
+    let capability;
+    try { capability = JSON.parse(line); }
+    catch {
+      throw new PacError(
+        'PROFILE_CAPABILITY_INVALID',
+        `Invalid Profile capability JSON on line ${index + 1}.`,
+      );
+    }
+    for (const entry of MATERIALIZER_EXCEPTIONS) {
+      if (capability.id === `skill:${entry.name}`
+          && capability.delivery === `${entry.engine}-exception`) {
+        declared.add(entry.name);
+      }
+    }
+  }
+  return MATERIALIZER_EXCEPTIONS.filter((entry) => declared.has(entry.name));
+}
+
 function expectedContentDigest(entry) {
   if (process.env.NODE_ENV === 'test' && process.env.PAC_TEST_PPT_CONTENT_SHA256) {
     return process.env.PAC_TEST_PPT_CONTENT_SHA256;
@@ -53,8 +78,8 @@ async function hashDirectory(root) {
   return hash.digest('hex');
 }
 
-export async function materializerStatus(neutralStore) {
-  return await Promise.all(MATERIALIZER_EXCEPTIONS.map(async (entry) => {
+export async function materializerStatus(neutralStore, entries = MATERIALIZER_EXCEPTIONS) {
+  return await Promise.all(entries.map(async (entry) => {
     const skillRoot = path.join(neutralStore, '.agents/skills', entry.name);
     try {
       const actual = await hashDirectory(skillRoot);
@@ -79,11 +104,16 @@ async function verifyTag(context, entry) {
   }
 }
 
-export async function applyMaterializerExceptions(context, neutralStore, ownedNames = new Set()) {
+export async function applyMaterializerExceptions(
+  context,
+  neutralStore,
+  ownedNames = new Set(),
+  entries = MATERIALIZER_EXCEPTIONS,
+) {
   await fs.mkdir(neutralStore, { recursive: true, mode: 0o700 });
   const results = [];
-  for (const entry of MATERIALIZER_EXCEPTIONS) {
-    const current = (await materializerStatus(neutralStore)).find((item) => item.name === entry.name);
+  for (const entry of entries) {
+    const current = (await materializerStatus(neutralStore, entries)).find((item) => item.name === entry.name);
     if (current.valid) {
       results.push(current);
       continue;
@@ -145,7 +175,7 @@ export async function applyMaterializerExceptions(context, neutralStore, ownedNa
     } finally {
       if (checkout) await fs.rm(checkout, { recursive: true, force: true });
     }
-    const installed = (await materializerStatus(neutralStore)).find((item) => item.name === entry.name);
+    const installed = (await materializerStatus(neutralStore, entries)).find((item) => item.name === entry.name);
     if (!installed.valid) {
       throw new PacError('MATERIALIZER_INTEGRITY_FAILED', `${entry.name} did not match its reviewed SHA-256.`, installed);
     }

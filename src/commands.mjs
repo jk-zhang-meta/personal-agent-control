@@ -13,7 +13,9 @@ import {
   readOwnedSkillMap, writeReceipt, sha256File, preflightProjectionCollisions, atomicWrite,
   hasPriorHostState,
 } from './state.mjs';
-import { applyMaterializerExceptions, materializerStatus, MATERIALIZER_EXCEPTIONS } from './materializers.mjs';
+import {
+  applyMaterializerExceptions, materializerStatus, selectedMaterializerExceptions,
+} from './materializers.mjs';
 import { pluginCatalog, reconcilePlugins } from './plugins.mjs';
 import {
   acquireProfile, loadActiveProfile, loadProfileDescriptor, profileStatus,
@@ -39,14 +41,14 @@ import {
   profileWorkspaceRepository, publishProfileWorkspace, syncProfileWorkspace,
 } from './profile-workspace.mjs';
 
-function provisionalSkills(lock, profile = null) {
+function provisionalSkills(lock, profile = null, materializers = []) {
   return [
     ...lock.dependencies.map((entry) => ({
       id: entry.name,
       physicalName: entry.virtualPath ? path.posix.basename(entry.virtualPath) : entry.name,
       engine: 'apm',
     })),
-    ...MATERIALIZER_EXCEPTIONS.map((entry) => ({ id: entry.name, physicalName: entry.name, engine: entry.engine })),
+    ...materializers.map((entry) => ({ id: entry.name, physicalName: entry.name, engine: entry.engine })),
     ...profileApmProvisionalEntries(profile),
     ...profileSkillEntries(profile),
   ];
@@ -299,9 +301,18 @@ async function rebuildResolverAfterRestore(context, neutral) {
   ]);
 }
 
-async function preflightManagedDrift(context, config, neutral, lock, hosts, profile, options = {}) {
+async function preflightManagedDrift(
+  context,
+  config,
+  neutral,
+  lock,
+  hosts,
+  profile,
+  materializerEntries,
+  options = {},
+) {
   const [owned, ownedMap] = await Promise.all([readOwnedSkills(context), readOwnedSkillMap(context)]);
-  const desired = assertUniqueSkills(provisionalSkills(lock, profile));
+  const desired = assertUniqueSkills(provisionalSkills(lock, profile, materializerEntries));
   await preflightProjectionCollisions(context, config, neutral, desired, hosts);
   const bootstrap = await profileBootstrapStatus(context, profile);
   if (!bootstrap.valid && bootstrap.exists && !options.allowProfileReplacement) {
@@ -313,7 +324,7 @@ async function preflightManagedDrift(context, config, neutral, lock, hosts, prof
   }
   if (owned.size === 0) return { checked: false, reason: 'no-prior-ownership' };
 
-  const materializers = await materializerStatus(neutral);
+  const materializers = await materializerStatus(neutral, materializerEntries);
   const modifiedException = materializers.find((entry) => owned.has(entry.name) && !entry.valid);
   if (modifiedException) {
     throw new PacError('MANAGED_DRIFT', `Managed Skill ${modifiedException.name} differs from its reviewed content.`, modifiedException);
@@ -344,10 +355,10 @@ async function preflightManagedDrift(context, config, neutral, lock, hosts, prof
     throw error;
   }
   const transitionalProfileRoots = [...ownedMap.values()]
-    .filter((entry) => ['profile', 'profile-apm'].includes(entry.engine))
+    .filter((entry) => ['profile', 'profile-apm', 'skills'].includes(entry.engine))
     .map((entry) => entry.physicalName);
   const allowed = [
-    ...MATERIALIZER_EXCEPTIONS.map((entry) => entry.name),
+    ...materializerEntries.map((entry) => entry.name),
     ...profileSkillEntries(profile).map((entry) => entry.physicalName),
     ...transitionalProfileRoots,
   ];
@@ -374,7 +385,8 @@ async function applyUnlocked(context, options = {}) {
   }
   const reconciliationScope = HOSTS.filter((host) => scopedEnabledHosts.includes(host) || provenCleanupHosts.includes(host));
   const canonicalLock = await readLock(context);
-  const provisional = assertUniqueSkills(provisionalSkills(canonicalLock, profile));
+  const materializerEntries = await selectedMaterializerExceptions(profile);
+  const provisional = assertUniqueSkills(provisionalSkills(canonicalLock, profile, materializerEntries));
   const knownPlugins = await pluginCatalog(context, profile);
   const effectivePlugins = effectivePluginNames(config, profile);
   const unknownPlugins = effectivePlugins.filter((name) => !knownPlugins.some((entry) => entry.name === name));
@@ -386,6 +398,7 @@ async function applyUnlocked(context, options = {}) {
     canonicalLock,
     scopedEnabledHosts,
     profile,
+    materializerEntries,
     { allowProfileReplacement: profileResolution.descriptorAction !== 'keep' },
   );
   const backup = options.precreatedBackup
@@ -410,7 +423,7 @@ async function applyUnlocked(context, options = {}) {
     const bootstrap = await reconcileProfileBootstrap(context, profile);
     const lock = await installFrozen(context, neutral);
     const [owned, priorOwnedMap] = await Promise.all([readOwnedSkills(context), readOwnedSkillMap(context)]);
-    const materializers = await applyMaterializerExceptions(context, neutral, owned);
+    const materializers = await applyMaterializerExceptions(context, neutral, owned, materializerEntries);
     const profileApm = await installProfileApm(context, profile);
     const effectiveProfile = profile ? {
       ...profile,
@@ -563,12 +576,13 @@ async function status(context, options = {}) {
     ...profile,
     skills: [...profile.skills, ...profileApm.skills],
   } : null;
+  const materializerEntries = await selectedMaterializerExceptions(profile);
   let runtimeContent;
   try {
     runtimeContent = {
       valid: true,
       ...(await verifyRuntimeContent(neutral, [
-        ...MATERIALIZER_EXCEPTIONS.map((entry) => entry.name),
+        ...materializerEntries.map((entry) => entry.name),
         ...profileSkillEntries(effectiveProfile).map((entry) => entry.physicalName),
         ...priorProfileRoots,
       ])),
@@ -586,7 +600,7 @@ async function status(context, options = {}) {
   let apmSkills = provisionalSkills(canonicalLock).filter((entry) => entry.engine === 'apm');
   try { apmSkills = await discoverApmSkills(neutral, canonicalLock); }
   catch (error) { if (!['SKILL_INVALID', 'SKILL_DUPLICATE_NAME'].includes(error.code)) throw error; }
-  const materializers = await materializerStatus(neutral);
+  const materializers = await materializerStatus(neutral, materializerEntries);
   const profileSkills = await profileSkillStatus(neutral, effectiveProfile);
   let bootstrap;
   try { bootstrap = await profileBootstrapStatus(context, profile); }
@@ -595,7 +609,7 @@ async function status(context, options = {}) {
   }
   const skills = assertUniqueSkills([
     ...apmSkills,
-    ...MATERIALIZER_EXCEPTIONS.map((entry) => ({ id: entry.name, physicalName: entry.name, engine: entry.engine })),
+    ...materializerEntries.map((entry) => ({ id: entry.name, physicalName: entry.name, engine: entry.engine })),
     ...profileSkillEntries(effectiveProfile).map(({ id, physicalName, engine, targets }) => ({
       id, physicalName, engine, targets,
     })),
@@ -878,10 +892,11 @@ async function skillCommand(context, action, args, options) {
   if (action === 'list') {
     const lock = await readLock(context);
     const profile = await loadActiveProfile(context);
+    const materializers = await selectedMaterializerExceptions(profile);
     return {
       skills: [
         ...lock.dependencies.map((entry) => ({ ...entry, engine: 'apm' })),
-        ...MATERIALIZER_EXCEPTIONS,
+        ...materializers,
         ...(profile?.apm?.lock?.dependencies || []).map((entry) => ({ ...entry, engine: 'profile-apm' })),
         ...profileSkillEntries(profile).map(({ id: name, engine }) => ({ name, engine })),
       ],

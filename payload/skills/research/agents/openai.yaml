@@ -1,4 +1,0 @@
-interface:
-  display_name: "PAC Research"
-  short_description: "Research with primary sources and flexible delivery"
-  default_prompt: "Use $research to investigate this question from primary sources and return the requested deliverable."
