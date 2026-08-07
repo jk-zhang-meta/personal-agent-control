@@ -325,7 +325,9 @@ async function preflightManagedDrift(
   if (owned.size === 0) return { checked: false, reason: 'no-prior-ownership' };
 
   const materializers = await materializerStatus(neutral, materializerEntries);
-  const modifiedException = materializers.find((entry) => owned.has(entry.name) && !entry.valid);
+  const modifiedException = materializers.find(
+    (entry) => owned.has(entry.name) && entry.installed && !entry.valid,
+  );
   if (modifiedException) {
     throw new PacError('MANAGED_DRIFT', `Managed Skill ${modifiedException.name} differs from its reviewed content.`, modifiedException);
   }
