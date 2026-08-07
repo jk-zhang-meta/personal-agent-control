@@ -7,6 +7,7 @@ import { PacError } from './errors.mjs';
 export const MATERIALIZER_EXCEPTIONS = [{
   name: 'ppt-master',
   engine: 'skills',
+  delivery: 'vercel-skills-exception',
   engineVersion: '1.5.22',
   source: 'hugohe3/ppt-master',
   ref: 'v4.3.0',
@@ -33,7 +34,7 @@ export async function selectedMaterializerExceptions(profile) {
     }
     for (const entry of MATERIALIZER_EXCEPTIONS) {
       if (capability.id === `skill:${entry.name}`
-          && capability.delivery === `${entry.engine}-exception`) {
+          && capability.delivery === entry.delivery) {
         declared.add(entry.name);
       }
     }
