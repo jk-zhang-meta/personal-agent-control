@@ -100,7 +100,7 @@ function createResolverFixture(t) {
   write(join(profile, 'catalog/capabilities.jsonl'), [
     JSON.stringify({
       id: 'skill:personal-skill', memberships: ['kind.skill'], targets: ['codex', 'claude'],
-      visibility: 'private',
+      delivery: 'profile', visibility: 'private',
     }),
     JSON.stringify({
       id: 'provider:plugin:private-plugin@private-marketplace',
@@ -191,6 +191,10 @@ test('resolver merges Profile metadata and enabled private Plugin in library and
     'skill:personal-skill',
     'skill:private-bundle',
   ]);
+  assert.equal(
+    model.capabilities.find(({ id }) => id === 'skill:personal-skill').delivery,
+    'profile',
+  );
 
   const validation = validateRepositoryMetadata({
     repo: fixture.repo,
@@ -245,6 +249,21 @@ test('resolver rejects divergent Profile Skill host targets', (t) => {
     home: fixture.home,
     skillRoot: fixture.skillRoot,
   }), /targets differ between pac-profile\.json and capabilities\.jsonl/u);
+});
+
+test('resolver rejects non-Profile delivery for an embedded Profile Skill', (t) => {
+  const fixture = createResolverFixture(t);
+  const overlayPath = join(fixture.profile, 'catalog/capabilities.jsonl');
+  const rows = readFileSync(overlayPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  rows.find(({ id }) => id === 'skill:personal-skill').delivery = 'apm';
+  write(overlayPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
+
+  assert.throws(() => loadSourceModel({
+    repo: fixture.repo,
+    profile: fixture.profile,
+    home: fixture.home,
+    skillRoot: fixture.skillRoot,
+  }), /Profile Skill personal-skill delivery must be profile/iu);
 });
 
 test('disabled Profile Plugin stays out of runtime but remains in static validation', (t) => {

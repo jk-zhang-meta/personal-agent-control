@@ -794,8 +794,10 @@ catalog/capabilities.jsonl      # optional
 README.md, LICENSE, LICENSE.md  # optional metadata
 ```
 
-Hooks, scripts, Rulesync rules, unknown top-level content, unsafe paths, and
-credentials embedded in repository locators are rejected. Core and Profile
+Top-level Hooks, scripts, Rulesync rules, unknown top-level content,
+unsafe paths, and credentials embedded in repository locators are rejected.
+Explicitly locked Skills and enabled native Plugins retain their reviewed
+capability surfaces. Core and Profile
 identifiers merge append-only; any duplicate Skill, capability, Plugin, or
 bundled-Skill identity fails closed. Personal secrets remain locators resolved
 through the user's normal credential sources. Context capabilities carry only

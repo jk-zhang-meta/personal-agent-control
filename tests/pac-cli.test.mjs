@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
 import { readLock, readManifestDependencies, renderManifest, verifyRuntimeContent } from '../src/apm.mjs';
-import { atomicWrite, reconcileProjections, createBackup } from '../src/state.mjs';
+import {
+  atomicWrite, reconcileProjections, createBackup, augmentBackup,
+} from '../src/state.mjs';
 import { applyMaterializerExceptions, MATERIALIZER_EXCEPTIONS } from '../src/materializers.mjs';
 import { reconcilePlugins } from '../src/plugins.mjs';
 import { hashDirectory, loadActiveProfile } from '../src/profile.mjs';
@@ -224,7 +226,6 @@ async function makeRealLifecycleFixture() {
   ]);
   const overlay = [
     JSON.stringify({ id: 'skill:base-skill', memberships: ['kind.skill'], targets: ['codex', 'claude'], delivery: 'apm', visibility: 'private' }),
-    JSON.stringify({ id: 'skill:ppt-master', memberships: ['kind.skill'], targets: ['codex', 'claude'], delivery: 'vercel-skills-exception', visibility: 'private' }),
   ].join('\n') + '\n';
   await fs.writeFile(path.join(root, 'catalog/capabilities.jsonl'), overlay);
   await fs.writeFile(path.join(root, 'catalog/files.sha256'), await sourceIntegrityManifest(root));
@@ -277,6 +278,12 @@ async function makeProfileRepository({
     memberships: ['kind.skill'],
     targets: skillTargets,
     delivery: 'profile',
+    visibility: 'private',
+  }, {
+    id: 'skill:ppt-master',
+    memberships: ['kind.skill'],
+    targets: ['codex', 'claude'],
+    delivery: 'vercel-skills-exception',
     visibility: 'private',
   }];
   for (const plugin of catalogPlugins) {
@@ -592,11 +599,11 @@ test('machine profile refuses paths outside HOME and symlinked ancestors or file
 test('canonical APM manifest has unique scalar dependencies and a matching pinned lock', async () => {
   const ctx = context(await temporary('pac-manifest-'));
   const dependencies = await readManifestDependencies(ctx);
-  assert.ok(dependencies.length > 0);
+  assert.deepEqual(dependencies, [
+    '../../payload/skills/capability-resolver',
+    '../../payload/skills/graph-workflow',
+  ]);
   assert.equal(new Set(dependencies).size, dependencies.length);
-  assert.ok(dependencies.some((entry) => entry.includes('requirements-clarity#3027f20f')));
-  assert.ok(dependencies.some((entry) => entry.includes('i-have-adhd#2d19ad20')));
-  assert.ok(!dependencies.some((entry) => entry.includes('ppt-master')));
   assert.deepEqual(await readManifestDependencies({ ...ctx, manifestPath: ctx.manifestPath }), dependencies);
   const lock = await readLock(ctx);
   assert.equal(lock.version, '0.28.0');
@@ -701,8 +708,15 @@ test('projection reconciliation preserves unowned entries in an existing disable
 });
 
 test('Plugin reconciliation gives disabled and incompatible hosts an empty desired catalog', async () => {
+  const root = await temporary('pac-plugin-hosts-source-');
   const home = await temporary('pac-plugin-hosts-');
-  const ctx = context(home);
+  await fs.mkdir(path.join(root, 'catalog'), { recursive: true });
+  await fs.writeFile(path.join(root, 'catalog/plugins.tsv'), [
+    '# plugin\tmarketplace\tacquisition\tsource\tref\tresolved-commit\ttree-id\tversion\ttargets\tbundled-skills\tlicense\tvisibility',
+    `context-mode\tcontext-mode\tgithub-tag\texample/context-mode\tv1.0.0\t${'c'.repeat(40)}\t${'d'.repeat(40)}\t1.0.0\tcodex\tcontext-mode\tMIT\tprivate`,
+    '',
+  ].join('\n'));
+  const ctx = { ...context(home), root };
   const executable = path.join(home, 'plugin-reconciler.cjs');
   const log = path.join(home, 'plugin-log.jsonl');
   await fs.writeFile(executable, `#!/usr/bin/env node
@@ -841,7 +855,7 @@ test('backup preflight rejects an incompatible final object before creating a sn
   assert.equal(await exists(path.join(ctx.stateDir, 'last-backup')), false);
 });
 
-test('a valid transaction snapshot round-trips through the restore contract', async () => {
+test('a desired-state transaction snapshot validates and round-trips through the restore contract', async () => {
   const root = await temporary('pac-backup-roundtrip-source-');
   const home = await temporary('pac-backup-roundtrip-home-');
   const repositoryFiles = {
@@ -878,6 +892,24 @@ test('a valid transaction snapshot round-trips through the restore contract', as
   await fs.mkdir(path.dirname(adapterOwnership), { recursive: true });
   await fs.writeFile(adapterOwnership, 'ownership-before\n');
   const backup = await createBackup(ctx, config, path.join(home, '.local/share/agent-skills'), []);
+  await augmentBackup(ctx, backup, [{
+    id: 'profile-skill',
+    physicalName: 'profile-skill',
+    targets: ['codex', 'claude'],
+  }], {
+    activeHosts: ['codex', 'claude'],
+    desiredPlugins: ['private-plugin'],
+    pluginEntries: [{
+      name: 'private-plugin',
+      marketplace: 'private-marketplace',
+      targets: 'codex,claude',
+    }],
+  });
+  const validated = spawnSync('sh', [path.join(root, 'scripts/restore-backup.sh'), '--validate', backup], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home },
+  });
+  assert.equal(validated.status, 0, validated.stderr || validated.stdout);
   await fs.writeFile(settings, '{"after":true}\n');
   await fs.writeFile(chezmoiState, 'state-after\n');
   await fs.writeFile(adapterOwnership, 'ownership-after\n');

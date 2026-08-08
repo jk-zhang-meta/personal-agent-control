@@ -420,10 +420,10 @@ if ! run_pac "$home" --json --hosts all apply > "$tmp/fresh.json"; then
 fi
 assert_status "$home" all
 owned_count=$(wc -l < "$home/.local/state/personal-agent-control/owned-skills.txt" | tr -d ' ')
-[ "$owned_count" -gt 1 ]
+[ "$owned_count" = 2 ]
 [ "$(link_count "$home/.agents/skills")" = "$owned_count" ]
 [ "$(link_count "$home/.claude/skills")" = "$owned_count" ]
-[ "$(basename -- "$(readlink "$home/.agents/skills/vercel-composition-patterns")")" = composition-patterns ]
+[ "$(basename -- "$(readlink "$home/.agents/skills/capability-resolver")")" = capability-resolver ]
 before=$(managed_digest "$home")
 run_pac "$home" --hosts all apply >/dev/null
 after=$(managed_digest "$home")
@@ -447,27 +447,27 @@ done
 # An unmanaged collision blocks apply and rollback preserves it byte-for-byte.
 collision_home="$tmp/collision"
 prepare_home "$collision_home"
-mkdir -p "$collision_home/.agents/skills/research"
-printf 'unmanaged\n' > "$collision_home/.agents/skills/research/sentinel"
+mkdir -p "$collision_home/.agents/skills/capability-resolver"
+printf 'unmanaged\n' > "$collision_home/.agents/skills/capability-resolver/sentinel"
 if run_pac "$collision_home" --hosts all apply > "$tmp/collision.out" 2>&1; then
     echo "PAC accepted an unmanaged Skill collision" >&2
     exit 1
 fi
-grep -q '^unmanaged$' "$collision_home/.agents/skills/research/sentinel"
-[ ! -L "$collision_home/.agents/skills/research" ]
+grep -q '^unmanaged$' "$collision_home/.agents/skills/capability-resolver/sentinel"
+[ ! -L "$collision_home/.agents/skills/capability-resolver" ]
 
 # Replacing a managed projection with user content is also preserved on failure.
 modified_home="$tmp/modified"
 prepare_home "$modified_home"
 run_pac "$modified_home" --hosts all apply >/dev/null
-rm -f -- "$modified_home/.agents/skills/research"
-mkdir -p "$modified_home/.agents/skills/research"
-printf 'modified-user-content\n' > "$modified_home/.agents/skills/research/sentinel"
+rm -f -- "$modified_home/.agents/skills/capability-resolver"
+mkdir -p "$modified_home/.agents/skills/capability-resolver"
+printf 'modified-user-content\n' > "$modified_home/.agents/skills/capability-resolver/sentinel"
 if run_pac "$modified_home" --hosts all apply > "$tmp/modified.out" 2>&1; then
     echo "PAC overwrote a modified managed projection" >&2
     exit 1
 fi
-grep -q '^modified-user-content$' "$modified_home/.agents/skills/research/sentinel"
+grep -q '^modified-user-content$' "$modified_home/.agents/skills/capability-resolver/sentinel"
 
 # Skill and Plugin lifecycle operations mutate the editable private Profile,
 # while the disposable public Core remains byte-for-byte unchanged.
@@ -481,6 +481,22 @@ run_pac "$lifecycle_home" --hosts all profile init "$profile_root" >/dev/null
 [ -d "$profile_root/.git" ]
 [ -f "$profile_root/pac-profile.json" ]
 [ -f "$profile_root/packages/skills/apm.yml" ]
+cat > "$profile_root/catalog/plugins.tsv" <<'EOF'
+# plugin	marketplace	acquisition	source	ref	resolved-commit	tree-id	version	targets	bundled-skills	license	visibility
+context-mode	context-mode	github-tag	example/context-mode	v1.0.0	cccccccccccccccccccccccccccccccccccccccc	dddddddddddddddddddddddddddddddddddddddd	1.0.0	codex,claude	context-mode	MIT	private
+EOF
+cat > "$profile_root/catalog/capabilities.jsonl" <<'EOF'
+{"id":"provider:plugin:context-mode@context-mode","memberships":["kind.provider.plugin"],"summary":"Isolated context-mode provider fixture."}
+{"id":"skill:context-mode","memberships":["kind.skill"],"summary":"Isolated context-mode bundled Skill fixture."}
+EOF
+node - "$profile_root/pac-profile.json" <<'NODE'
+const fs = require('node:fs');
+const file = process.argv[2];
+const value = JSON.parse(fs.readFileSync(file, 'utf8'));
+value.plugins.enabled = ['context-mode'];
+fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+NODE
+run_pac "$lifecycle_home" --hosts all profile init "$profile_root" >/dev/null
 printf 'module-before-change\n' > "$lifecycle_home/.local/share/agent-skills/apm_modules/fixture"
 run_pac "$lifecycle_home" --json --hosts all skill add \
     acme/demo-skill/skills/demo-skill#1111111111111111111111111111111111111111 \

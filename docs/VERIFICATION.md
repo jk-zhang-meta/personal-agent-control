@@ -118,7 +118,8 @@ owned surface that can change, including:
 - resolver database removal/rebuild state.
 
 A late failure restores that same snapshot and reports whether rollback and
-resolver recovery succeeded. `pac rollback [BACKUP]` uses the recorded receipt.
+resolver recovery succeeded. `pac rollback [BACKUP]` uses the explicit snapshot
+argument or the private `last-backup` pointer, then records a new rollback receipt.
 Rollback does not rewrite the public Core, editable Profile Git history,
 immutable Profile cache, authentication, sessions, unrelated Skills, or
 unmanaged Plugin data. Synchronization is not treated as backup.

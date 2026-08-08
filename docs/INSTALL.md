@@ -236,9 +236,10 @@ when per-host targets are required.
 Skill, capability, Plugin, marketplace, provider, and bundled-Skill identities
 remain globally unique and conflicts fail closed.
 
-Hooks, scripts, Rulesync rules, symlinks, special files, unknown top-level
-content, and credentials embedded in repository locators are rejected. Normal
-apply never fetches a newer Profile branch tip.
+Top-level Hooks, scripts, Rulesync rules, symlinks, special files,
+unknown top-level content, and credentials embedded in repository locators are
+rejected. Explicitly locked Skills and enabled native Plugins retain their
+reviewed capability surfaces. Normal apply never fetches a newer Profile branch tip.
 
 ## Create or select a private Profile
 
@@ -441,6 +442,34 @@ SQLite sidecars. PAC rebuilds it immediately when the restored snapshot contains
 a complete runtime lock. A pre-install or empty snapshot has no resolvable
 runtime, so rebuild is explicitly skipped; run `pac apply` before using the
 resolver or starting fresh agent sessions.
+
+### Recover an interrupted transaction
+
+PAC deliberately leaves a dead transaction's lock and Chezmoi marker in place:
+guessing that a prior mutation finished would make recovery destructive. Do not
+delete the state directory or run another mutation until the retained evidence
+has been checked.
+
+1. If `~/.local/state/personal-agent-control/pac.lock` exists, require a real
+   directory and a real regular `owner.json`, then verify that its recorded PID
+   no longer exists. If that process is alive, leave the lock untouched.
+2. If a `chezmoi-transaction-<pid>` marker exists, require exactly one real
+   regular marker with exactly two lines and verify that its filename PID no
+   longer exists. Its filename PID and second-line token must match the retained
+   outer-lock owner when that lock exists. Treat the first line as the snapshot path and run
+   `scripts/restore-backup.sh --validate <snapshot>` from the installed PAC
+   checkout. The snapshot must be one immediate child of the canonical backup
+   root and must match the installed PAC source.
+3. A retained marker intentionally blocks `pac rollback`. Restore the already
+   validated snapshot with `scripts/restore-backup.sh <snapshot>` directly and
+   the intended `HOME`.
+4. Only after restore succeeds, move the exact `pac.lock`, marker, and optional
+   matching `.claim` into a newly created private recovery-evidence directory
+   outside the PAC state directory. For a stale ordinary PAC lock with no
+   marker, move only `pac.lock` after the dead-PID check. Never recursively
+   remove the state directory.
+5. Run `pac doctor`, then `pac status`. Keep the recovery evidence and snapshot
+   until both checks succeed and the intended state has been inspected.
 
 ## Development checks
 

@@ -77,7 +77,9 @@ read `~/.config/personal-agent-control/profile-bootstrap.md` when present. PAC
 installs that short private bootstrap from the locked Profile with digest-based
 ownership; larger interests, machine facts, storage routes, and credential
 locators remain progressively loaded Profile context or Skills. A Profile
-cannot contribute Rulesync rules, hooks, or scripts.
+cannot contribute top-level Hooks, scripts, or Rulesync rules.
+Explicitly locked Skills may contain invoked helper scripts, and enabled native
+Plugins retain their reviewed Hook/MCP/App surfaces.
 
 The section ABI and a 120-line/900-word kernel ceiling are repository
 governance guards, not claims of a universal model optimum. A global rule is
@@ -343,11 +345,12 @@ catalog/capabilities.jsonl      # optional
 README.md, LICENSE, LICENSE.md  # optional metadata
 ```
 
-Unknown top-level content and any hooks, scripts, or Rulesync rules are
-rejected. The Core validates the Profile schema, safe paths, frontmatter,
-catalog closure, and unique identities before making it active. Core and
-Profile catalogs merge append-only; a duplicate or attempted override fails
-closed rather than shadowing reviewed Core behavior.
+Unknown top-level content, including top-level Hooks, scripts, and Rulesync
+rules, is rejected; explicitly locked Skill and Plugin payloads retain their
+native capability surfaces. The Core validates the Profile schema, safe paths,
+frontmatter, catalog closure, and unique identities before making it active.
+Core and Profile catalogs merge append-only; a duplicate or attempted override
+fails closed rather than shadowing reviewed Core behavior.
 Every embedded `pac-profile.json` Skill entry includes a content digest and a
 non-empty `targets` list drawn from `codex` and `claude`; projection, collision,
 backup, status, and doctor logic use that same host contract. Profile APM
@@ -537,8 +540,9 @@ machine activation, active Profile descriptor, private bootstrap and ownership,
 native-adapter ownership, isolated Chezmoi state, Skill ownership/projections,
 and managed Plugin surfaces under
 `~/.agent-work/backups/personal-agent-control/`. A failed apply restores the
-pre-operation installed state and active descriptor; explicit `pac rollback`
-uses the same receipt. Editable Profile history and versioned Core source are
+pre-operation installed state and active descriptor. Explicit `pac rollback`
+uses its snapshot argument or the private `last-backup` pointer, then writes a
+new rollback receipt. Editable Profile history and versioned Core source are
 not rewritten by runtime rollback. Managed Plugin source checkouts, native
 registration files, and only the catalogued marketplace cache subtrees are restored together;
 authentication, sessions, unrelated Skills, and Plugin data remain outside the

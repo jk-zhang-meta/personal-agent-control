@@ -101,15 +101,13 @@ if (toolVersions.apm !== '0.28.0' || toolVersions.skills !== '1.5.22') {
 
 const manifest = read('packages/skills/apm.yml');
 if (manifest.includes('ppt-master')) throw new Error('ppt-master must stay outside the APM lock');
-if (!manifest.includes('requirements-clarity')) throw new Error('requirements-clarity is absent from the APM manifest');
-if (!manifest.includes('i-have-adhd')) throw new Error('i-have-adhd is absent from the APM manifest');
-const focused = capabilities.find(({ id }) => id === 'skill:i-have-adhd');
-if (focused?.activationPolicy !== 'explicit-only') {
-  throw new Error('i-have-adhd must remain explicit-only');
-}
-const ppt = capabilities.find(({ id }) => id === 'skill:ppt-master');
-if (ppt?.delivery !== 'vercel-skills-exception') {
-  throw new Error('ppt-master must declare the reviewed materializer exception');
+const dependencies = [...manifest.matchAll(/^    - (.+)$/gmu)].map((match) => match[1]);
+const expectedDependencies = [
+  '../../payload/skills/capability-resolver',
+  '../../payload/skills/graph-workflow',
+];
+if (JSON.stringify(dependencies) !== JSON.stringify(expectedDependencies)) {
+  throw new Error(`Core APM dependency ownership drift: ${dependencies.join(', ')}`);
 }
 const materializers = read('src/materializers.mjs');
 for (const required of [
@@ -171,7 +169,7 @@ cp "$repo/packages/skills/apm.lock.yaml" "$tmp/apm-root/apm.lock.yaml"
 ppt_commit=51cb529d00638097e70fd3e9d865a0bf061b5e19
 ppt_skill_sha=c96eb86efc0ec0a4c0ddea39bad3072b68e09624e045d8308a417ea6344c7892
 ppt_checkout="$tmp/ppt-master"
-ppt_target="$tmp/apm-root/.agents/skills/ppt-master"
+ppt_target="$tmp/ppt-master"
 git init --quiet "$ppt_checkout"
 git -C "$ppt_checkout" remote add origin https://github.com/hugohe3/ppt-master.git
 git -C "$ppt_checkout" fetch --quiet --depth 1 --no-tags origin "$ppt_commit"

@@ -53,8 +53,10 @@ concise native descriptions, while thin domain routes may compose leaves that
 repeated evaluation shows often apply together. Future specialist packs are
 enabled at project or Profile scope instead of expanding the always-on kernel.
 Profile v2 may declare one short `bootstrap.md`; the Core kernel reads only its
-PAC-owned projection. A Profile still cannot add Rulesync rules, hooks, or
-scripts, so it cannot replace the common operating contract.
+PAC-owned projection. A Profile cannot add top-level Hooks, scripts, or Rulesync
+rules, so it cannot replace the common operating contract.
+Explicitly locked Skills may include helper scripts invoked as part of that
+capability, and enabled native Plugins may expose reviewed Hook/MCP/App surfaces.
 
 The same kernel defines a compact outcome-first response contract. It borrows
 the safe presentation ideas from `i-have-adhd` without its hard list caps,
@@ -502,9 +504,10 @@ README.md, LICENSE, LICENSE.md            # optional metadata
 The manifest declares `bootstrap`, embedded Skill paths/digests/host targets,
 and Plugin `enabled`/`disabled` overlays. Context rows use `context:<id>` plus a
 Profile-relative Markdown `path`; the resolver indexes only their routing
-metadata. Hooks, scripts, Rulesync rules, symlinks, and unknown top-level paths
-are rejected. Duplicate Skill, capability, Plugin, marketplace, or bundled
-Skill identities fail closed. Profile APM dependencies must be repository
+metadata. Top-level Hooks, scripts, Rulesync rules, symlinks, and
+unknown top-level paths are rejected; explicitly locked Skill and Plugin
+payloads retain their native capability surfaces. Duplicate Skill, capability,
+Plugin, marketplace, or bundled Skill identities fail closed. Profile APM dependencies must be repository
 references; machine-local paths are rejected so a published Profile stays
 reproducible across machines. Profile APM packages currently target both hosts;
 embedded Skills provide explicit per-host targets.

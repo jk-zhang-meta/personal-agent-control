@@ -98,8 +98,10 @@ commit.
 The accepted Profile inventory is limited to `pac-profile.json`, `skills/**`,
 and optional `catalog/plugins.tsv` and `catalog/capabilities.jsonl`. Core and
 Profile identities merge append-only, with collisions rejected. Hooks, scripts,
-Rulesync rules, unknown top-level files, unsafe paths, and credential-bearing
-repository locators are not valid Profile sources. Private repository access uses the user's Git or
+and Rulesync rules are not valid top-level Profile surfaces; locked
+Skills and enabled native Plugins retain their reviewed capability payloads.
+Other unknown top-level files, unsafe paths, and credential-bearing repository
+locators are not valid Profile sources. Private repository access uses the user's Git or
 SSH credential mechanism; credentials are not part of the recorded locator.
 
 The existing monolithic repository history is not a distributable Core source:

@@ -148,6 +148,11 @@ function compileSourceModel({ repo, profile, home, skillRoot, strictRouting, val
           `Profile Skill ${skill.name} targets differ between pac-profile.json and capabilities.jsonl`,
         );
       }
+      if (metadata?.delivery !== "profile") {
+        throw new Error(
+          `Profile Skill ${skill.name} delivery must be profile in capabilities.jsonl`,
+        );
+      }
       seenProfileSkills.add(skill.name);
     }
     frontmatters.push({ id, ...skill.frontmatter });
