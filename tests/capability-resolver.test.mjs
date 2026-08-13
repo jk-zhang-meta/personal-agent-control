@@ -100,6 +100,8 @@ function createFixture(t) {
   write(join(repo, 'catalog/capabilities.jsonl'), [
     JSON.stringify({ id: 'skill:research-core', memberships: ['domain.research'], aliases: ['论文', '科研综述', '证据检索'], targets: ['codex', 'claude'], delivery: 'apm', visibility: 'common' }),
     JSON.stringify({ id: 'skill:frontend-helper', memberships: ['domain.frontend'], aliases: ['React UI'], targets: ['codex'], delivery: 'apm', visibility: 'common' }),
+    JSON.stringify({ id: 'skill:first-verified-result', memberships: ['domain.research'], aliases: ['first verified result', 'validated metrics'], triggers: ['implement a research idea and run an experiment', 'resume a long computation until result artifacts are verified'], antiTriggers: ['literature-only research', 'submit a job without requesting results', 'give me the stable run reference only'], targets: ['codex', 'claude'], delivery: 'profile', visibility: 'private' }),
+    JSON.stringify({ id: 'skill:graph-workflow', memberships: ['domain.research'], aliases: ['dependency graph', 'durable agent workflow'], triggers: ['coordinate dependency fan-out and fan-in', 'persist automatic workflow control across a host or process restart'], antiTriggers: ['one critical path', 'single scheduler-owned long experiment'], targets: ['codex', 'claude'], delivery: 'apm', visibility: 'common' }),
     JSON.stringify({ id: 'skill:i-have-adhd', memberships: ['domain.communication', 'action.optimize', 'artifact.response'], aliases: ['focus mode', 'ADHD-friendly response', 'concise action mode'], triggers: ['explicitly use i-have-adhd'], antiTriggers: ['normal task without a response style request'], targets: ['codex', 'claude'], delivery: 'apm', visibility: 'common', activationPolicy: 'explicit-only' }),
     JSON.stringify({ id: 'skill:requirements-clarity', memberships: ['domain.research'], aliases: ['requirements elicitation', 'PRD discovery'], triggers: ['clarify an ambiguous complex feature request', 'elicit requirements for a PRD'], antiTriggers: ['clear bug fix', 'small scoped change'], targets: ['codex', 'claude'], delivery: 'apm', visibility: 'common' }),
     JSON.stringify({ id: 'skill:review-final', memberships: ['domain.research', 'action.review'], aliases: ['final rebuttal audit'] }),
@@ -110,6 +112,8 @@ function createFixture(t) {
 
   writeSkill(join(skillStore, 'research-core/SKILL.md'), 'research-core', 'Academic literature and 论文 evidence review.');
   write(join(skillStore, 'frontend-helper/SKILL.md'), `---\nname: frontend-helper\ndescription:\n  Design and optimize React frontends with\n  accessible component patterns.\n---\n\n# frontend-helper\n`);
+  writeSkill(join(skillStore, 'first-verified-result/SKILL.md'), 'first-verified-result', 'Run the shortest representative empirical experiment and return verified exact-run metrics and artifacts.');
+  writeSkill(join(skillStore, 'graph-workflow/SKILL.md'), 'graph-workflow', 'Coordinate dependency fan-out and fan-in or durable automatic workflow control.');
   writeSkill(join(skillStore, 'i-have-adhd/SKILL.md'), 'i-have-adhd', 'Use a concise ADHD-friendly response style only when explicitly invoked.');
   writeSkill(join(skillStore, 'requirements-clarity/SKILL.md'), 'requirements-clarity', 'Clarify vague requirements and produce an approved PRD.');
   writeSkill(join(pluginStore, 'plugins/fixture-plugin/skills/review-final/SKILL.md'), 'review-final', 'Independently audit a final academic rebuttal.');
@@ -129,7 +133,9 @@ test('compiles deployed Skills, Plugin provider, bundled Skill, and subagent onc
   const model = await loadSourceModel({ repo: fixture.repo, home: fixture.home, strictRouting: true });
   assert.deepEqual(model.capabilities.map((item) => item.id), [
     'provider:plugin:fixture-plugin@fixture-marketplace',
+    'skill:first-verified-result',
     'skill:frontend-helper',
+    'skill:graph-workflow',
     'skill:i-have-adhd',
     'skill:requirements-clarity',
     'skill:research-core',
@@ -147,7 +153,7 @@ test('compiles deployed Skills, Plugin provider, bundled Skill, and subagent onc
   try {
     assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
     assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
-    assert.equal(db.prepare('SELECT count(*) AS count FROM capability').get().count, 7);
+    assert.equal(db.prepare('SELECT count(*) AS count FROM capability').get().count, 9);
     assert.ok(!db.prepare('PRAGMA table_info(capability_fts_word)').all().some(({ name }) => name === 'body'));
   } finally {
     db.close();
@@ -200,7 +206,7 @@ test('runtime Plugin inventory follows enabled Plugins and compatible enabled ho
     repo: fixture.repo,
     skillRoot: fixture.skillStore,
   });
-  assert.equal(staticValidation.capabilityCount, 7);
+  assert.equal(staticValidation.capabilityCount, 9);
 });
 
 test('uses validated frontmatter names for deployed directories and rejects duplicate names', async (t) => {
@@ -343,6 +349,56 @@ test('resolves explainably across FTS, Chinese aliases, host filters, and provid
   assert.ok(ids(browsed).includes('skill:research-core'));
   assert.ok(ids(browsed).includes('skill:review-final'));
 
+  const serialExperiment = await resolveCapabilities({
+    dbPath: fixture.dbPath,
+    host: 'codex',
+    intent: {
+      task: 'Implement a research idea and run an experiment on one critical path; return validated metrics.',
+    },
+    limit: 10,
+  });
+  assert.equal(ids(serialExperiment)[0], 'skill:first-verified-result');
+  assert.ok(!ids(serialExperiment).includes('skill:graph-workflow'));
+
+  const durableGraph = await resolveCapabilities({
+    dbPath: fixture.dbPath,
+    host: 'codex',
+    intent: {
+      task: 'Coordinate dependency fan-out and fan-in and persist automatic workflow control across a host or process restart.',
+    },
+    limit: 10,
+  });
+  assert.equal(ids(durableGraph)[0], 'skill:graph-workflow');
+
+  const singleLongExperiment = await resolveCapabilities({
+    dbPath: fixture.dbPath,
+    host: 'codex',
+    intent: {
+      task: 'Resume a single scheduler-owned long experiment until result artifacts are verified.',
+    },
+    limit: 10,
+  });
+  assert.equal(ids(singleLongExperiment)[0], 'skill:first-verified-result');
+  assert.ok(!ids(singleLongExperiment).includes('skill:graph-workflow'));
+
+  const submitOnly = await resolveCapabilities({
+    dbPath: fixture.dbPath,
+    host: 'codex',
+    intent: { task: 'Submit a job without requesting results.' },
+    limit: 10,
+  });
+  assert.ok(!ids(submitOnly).includes('skill:first-verified-result'));
+
+  const runReferenceOnly = await resolveCapabilities({
+    dbPath: fixture.dbPath,
+    host: 'codex',
+    intent: {
+      task: 'Submit this job and give me the stable run reference only; do not wait for results.',
+    },
+    limit: 10,
+  });
+  assert.ok(!ids(runReferenceOnly).includes('skill:first-verified-result'));
+
   const vaguePrd = await resolveCapabilities({
     dbPath: fixture.dbPath,
     host: 'codex',
@@ -384,9 +440,9 @@ test('root browse limits unique capabilities after aggregating deterministic cat
     dbPath: fixture.dbPath,
     host: 'codex',
     category: 'root',
-    limit: 6,
+    limit: 10,
   });
-  assert.equal(browsed.results.length, 6);
+  assert.equal(browsed.results.length, 8);
   assert.equal(new Set(ids(browsed)).size, browsed.results.length);
   const review = browsed.results.find(({ id }) => id === 'skill:review-final');
   assert.ok(review);

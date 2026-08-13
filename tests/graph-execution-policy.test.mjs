@@ -15,17 +15,17 @@ test('ordinary work uses the native surface', () => {
 
 test('a hard durability requirement uses a ready durable surface', () => {
   assert.deepEqual(selectExecutionSurface({
-    requirements: ['survive-process-restart'], availability: ready,
+    requirements: ['workflow-survive-process-restart'], availability: ready,
   }), {
     surface: 'durable',
     reason: 'hard-durability-requirement',
-    hardRequirements: ['survive-process-restart'],
+    hardRequirements: ['workflow-survive-process-restart'],
   });
 });
 
 test('a hard durability requirement fails closed when durable is unavailable', () => {
   assert.throws(() => selectExecutionSurface({
-    requirements: ['external-wait'],
+    requirements: ['automatic-post-event-continuation'],
     availability: { native: true, durable: false },
   }), (error) => error.code === 'DURABLE_SURFACE_UNAVAILABLE');
 });
@@ -49,9 +49,23 @@ test('complexity alone is outside the hard-requirement contract', () => {
   }).surface, 'native');
 });
 
+test('one scheduler-owned long experiment remains native without a workflow durability need', () => {
+  assert.deepEqual(selectExecutionSurface({
+    requirements: [], availability: ready,
+  }), {
+    surface: 'native', reason: 'native-default', hardRequirements: [],
+  });
+});
+
+test('an unscoped external wait is rejected instead of selecting a durable graph', () => {
+  assert.throws(() => selectExecutionSurface({
+    requirements: ['external-wait'], availability: ready,
+  }), (error) => error.code === 'EXECUTION_POLICY_INVALID');
+});
+
 test('unknown fields fail closed instead of hiding a misspelled requirement', () => {
   assert.throws(() => selectExecutionSurface({
-    requirments: ['survive-process-restart'], availability: ready,
+    requirments: ['workflow-survive-process-restart'], availability: ready,
   }), (error) => error.code === 'EXECUTION_POLICY_INVALID'
     && error.details.unknownFields[0] === 'requirments');
 });

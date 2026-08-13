@@ -1,6 +1,6 @@
 ---
 name: graph-workflow
-description: Plans and coordinates multi-stage work as a dependency-aware graph using the host's native planning, task, delegation, and recovery capabilities. Use when the user explicitly requests graph mode, or when work has material dependencies, repeated parallel waves, persisted evaluation, monitoring, or cross-session recovery. Do not use for ordinary serial edits, simple edit-then-test tasks, or one bounded parallel wave. Never implement a new scheduler or graph runtime unless the user explicitly approves it after a documented capability gap.
+description: Plans and coordinates work as a dependency-aware graph using the host's native planning, task, delegation, and recovery capabilities. Use when the user explicitly requests graph mode, work has material dependency fan-out/fan-in or repeated dependency waves, or automatic workflow control must persist across a session or process boundary. Do not use for one critical path, an idea-to-code-to-result sequence, a single scheduler-owned long computation, one monitoring wait, or one bounded parallel wave. Never implement a scheduler or graph runtime unless the user explicitly approves it after a documented capability gap.
 ---
 
 # Graph Workflow
@@ -15,11 +15,17 @@ capability gap that requires tool selection.
 ## Select the execution surface
 
 Use `auto` unless the user explicitly selects `native` or `durable`. In `auto`,
-use the host-native surface unless the run must survive the current session,
-wait durably for an external event, run on a schedule, share authoritative state
-across processes or machines, or provide checkpoint/replay. Those are hard
-durability requirements. Complexity, node count, agent count, and estimated
-duration alone are not.
+use the host-native surface unless automatic workflow control itself must
+survive a host or process restart, continue after an out-of-session event, run
+on a schedule, share authoritative workflow state across processes or machines,
+or provide checkpoint/replay. Those are hard workflow-durability requirements.
+Complexity, node count, agent count, and estimated duration alone are not.
+
+Compute-job durability is distinct from workflow-state durability. A single
+scheduler-owned long computation with a stable run reference does not require a
+durable graph merely because it outlives the agent session. Its scheduler owns
+the compute state; a durable graph is required only when unattended workflow
+control must also resume and continue downstream work across that boundary.
 
 Apply the deterministic policy in
 [`scripts/select-execution-surface.mjs`](scripts/select-execution-surface.mjs)

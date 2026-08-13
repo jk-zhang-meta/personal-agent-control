@@ -256,15 +256,17 @@ final choice:
 1. an explicit durable request selects the configured durable Adapter;
 2. an explicit native request is accepted only when it does not contradict a
    required durability guarantee;
-3. automatic durable selection requires at least one hard need: survival across
-   a host or process restart, shared state across people or machines, an
-   external wait or callback beyond the session, scheduled execution, or
-   required checkpoint/replay semantics; and
+3. automatic durable selection requires at least one hard workflow-control
+   need: automatic continuation across a host or process restart, shared
+   workflow state across people or machines, continuation after an external
+   event beyond the session, scheduled control flow, or required
+   checkpoint/replay semantics; and
 4. every other task stays native.
 
-Apparent complexity, step count, agent count, or a model's duration estimate is
-not sufficient to select a durable runtime. If a hard durability requirement
-exists but its Adapter is unavailable, incompatible, or unauthenticated, the
+Apparent complexity, step count, agent count, a model's duration estimate, or a
+single scheduler-owned long computation is not sufficient to select a durable
+runtime. If a hard workflow-durability requirement exists but its Adapter is
+unavailable, incompatible, or unauthenticated, the
 request fails closed with the unmet guarantee; it never silently restarts as a
 native task. Provider submission, a successful node return, or a worker's
 completion claim is likewise not verified completion. The coordinator must
@@ -293,9 +295,11 @@ Scientific graph state contains immutable artifact references and digests, not
 large datasets, models, data frames, logs, or binaries. Each external experiment
 records the workflow and code revision, environment identity, data and model
 versions, parameters and seeds, compute job identity, artifact references and
-digests, and oracle result. External submissions and other side effects use
-idempotency keys and reconcile an existing job or artifact before retrying;
-checkpoint recovery is not treated as scientific provenance or as an artifact
+digests, and oracle result. External submissions and other side effects use a
+provider-supported idempotency identity or reconcile an existing job or artifact
+before retrying. If submission may have succeeded but no reliable identity can
+be recovered, the outcome is ambiguous and PAC does not submit again blindly.
+Checkpoint recovery is not treated as scientific provenance or as an artifact
 backup.
 
 Adoption proceeds in four evidence gates: shadow recommendations with no
@@ -304,6 +308,60 @@ routing for hard needs only after restart, duplicate-effect, authorization,
 backup, and recovery tests pass; and wider shared deployment only after
 retention, schema migration, quota, and operational ownership are established.
 No stage adds a general scheduler or a second PAC task ledger.
+
+### Result-bearing operation seam
+
+PAC separates workflow progress, compute-job lifecycle, and result validity.
+The active host or approved workflow runtime owns control state; Slurm,
+Kubernetes, or another external scheduler owns compute state; and the
+project-declared artifact store owns result bytes. None can substitute for the
+others, and PAC stores no fourth mutable status record.
+
+The provider-neutral conceptual Interface is intentionally small:
+
+```text
+start(run intent) -> stable run reference
+inspect(stable run reference) -> execution-and-result snapshot
+cancel(stable run reference, expected revision) -> snapshot
+```
+
+This contract does not add a Core execution implementation. The first real
+Adapter and its deterministic fake belong in the Project that owns the workload.
+Only repeated use across at least two Projects justifies extracting a stateless,
+PAC-managed Plugin. Provider-specific arrays, retries, dependencies, queues,
+checkpoints, and child tasks remain behind the scheduler Seam.
+
+For a result-bearing request, verified completion requires all of:
+
+```text
+authoritative execution terminal success
++ exact-attempt result evidence exists
++ declared result oracle passes
+= verified result
+```
+
+Submission, a run reference, queued/running state, logs, partial metrics, and
+successful process exit are progress evidence only. A bounded artifact-publish
+grace may keep a terminal-successful run active; afterward a missing, stale,
+misattributed, incomplete, malformed, non-finite, or digest-invalid result is a
+result failure. An unavailable scheduler or artifact store is indeterminate,
+not inferred success or failure. A negative or neutral scientific finding is a
+verified result when its evidence passes the oracle.
+
+Each semantic attempt has an immutable identity and isolated output namespace.
+The project publishes its final manifest atomically after all required output is
+stable. The manifest binds the run identity and specification digest to code,
+configuration, data/model/randomness provenance, required metrics, artifact
+references and digests, oracle version, and completion time. Exact fields and
+validators stay project-owned because only the Project knows what constitutes a
+valid scientific result.
+
+Graph nodes consume this contract rather than duplicating scheduler children.
+A submission-only node may complete with a stable run reference. A
+result-bearing node remains active until exact-run evidence is verified; only
+then may it unlock fan-in. One linear idea-to-code-to-result path remains native
+and inline. Graph escalation is reserved for material fan-out/fan-in, repeated
+dependency waves, or durable automatic workflow control.
 
 ### Configuration Profile layer
 

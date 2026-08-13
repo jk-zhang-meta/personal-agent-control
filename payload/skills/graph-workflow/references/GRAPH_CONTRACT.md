@@ -38,6 +38,43 @@ a worker message. Record the exact unblock condition for `blocked`. A retry is a
 new attempt and must preserve prior evidence when the host supports attempt
 history.
 
+## Result-bearing node contract
+
+A submission node may complete with a stable run reference when submission is
+its whole declared goal. A result-bearing node may not. It remains `running`
+while the external work is submitted, queued, running, or awaiting its declared
+result after execution terminates.
+
+A result-bearing node is verified only when all three conditions hold:
+
+- the authoritative execution system reports terminal success;
+- exact-attempt result evidence exists and is attributable to the declared run,
+  code, configuration, data, model, and randomness identities; and
+- the result oracle passes its required artifact, schema, completeness, digest,
+  freshness, and finite-metric checks.
+
+Preserve these outcome semantics even when the host uses different state names:
+
+```text
+submitted, queued, or running--------------------------> running
+terminal success, result within bounded publish grace--> running
+terminal success, result missing or invalid------------> failed
+terminal success, exact result and oracle pass----------> completed
+terminal execution failure------------------------------> failed
+execution or result authority unavailable--------------> blocked
+```
+
+A negative or neutral scientific finding is still a verified result when its
+evidence passes the oracle; do not retry merely to obtain a preferred finding.
+Provider-native infrastructure retries remain visible attempt evidence.
+Changing code, configuration, data, model, or randomness is a new semantic
+attempt and must not overwrite the old result.
+
+The external scheduler owns compute-job state, and the project-declared artifact
+store owns result bytes. Keep the stable run reference in the authoritative host
+task, external tracker, or project run record; PAC creates no scheduler, polling
+daemon, mutable experiment database, or shadow state.
+
 ## Tool selection contract
 
 Select in this order:

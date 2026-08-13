@@ -22,6 +22,7 @@ The Interface has these invariants:
 - one run has exactly one authoritative state owner;
 - PAC never mirrors checkpoints, node state, attempts, or queues;
 - `auto` chooses native unless a hard durability requirement is declared;
+- compute-job lifetime alone is not a workflow durability requirement;
 - complexity and estimated duration alone never choose durable execution;
 - a hard durable run never silently falls back to native;
 - starting a run never implicitly installs, deploys, or authorizes a provider;
@@ -54,7 +55,10 @@ import { selectExecutionSurface } from '../scripts/select-execution-surface.mjs'
 
 const selection = selectExecutionSurface({
   mode: 'auto',
-  requirements: ['survive-process-restart', 'external-wait'],
+  requirements: [
+    'workflow-survive-process-restart',
+    'automatic-post-event-continuation',
+  ],
   availability: { native: true, durable: true },
 });
 // selection.surface === 'durable'

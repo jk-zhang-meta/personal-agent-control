@@ -1,10 +1,10 @@
 const MODES = new Set(['auto', 'native', 'durable']);
 
 export const HARD_DURABILITY_REQUIREMENTS = Object.freeze([
-  'survive-process-restart',
-  'external-wait',
-  'scheduled',
-  'shared-run-state',
+  'workflow-survive-process-restart',
+  'automatic-post-event-continuation',
+  'scheduled-control-flow',
+  'shared-workflow-state',
   'checkpoint-replay',
 ]);
 

@@ -185,11 +185,13 @@ history.
 Substantial work benefits from dependency graphs, parallel agents, evaluator
 passes, resume, and explicit state. Codex and Claude already expose planning,
 task, delegation, and recovery primitives for ordinary interactive work. Some
-application-level research workflows additionally must survive host or process
-restarts, share authoritative state across people or machines, wait for
-out-of-session callbacks or approval, run on a schedule, or preserve
-checkpoint/replay semantics. Those are runtime requirements, not evidence that
-PAC itself should become a runtime.
+application-level research workflows additionally require automatic control to
+survive host or process restarts, share authoritative state across people or
+machines, continue after out-of-session callbacks or approval, run on a
+schedule, or preserve checkpoint/replay semantics. Those are workflow-runtime
+requirements, not evidence that PAC itself should become a runtime. A single
+long compute job whose scheduler owns a stable identity is not such a
+requirement.
 
 Options considered:
 
@@ -211,10 +213,11 @@ future candidate only for tracker-driven coding automation.
 
 Selection is hybrid. The host model may extract task facts, while a
 deterministic policy chooses the Adapter and reports its reason. Native is the
-default. Durable execution is selected automatically only for restart survival,
-shared cross-person or cross-machine state, an external wait or callback beyond
-the session, scheduled execution, or required checkpoint/replay. Complexity,
-step count, agent count, and estimated duration are insufficient by themselves.
+default. Durable execution is selected automatically only when automatic
+workflow control must survive a restart, share cross-person or cross-machine
+state, continue after an out-of-session event, run on a schedule, or provide
+checkpoint/replay. Complexity, step count, agent count, estimated duration, and
+a scheduler-owned long computation are insufficient by themselves.
 Users may explicitly request durable execution or native execution, but native
 cannot silently satisfy a contradictory durability guarantee.
 
@@ -905,3 +908,81 @@ Core/Profile package locks match their deployed runtimes, context bodies remain
 outside SQLite, host links and Plugins match their native targets, and a late
 failure restores every PAC-owned installed surface without touching unmanaged
 or canonical source state.
+
+## ADR-018: Make verified results the completion seam
+
+Decision date: 2026-08-13. Refines ADR-006 without adding a workflow or compute
+runtime.
+
+### Context
+
+Research work often reaches an idea, implementation, review, or scheduler
+submission quickly while the requested empirical result arrives much later.
+Treating a job ID, running process, worker completion message, or exit status as
+the task result makes a highly structured workflow appear precise while the
+actual evidence is absent. Making every such task a graph adds coordination
+state but does not solve result validity.
+
+Mature systems separate three authorities: a workflow runtime owns control
+state, an external scheduler owns compute-job lifecycle, and an artifact or
+tracking store owns results. PAC must connect their evidence without copying
+their state or building another scheduler.
+
+Options considered:
+
+1. route every substantive research task through a durable graph;
+2. add a PAC job manager, polling daemon, and experiment database;
+3. accept scheduler terminal success as experimental completion; or
+4. keep one critical path inline by default and require execution proof plus
+   exact-attempt result proof at one completion Seam.
+
+### Decision
+
+Use option 4. Ordinary serial work remains inline; a graph is used only for an
+explicit graph request, material dependency fan-out/fan-in, repeated dependency
+waves, or durable automatic workflow control. One long scheduler-owned job and
+one observation loop are not graph triggers.
+
+For result-bearing work:
+
+```text
+verified result = authoritative terminal success
+                + exact-attempt result evidence
+                + passing declared result oracle
+```
+
+A submission-only goal may finish with a stable run reference and the explicit
+state `launched`. A result-bearing goal cannot. It remains active through
+submission, queueing, execution, and any bounded artifact publication grace.
+Missing, stale, misattributed, incomplete, malformed, non-finite, or
+digest-invalid evidence fails the result contract. An unavailable authority is
+indeterminate or blocked. A scientifically negative or neutral measurement is
+still verified when its evidence is valid.
+
+Core owns these routing and completion invariants and the graph-node mapping.
+The private Profile may add a personal first-result/WIP preference. Each Project
+owns its workload, scheduler configuration, immutable attempt namespace, result
+manifest/schema, validator, provenance, resource limits, and retry policy. The
+external scheduler and artifact store remain authoritative. PAC adds no queue,
+daemon, mutable experiment database, shard ledger, or automatic provider
+fallback.
+
+The conceptual execution Interface is `start`, `inspect`, and exact `cancel`,
+but Core ships no speculative provider implementation. The first production
+Adapter and deterministic fake are Project-owned. A common stateless Plugin is
+extracted only after a second real Project proves the same Seam.
+
+### Consequences
+
+PAC optimizes time to a trustworthy result instead of the amount of visible
+workflow structure. Graphs remain available for real dependency and recovery
+needs, while external schedulers retain their native arrays, retries, and job
+history. Agents must preserve a stable run reference before detaching, must not
+blindly resubmit an ambiguous mutation, and must validate result identity and
+content before claiming completion.
+
+Projects incur a small up-front result contract and final manifest obligation.
+That cost is accepted because it is the evidence the user's result request
+actually requires. Provider integration is delayed until a real Project can
+exercise it end to end, preventing a new speculative runtime from recreating
+the mechanism overhead this decision removes.

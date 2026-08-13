@@ -87,6 +87,22 @@ authorization to deploy an external control plane. Last reviewed 2026-08-08.
 | [LangGraph Functional API](https://docs.langchain.com/oss/python/langgraph/functional-api) | Recovery can re-execute incomplete work, so external side effects require task isolation and idempotency. |
 | [Claude Code agent teams](https://code.claude.com/docs/en/agent-teams) and [OpenAI Symphony](https://github.com/openai/symphony) | Native parallel coordination remains useful for bounded work; tracker-driven coding automation is a distinct surface from an application-level durable research graph. |
 
+## Result-bearing operation design references
+
+These primary sources inform ADR-018. They define distinct control, compute,
+artifact, and validation concerns; they are not installed PAC dependencies.
+Last reviewed 2026-08-13.
+
+| Primary source | Decision evidence |
+|---|---|
+| [Slurm `sbatch`](https://slurm.schedmd.com/sbatch.html), [`sacct`](https://slurm.schedmd.com/sacct.html), and [job states](https://slurm.schedmd.com/job_state_codes.html) | Submission returns after the controller accepts a script and assigns an ID; accounting exposes authoritative state and exit evidence. Scheduler `COMPLETED` proves process success, not that a project-specific result artifact is valid. |
+| [Kubernetes Jobs](https://kubernetes.io/docs/concepts/workloads/controllers/job/) | Job terminal conditions and retry behavior belong to the compute controller; a workload can execute more than once, so outputs require isolated identity and idempotent publication. |
+| [Temporal documentation](https://docs.temporal.io/) and [architecture](https://github.com/temporalio/temporal/blob/main/docs/architecture/README.md) | Durable workflow history and replay solve control-flow recovery; Activities isolate external side effects. This is heavier and different from letting one scheduler-owned computation outlive an agent session. |
+| [Argo output artifacts](https://argo-workflows.readthedocs.io/en/latest/walk-through/artifacts/) | Outputs are declared artifacts passed between steps and retained under explicit storage policy rather than inferred from node execution alone. |
+| [MLflow Tracking](https://mlflow.org/docs/latest/ml/tracking/) | Run metadata, parameters, metrics, and artifacts are recorded separately, supporting the distinction between lifecycle status and result evidence. |
+| [Kubeflow artifacts](https://www.kubeflow.org/docs/components/pipelines/user-guides/data-handling/artifacts/) and [pipeline root](https://www.kubeflow.org/docs/components/pipelines/concepts/pipeline-root/) | Typed outputs carry identity, URI, metadata, and storage placement; workflow metadata and artifact bytes have different owners. |
+| [Dagster asset checks](https://master.dagster.dagster-docs.io/concepts/assets/asset-checks) | Materialized data can have separate schema, freshness, bounds, and quality checks that may block downstream work. |
+
 ## Configuration Profile source
 
 `~/.config/personal-agent-control/profile.json` records the selected repository,
