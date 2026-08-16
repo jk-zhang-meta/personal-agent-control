@@ -144,13 +144,14 @@ function compileSourceModel({ repo, profile, home, skillRoot, strictRouting, val
     validateOverlayIdentity(metadata, "capability", "skill", id, skill.name);
     const required = parseList(metadata?.requires);
     validateDependencies(required, toolNames, skill.name);
-    const targets = parseTargets(metadata?.targets);
+    const metadataTargets = parseTargets(metadata?.targets);
+    const declaredProfileTargets = profileSkillTargets.get(skill.name);
+    const targets = declaredProfileTargets ? parseTargets(declaredProfileTargets) : metadataTargets;
     if (strictRouting && targets.length === 0) {
       throw new Error(`standalone Skill ${skill.name} must declare at least one target in capabilities.jsonl`);
     }
-    const declaredProfileTargets = profileSkillTargets.get(skill.name);
     if (declaredProfileTargets) {
-      if (JSON.stringify(targets) !== JSON.stringify(declaredProfileTargets)) {
+      if (!declaredProfileTargets.includes("*") && JSON.stringify(metadataTargets) !== JSON.stringify(targets)) {
         throw new Error(
           `Profile Skill ${skill.name} targets differ between pac-profile.json and capabilities.jsonl`,
         );

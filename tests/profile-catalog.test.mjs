@@ -251,6 +251,22 @@ test('resolver rejects divergent Profile Skill host targets', (t) => {
   }), /targets differ between pac-profile\.json and capabilities\.jsonl/u);
 });
 
+test('wildcard Profile Skill targets inherit every Core resolver host', (t) => {
+  const fixture = createResolverFixture(t);
+  const manifestPath = join(fixture.profile, 'pac-profile.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  manifest.skills[0].targets = ['*'];
+  write(manifestPath, JSON.stringify(manifest));
+
+  const model = loadSourceModel({
+    repo: fixture.repo,
+    profile: fixture.profile,
+    home: fixture.home,
+    skillRoot: fixture.skillRoot,
+  });
+  assert.deepEqual(model.capabilities.find(({ id }) => id === 'skill:personal-skill').targets, ['claude', 'codex']);
+});
+
 test('resolver rejects non-Profile delivery for an embedded Profile Skill', (t) => {
   const fixture = createResolverFixture(t);
   const overlayPath = join(fixture.profile, 'catalog/capabilities.jsonl');
