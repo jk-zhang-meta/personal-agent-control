@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "providers": [
+    {
+      "name": "codegraph",
+      "kind": "mcp-server",
+      "versionPolicy": "pinned",
+      "version": "1.5.0",
+      "command": "mise",
+      "args": ["exec", "--", "/usr/local/bin/mw", "codegraph-mcp"],
+      "hosts": {
+        "codex": {
+          "config": ".codex/config.toml",
+          "format": "codex-toml"
+        },
+        "claude": {
+          "config": ".claude.json",
+          "format": "claude-json"
+        }
+      }
+    }
+  ]
+}

@@ -9,12 +9,15 @@ import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mj
 import { atomicWriteFile } from './atomic-file.mjs';
 
 const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const HOSTS = ['codex', 'claude'];
 const CANONICAL_SKILL_STORE = '~/.local/share/agent-skills';
-const CANONICAL_HOST_DIRECTORIES = {
-  codex: '~/.agents/skills',
-  claude: '~/.claude/skills',
-};
+export const SUPPORTED_AGENTS = Object.freeze({
+  codex: Object.freeze({ skillsDirectory: '~/.agents/skills' }),
+  claude: Object.freeze({ skillsDirectory: '~/.claude/skills' }),
+});
+export const HOSTS = Object.freeze(Object.keys(SUPPORTED_AGENTS));
+const CANONICAL_HOST_DIRECTORIES = Object.fromEntries(
+  Object.entries(SUPPORTED_AGENTS).map(([name, adapter]) => [name, adapter.skillsDirectory]),
+);
 
 export function expandHome(value, home) {
   if (value === '~') return home;

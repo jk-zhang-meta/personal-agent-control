@@ -1,6 +1,6 @@
 # Host Semantics and Support
 
-Profile v2 and CLI semantics were checked against the implementation on
+Profile v3 and CLI semantics were checked against the implementation on
 2026-08-07. Live-host evidence and any still-unexecuted combinations remain in
 [VERIFICATION.md](VERIFICATION.md).
 
@@ -37,7 +37,7 @@ index.
   override, and projects only Codex-compatible Skill links under
   `~/.agents/skills`.
 - The managed `AGENTS.md` contains one generic instruction to read
-  `~/.config/personal-agent-control/profile-bootstrap.md` when a Profile v2
+  `~/.config/personal-agent-control/profile-bootstrap.md` when a Profile v3
   declares it; the Profile cannot replace the rest of the Core kernel.
 
 ### Claude Code
@@ -70,7 +70,7 @@ aliases, summary, triggers, and Profile-relative path. Resolution returns the
 exact Markdown path in the immutable Profile checkout; the selected host reads
 the body only when that route is used.
 
-Native Plugin desired state is also merged before host filtering. Profile v2
+Native Plugin desired state is also merged before host filtering. Profile v3
 may enable a private provider, disable a Core provider, or extend the provider
 catalog; host-native managers still own hooks, MCP processes, manifests, and
 caches.

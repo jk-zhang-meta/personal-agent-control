@@ -133,6 +133,21 @@ test('a valid local Profile is acquired, locked, loaded, and reported without it
   assert.equal(await loadProfileDescriptor(context), null);
 });
 
+test('Profile schema v3 declares portable providers without per-host duplication', async (t) => {
+  const { context, repository } = await fixture(t);
+  const commit = await writeProfile(repository, async ({ manifest }) => {
+    manifest.schemaVersion = 3;
+    manifest.bootstrap = null;
+    manifest.plugins = { enabled: [], disabled: [] };
+    manifest.providers = { enabled: ['codegraph'] };
+    manifest.skills[0].targets = ['*'];
+  });
+  const acquired = await acquireProfile(context, { repository, ref: commit, expectedCommit: commit });
+  assert.deepEqual(acquired.manifest.providers, { enabled: ['codegraph'] });
+  assert.deepEqual(acquired.skills[0].targets, ['*']);
+  assert.equal(Object.hasOwn(acquired.manifest.providers, 'targets'), false);
+});
+
 test('Profile store ownership directories are repaired to mode 0700', async (t) => {
   const { context, repository } = await fixture(t);
   if (process.platform === 'win32') return;

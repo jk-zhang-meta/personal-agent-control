@@ -87,6 +87,7 @@ validate_path() {
         .local/share/agent-skills/apm.lock.yaml|\
         .local/state/personal-agent-control/last-backup|\
         .local/state/personal-agent-control/owned-host-adapters.json|\
+        .local/state/personal-agent-control/owned-providers.json|\
         .local/state/personal-agent-control/profile-bootstrap.json|\
         .local/state/personal-agent-control/owned-skills.txt|\
         .local/state/personal-agent-control/owned-skill-map.json|\
@@ -177,7 +178,7 @@ if [ -e "$backup/managed-repo-paths.txt" ] || [ -L "$backup/managed-repo-paths.t
     while IFS= read -r rel; do
         case "$rel" in
             pac.json|packages/skills/apm.yml|packages/skills/apm.lock.yaml|\
-            catalog/capabilities.jsonl|catalog/files.sha256) ;;
+            catalog/capabilities.jsonl|catalog/providers.json|catalog/files.sha256) ;;
             *) echo "unsafe repository backup path: $rel" >&2; exit 1 ;;
         esac
         pac_assert_safe_ancestors "$repo" "$rel" "repository restore destination"

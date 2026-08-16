@@ -165,11 +165,11 @@ provision Context Mode itself. PAC remains the owner of the Plugin.
 
 When a Profile is active, PAC reads
 `~/.config/personal-agent-control/profile.json` and validates its exact cached
-commit. New workspaces use Profile schema v2; the loader also accepts v1 as a
-migration-compatible input. Both use this bounded surface:
+commit. New workspaces use Profile schema v3; the loader also accepts v1 and v2
+as migration-compatible inputs. All versions use this bounded surface:
 
 ```text
-pac-profile.json                         # required; new workspaces use schema v2
+pac-profile.json                         # required; new workspaces use schema v3
 bootstrap.md                             # when declared by the manifest
 context/**/*.md                          # optional on-demand context
 skills/<name>/**                         # optional embedded Skills
@@ -180,19 +180,21 @@ catalog/capabilities.jsonl               # optional routing overlay
 README.md, LICENSE, LICENSE.md            # optional metadata
 ```
 
-The canonical v2 manifest has this shape:
+The canonical v3 manifest has this shape:
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "bootstrap": "bootstrap.md",
   "skills": [],
-  "plugins": { "enabled": [], "disabled": [] }
+  "plugins": { "enabled": [], "disabled": [] },
+  "providers": { "enabled": ["codegraph"] }
 }
 ```
 
 Legacy v1 manifests contain only `schemaVersion`, `skills`, and
 `plugins.enabled`; they cannot declare `bootstrap` or `plugins.disabled`.
+Schema v2 adds those fields but cannot enable Core providers.
 Context and Profile APM directories are validated independently of that
 manifest version. A later `pac plugin add|remove` upgrades a v1 workspace
 manifest to v2 before committing it.
@@ -220,15 +222,24 @@ ordinary, non-symlink Markdown file inside the Profile. Only routing metadata
 and the exact load path enter SQLite, never the body.
 
 An embedded Skill entry declares exactly `name`, `path`, `contentSha256`, and a
-non-empty `targets` array containing `codex`, `claude`, or both. Its path is
+non-empty `targets` array. Schema v3 accepts `["*"]` to target every Agent
+supported by the installed Core; explicit Agent IDs remain available for an
+intentional subset. Its path is
 `skills/<name>`, its `SKILL.md` frontmatter name must match, and its complete
 tree must match the digest. Private APM dependencies instead live in
 `packages/skills/apm.yml`; a non-empty graph requires its reviewed lock and is
 installed frozen into a Profile-commit-specific Runtime before host projection.
 Dependencies must be repository references; PAC rejects machine-local paths so
 the private Profile remains reproducible on another machine.
-Current Profile APM packages target both Codex and Claude; use an embedded Skill
-when per-host targets are required.
+Profile APM packages target every Agent supported by the installed Core; use an
+embedded Skill with explicit targets only when a subset is required.
+
+`providers.enabled` selects reviewed Core provider definitions without copying
+their per-Agent native configuration into the Profile. The Core provider catalog
+owns supported Agent adapters, installation/version policy, and verification.
+The current `codegraph` provider pins the latest reviewed Core release and
+projects the same MCP command into every enabled supported Agent. `pac update`
+advances that version only through a reviewed Core revision and lock.
 
 `catalog/plugins.tsv` can add private Plugin providers. The manifest's
 `plugins.enabled` adds providers to effective desired state, while
@@ -252,7 +263,7 @@ pac profile status
 pac profile publish OWNER/REPOSITORY
 ```
 
-`init` creates a valid Profile v2 Git workspace at
+`init` creates a valid Profile v3 Git workspace at
 `~/.local/share/personal-agent-profile-workspaces/default` unless `PATH` is
 given. An existing path must already be a real Git worktree with a valid
 Profile. If a workspace is already configured, `init` reuses it rather than

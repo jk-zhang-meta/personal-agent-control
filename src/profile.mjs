@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { atomicWriteFile } from './atomic-file.mjs';
 import { readLock, readManifestDependencies } from './apm.mjs';
+import { HOSTS } from './config.mjs';
 import { PacError } from './errors.mjs';
 import { run } from './exec.mjs';
 import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mjs';
@@ -11,9 +12,11 @@ import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mj
 const DESCRIPTOR_KEYS = ['lockedCommit', 'ref', 'repository', 'schemaVersion'];
 const MANIFEST_KEYS_V1 = ['plugins', 'schemaVersion', 'skills'];
 const MANIFEST_KEYS_V2 = ['bootstrap', 'plugins', 'schemaVersion', 'skills'];
+const MANIFEST_KEYS_V3 = ['bootstrap', 'plugins', 'providers', 'schemaVersion', 'skills'];
 const SKILL_KEYS = ['contentSha256', 'name', 'path', 'targets'];
 const PLUGIN_KEYS_V1 = ['enabled'];
 const PLUGIN_KEYS_V2 = ['disabled', 'enabled'];
+const PROVIDER_KEYS = ['enabled'];
 const CATALOG_FILES = new Set(['capabilities.jsonl', 'plugins.tsv']);
 const PROFILE_DIRECTORIES = new Set(['catalog', 'context', 'packages', 'skills']);
 const PROFILE_METADATA_FILES = new Set(['LICENSE', 'LICENSE.md', 'README.md']);
@@ -21,7 +24,7 @@ const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/iu;
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const PLUGIN_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u;
-const PROFILE_HOSTS = ['codex', 'claude'];
+const PROFILE_HOSTS = HOSTS;
 
 function profileConfigPath(context) {
   return context.profileConfigPath
@@ -253,16 +256,18 @@ async function readManifest(root) {
     exactObject(manifest, MANIFEST_KEYS_V1, 'PROFILE_MANIFEST_INVALID', 'pac-profile.json');
   } else if (manifest.schemaVersion === 2) {
     exactObject(manifest, MANIFEST_KEYS_V2, 'PROFILE_MANIFEST_INVALID', 'pac-profile.json');
+  } else if (manifest.schemaVersion === 3) {
+    exactObject(manifest, MANIFEST_KEYS_V3, 'PROFILE_MANIFEST_INVALID', 'pac-profile.json');
   } else {
     throw new PacError(
       'PROFILE_MANIFEST_INVALID',
-      'pac-profile.json must use schemaVersion 1 or 2.',
+      'pac-profile.json must use schemaVersion 1, 2, or 3.',
     );
   }
   if (!Array.isArray(manifest.skills)) {
     throw new PacError('PROFILE_MANIFEST_INVALID', 'pac-profile.json must declare a skills array.');
   }
-  const bootstrap = manifest.schemaVersion === 2 ? manifest.bootstrap : null;
+  const bootstrap = manifest.schemaVersion >= 2 ? manifest.bootstrap : null;
   if (bootstrap !== null && bootstrap !== 'bootstrap.md') {
     throw new PacError(
       'PROFILE_MANIFEST_INVALID',
@@ -271,7 +276,7 @@ async function readManifest(root) {
   }
   exactObject(
     manifest.plugins,
-    manifest.schemaVersion === 2 ? PLUGIN_KEYS_V2 : PLUGIN_KEYS_V1,
+    manifest.schemaVersion >= 2 ? PLUGIN_KEYS_V2 : PLUGIN_KEYS_V1,
     'PROFILE_MANIFEST_INVALID',
     'pac-profile.json plugins',
   );
@@ -284,7 +289,7 @@ async function readManifest(root) {
       'pac-profile.json plugins.enabled must contain unique Plugin names.',
     );
   }
-  const disabledPlugins = manifest.schemaVersion === 2 ? manifest.plugins.disabled : [];
+  const disabledPlugins = manifest.schemaVersion >= 2 ? manifest.plugins.disabled : [];
   if (!Array.isArray(disabledPlugins)
       || disabledPlugins.some((name) => typeof name !== 'string'
         || !PLUGIN_NAME_PATTERN.test(name))
@@ -294,6 +299,19 @@ async function readManifest(root) {
       'PROFILE_MANIFEST_INVALID',
       'pac-profile.json plugins.disabled must contain unique names disjoint from plugins.enabled.',
     );
+  }
+
+  const providers = manifest.schemaVersion === 3 ? manifest.providers : { enabled: [] };
+  if (manifest.schemaVersion === 3) {
+    exactObject(providers, PROVIDER_KEYS, 'PROFILE_MANIFEST_INVALID', 'pac-profile.json providers');
+    if (!Array.isArray(providers.enabled)
+        || providers.enabled.some((name) => typeof name !== 'string' || !SKILL_NAME_PATTERN.test(name))
+        || new Set(providers.enabled).size !== providers.enabled.length) {
+      throw new PacError(
+        'PROFILE_MANIFEST_INVALID',
+        'pac-profile.json providers.enabled must contain unique kebab-case provider names.',
+      );
+    }
   }
 
   const names = new Set();
@@ -319,19 +337,21 @@ async function readManifest(root) {
         `Profile Skill ${skill.name} contentSha256 must be a 64-character hexadecimal digest.`,
       );
     }
+    const allowedTargets = manifest.schemaVersion === 3 ? [...PROFILE_HOSTS, '*'] : PROFILE_HOSTS;
     if (!Array.isArray(skill.targets) || skill.targets.length === 0
         || new Set(skill.targets).size !== skill.targets.length
-        || skill.targets.some((target) => !PROFILE_HOSTS.includes(target))) {
+        || skill.targets.some((target) => !allowedTargets.includes(target))
+        || (skill.targets.includes('*') && skill.targets.length !== 1)) {
       throw new PacError(
         'PROFILE_MANIFEST_INVALID',
-        `Profile Skill ${skill.name} targets must contain unique values from: ${PROFILE_HOSTS.join(', ')}.`,
+        `Profile Skill ${skill.name} targets must be ["*"] or contain unique values from: ${PROFILE_HOSTS.join(', ')}.`,
       );
     }
     normalizedSkills.push({
       name: skill.name,
       path: skill.path,
       contentSha256: skill.contentSha256.toLowerCase(),
-      targets: PROFILE_HOSTS.filter((target) => skill.targets.includes(target)),
+      targets: skill.targets.includes('*') ? ['*'] : PROFILE_HOSTS.filter((target) => skill.targets.includes(target)),
     });
   }
   return {
@@ -342,6 +362,7 @@ async function readManifest(root) {
       enabled: [...manifest.plugins.enabled],
       disabled: [...disabledPlugins],
     },
+    providers: { enabled: [...providers.enabled] },
   };
 }
 

@@ -147,10 +147,11 @@ async function writeTemplate(root) {
   await fs.mkdir(path.join(root, 'packages/skills'), { recursive: true, mode: 0o700 });
   await Promise.all([
     fs.writeFile(path.join(root, 'pac-profile.json'), `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       bootstrap: 'bootstrap.md',
       skills: [],
       plugins: { enabled: [], disabled: [] },
+      providers: { enabled: [] },
     }, null, 2)}\n`, { flag: 'wx', mode: 0o600 }),
     fs.writeFile(
       path.join(root, 'bootstrap.md'),

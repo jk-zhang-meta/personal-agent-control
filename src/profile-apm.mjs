@@ -3,12 +3,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { installFrozen, verifyRuntimeContent } from './apm.mjs';
+import { HOSTS } from './config.mjs';
 import { PacError } from './errors.mjs';
 import { hashDirectory } from './profile.mjs';
 import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mjs';
 import { discoverApmSkills } from './state.mjs';
 
-const TARGETS = ['codex', 'claude'];
+const TARGETS = HOSTS;
 
 function runtimeRoot(context, profile) {
   const base = context.profileRuntimeStoreDir

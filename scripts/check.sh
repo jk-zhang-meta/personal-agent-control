@@ -38,7 +38,8 @@ const rows = (name, width) => read(name).split(/\r?\n/u)
   });
 
 const config = JSON.parse(read('pac.json'));
-if (config.schemaVersion !== 1 || !config.hosts?.codex || !config.hosts?.claude) {
+const coreHosts = Object.keys(config.hosts || {});
+if (config.schemaVersion !== 1 || coreHosts.length === 0) {
   throw new Error('pac.json schema or host declarations are invalid');
 }
 
@@ -90,6 +91,23 @@ for (const [plugin, marketplace, acquisition, , ref, commit, tree, version, targ
     throw new Error(`invalid Plugin declaration: ${id}`);
   }
   pluginIds.add(id);
+}
+const providers = JSON.parse(read('catalog/providers.json'));
+if (providers.schemaVersion !== 1 || !Array.isArray(providers.providers) || !providers.providers.length) {
+  throw new Error('provider catalog schema is invalid');
+}
+const providerIds = new Set();
+for (const provider of providers.providers) {
+  const providerHosts = Object.keys(provider.hosts || {});
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(provider.name)
+      || provider.kind !== 'mcp-server' || !['latest', 'pinned'].includes(provider.versionPolicy)
+      || (provider.versionPolicy === 'pinned' && !provider.version)
+      || providerIds.has(provider.name)
+      || coreHosts.some((host) => !providerHosts.includes(host))
+      || providerHosts.some((host) => !coreHosts.includes(host))) {
+    throw new Error(`invalid provider declaration: ${provider.name}`);
+  }
+  providerIds.add(provider.name);
 }
 rows('catalog/plugin-migrations.tsv', 5);
 rows('catalog/owners.tsv', 3);

@@ -7,7 +7,8 @@ runtime, package manager, VCS client, or Plugin runtime. A public Core gives
 multiple agent hosts one reviewed common workflow, catalog, host contract, and
 repeatable deployment path. An optional private Configuration Profile adds
 personal bootstrap, context, Skill dependencies, and Plugin choices without
-making the Core private.
+making the Core private. Profile provider selections and wildcard Skill targets
+follow the Agent set supported by the installed Core.
 
 The design optimizes for four properties:
 
@@ -25,8 +26,8 @@ PAC composes mature tools rather than reimplementing their control planes:
 | Rulesync | Compile the public, common workflow into reviewed Codex and Claude instruction artifacts | Profile content, Skill installation, host deployment, or runtime mutation |
 | Microsoft APM | Resolve, lock, update, and frozen-install the Core and Profile portable Skill dependency graphs | Capability routing, host projections, native Plugins, or transactions |
 | Git and `gh` | Identify Profile revisions; clone/fetch immutable commits; synchronize an editable workspace; create and push a private Profile repository | Installed-state reconciliation or Skill/Plugin activation |
-| Codex/Claude native Plugin mechanisms | Register and run Plugin bundles, Hooks, MCP servers, Apps, and host caches | Portable standalone Skill packaging |
-| PAC | Validate and append overlays, select routes, coordinate one transaction, reconcile host adapters/projections, and verify/restore owned state | Re-resolving packages, inventing a VCS protocol, compiling Profile rules, or emulating a Plugin runtime |
+| Agent-native Plugin/MCP mechanisms | Run Plugin bundles, Hooks, MCP servers, Apps, and host caches | Portable standalone Skill packaging or cross-Agent desired state |
+| PAC | Declare supported Agents and provider adapters; validate overlays; coordinate one transaction; reconcile host-native configuration/projections; verify and restore owned state | Re-resolving packages, inventing a VCS protocol, compiling Profile rules, or emulating a Plugin/MCP runtime |
 | Chezmoi and mise | Deploy reviewed host files and provide the pinned machine toolchain | Capability policy or user-specific desired state |
 
 This assignment is a design constraint. PAC may call these tools and adapt
@@ -40,7 +41,7 @@ Source layer
 ├── public Core checkout
 │   ├── common Rulesync workflow and reviewed generated adapters
 │   ├── Core APM manifest + lock
-│   └── public capability and Plugin declarations
+│   └── public capability, Plugin, provider, and supported-Agent declarations
 └── optional private Profile
     ├── editable Git workspace + workspace descriptor
     ├── immutable active descriptor: repository + ref + locked commit
@@ -52,6 +53,7 @@ Derived Runtime layer
 ├── APM Core runtime + separate content-addressed Profile APM runtime
 ├── PAC-owned neutral Skill view + target-filtered host links
 ├── host-native Plugin registrations and caches
+├── host-native MCP provider configuration selected by the Profile
 ├── PAC-installed private bootstrap
 └── metadata-only capability SQLite index
 ```

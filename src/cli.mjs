@@ -1,13 +1,13 @@
-import { resolveContext } from './config.mjs';
+import { HOSTS, resolveContext } from './config.mjs';
 import { executeCommand } from './commands.mjs';
 import { asPacError, usage } from './errors.mjs';
 
-const HELP = `Usage: pac [--json] [--home PATH] [--hosts codex|claude|all] COMMAND
+const HELP = `Usage: pac [--json] [--home PATH] [--hosts ${HOSTS.join('|')}|all] COMMAND
 
 --hosts limits this operation to a host; it never enables a disabled host.
 
 Core:
-  install [codex|claude|all]   Enable and apply PAC for a host
+  install [${HOSTS.join('|')}|all]   Enable and apply PAC for an Agent
   plan                         Show the next reconciliation without mutation
   apply                        Reconcile Skills, Plugins, projections and index
   status                       Report drift and pinned-engine state
@@ -34,12 +34,14 @@ function parse(argv) {
       if (!args.length) throw usage('--home requires a path.');
       options.home = args.shift();
     } else if (token === '--hosts') {
-      if (!args.length) throw usage('--hosts requires codex, claude, or all.');
+      if (!args.length) throw usage(`--hosts requires ${HOSTS.join(', ')}, or all.`);
       const value = args.shift();
-      if (!['codex', 'claude', 'all', 'codex,claude', 'claude,codex'].includes(value)) {
-        throw usage('--hosts requires codex, claude, or all.');
+      const requested = value === 'all' ? [] : value.split(',');
+      if (value !== 'all' && (requested.length === 0 || new Set(requested).size !== requested.length
+          || requested.some((host) => !HOSTS.includes(host)))) {
+        throw usage(`--hosts requires unique values from ${HOSTS.join(', ')}, or all.`);
       }
-      options.hosts = value === 'claude,codex' ? 'codex,claude' : value;
+      options.hosts = value === 'all' ? 'all' : HOSTS.filter((host) => requested.includes(host)).join(',');
     } else if (token === '--help' || token === '-h') {
       options.help = true;
     } else if (token.startsWith('--')) throw usage(`Unknown option: ${token}`);
@@ -59,11 +61,12 @@ function human(command, data) {
       `Skills: ${data.skills.length} (${data.materializerExceptions.length} declared materializer exception)`,
       `Lock: ${data.runtimeLock.matchesCanonical ? 'current' : 'drifted'}`,
       `Projection drift: ${drift}`,
+      `Providers: ${data.providers?.filter((entry) => !entry.valid).length || 0} drifted`,
       `Plugins: ${data.plugins.valid ? 'current' : 'drifted'}`,
     ].join('\n');
   }
   if (command === 'plan') {
-    return `PAC plan: lock=${data.changes.runtimeLock}, projections=${data.changes.projections.length}, materializers=${data.changes.materializers.length}, plugins=${data.changes.plugins}`;
+    return `PAC plan: lock=${data.changes.runtimeLock}, providers=${data.changes.providers?.length || 0}, projections=${data.changes.projections.length}, materializers=${data.changes.materializers.length}, plugins=${data.changes.plugins}`;
   }
   if (command === 'skill' && Array.isArray(data.skills)) {
     return data.skills.map((entry) => `${entry.name || entry.id}\t${entry.engine}`).join('\n');

@@ -986,3 +986,45 @@ That cost is accepted because it is the evidence the user's result request
 actually requires. Provider integration is delayed until a real Project can
 exercise it end to end, preventing a new speculative runtime from recreating
 the mechanism overhead this decision removes.
+
+## ADR-019: Core owns supported Agents; Profiles select portable providers
+
+Decision date: 2026-08-16. Extends ADR-015 through ADR-017.
+
+### Context
+
+Skills and Plugins already converge from one public Core plus one private
+Profile, but MCP configuration remained handwritten in each Agent's native
+configuration. That split made a provider appear installed while one Agent had
+no usable registration, and made adding a new supported Agent require editing
+the private Profile as well as Core.
+
+### Decision
+
+The public Core is the authority for supported Agent IDs and reviewed provider
+adapters. A Profile selects a provider once through `providers.enabled`; it does
+not repeat Agent targets or native configuration. PAC projects that provider to
+every enabled Agent supported by the current Core, preserves unrelated native
+settings, records narrow ownership, and includes the affected paths in the
+transaction backup and rollback contract.
+
+Schema v3 also permits embedded Skills to use `targets: ["*"]`, meaning every
+Agent supported by the installed Core. Explicit target lists remain available
+for intentional subsets. Profile APM dependencies inherit the Core host set.
+Adding a supported Agent therefore changes Core's host/configuration registry
+and adapters, after which the same Profile can be applied with `pac host enable
+AGENT`; it does not require a Profile migration.
+
+The first provider is CodeGraph. Core owns its reviewed version pin, Codex TOML,
+and Claude JSON adapters; `pac update` advances the pin and lock rather than
+floating at install time. The Agent remains the runtime owner of the resulting MCP process;
+PAC does not implement an MCP server or background supervisor.
+
+### Consequences
+
+One Profile now installs the same provider and Skill set across Codex and
+Claude, and future supported Agents inherit wildcard Profile capabilities. A
+new Agent is not advertised until Core ships and verifies its instruction,
+Skill, Plugin, provider, backup, rollback, and doctor adapters. Provider
+configuration drift fails closed, while unrelated Agent settings remain
+unmanaged and preserved.

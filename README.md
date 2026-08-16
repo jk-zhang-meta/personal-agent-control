@@ -5,8 +5,9 @@ layers:
 
 - the **public Core** contains the common policy, host adapters, public
   capabilities, provenance, and frozen dependency declarations;
-- one optional **private Profile v2** contains personal bootstrap text,
-  on-demand context, embedded or APM-managed Skills, and Plugin overrides; and
+- one optional **private Profile v3** contains personal bootstrap text,
+  on-demand context, embedded or APM-managed Skills, Plugin overrides, and
+  portable provider selections; and
 - the **derived Runtime** materializes the selected Core revision plus, when
   configured, one exact Profile commit into host-native instructions, links,
   Plugin caches, and a metadata-only capability index.
@@ -33,9 +34,9 @@ another agent framework:
 - **Pinned upstream sources** supply software, frontend, review,
   requirements-clarity, focused-response, and presentation Skills without
   vendoring or renaming their source trees here.
-- **Codex and Claude native Plugin managers** install host-integrated bundles
-  from one PAC-pinned source checkout per marketplace. PAC does not copy or
-  reinterpret Plugin hooks, MCP servers, runtimes, or host manifests.
+- **Agent-native Plugin managers and MCP runtimes** run host-integrated bundles
+  and servers. PAC keeps their runtime semantics native while reconciling the
+  reviewed cross-Agent provider configuration selected by a Profile.
 - **Capability Resolver** combines the Core and optional Profile capability
   overlays with installed Skill frontmatter in a local SQLite FTS5 index after
   Skills and Plugins are reconciled. Skill and context bodies are never
@@ -52,7 +53,8 @@ It names no installed capability. Ordinary Skills route through
 concise native descriptions, while thin domain routes may compose leaves that
 repeated evaluation shows often apply together. Future specialist packs are
 enabled at project or Profile scope instead of expanding the always-on kernel.
-Profile v2 may declare one short `bootstrap.md`; the Core kernel reads only its
+Profile v3 may declare one short `bootstrap.md`, portable providers, and
+wildcard Skill targets; the Core kernel reads only its
 PAC-owned projection. A Profile cannot add top-level Hooks, scripts, or Rulesync
 rules, so it cannot replace the common operating contract.
 Explicitly locked Skills may include helper scripts invoked as part of that
@@ -71,9 +73,10 @@ silently namespacing or shadowing it. MCP and App providers remain fail-closed
 and absent from lookup until a reviewed runtime overlay supplies their native
 handles.
 
-Codex and Claude are the verified hosts. The source model and adapter
-boundary are ready for additional agents; an untested target is never advertised
-as supported merely because a generator knows its filename.
+Codex and Claude are the verified hosts. Core owns this supported-Agent set and
+the adapter boundary; a Profile using `targets: ["*"]` and portable providers
+automatically follows that set. An untested target is never advertised as
+supported merely because a generator knows its filename.
 
 ## Install
 
@@ -113,7 +116,7 @@ sh -c "$(curl -fsLS https://get.chezmoi.io)" -- \
 ```
 
 No private repository is required beforehand. After installing Core, PAC can
-create a valid local Profile v2 workspace and publish it as a private GitHub
+create a valid local Profile v3 workspace and publish it as a private GitHub
 repository (the second command requires an authenticated GitHub CLI):
 
 ```sh
@@ -282,7 +285,7 @@ pac profile publish YOUR_ACCOUNT/personal-agent-profile
 pac profile status
 ```
 
-`init` creates the bounded Profile v2 workspace and a local Git commit.
+`init` creates the bounded Profile v3 workspace and a local Git commit.
 `publish` creates a **private** GitHub repository through the authenticated
 `gh` account, pushes the workspace, and activates its exact commit. It never
 changes Core or makes the Profile public.
@@ -373,7 +376,8 @@ Skill independently into Codex and Claude directories.
 
 For a private Skill that should live only inside the Profile, place it at
 `skills/<name>/`, add one manifest entry containing `name`, the same path, its
-complete directory SHA-256, and explicit `codex`/`claude` targets, then add a
+complete directory SHA-256, and `targets: ["*"]` for every Core-supported Agent
+(or an explicit Agent subset), then add a
 matching `skill:<name>` capability row. This embedded route is deliberately
 manual because its digest is a security boundary; a separate GitHub Skill repo
 plus `pac skill add` is easier to update and reuse.
@@ -487,10 +491,10 @@ scripts/, tests/       compiler, doctor, checks, and isolated acceptance test
 docs/                  architecture, decisions, hosts, research, and install
 ```
 
-Profile v2 is a separate repository with a deliberately bounded surface:
+Profile v3 is a separate repository with a deliberately bounded surface:
 
 ```text
-pac-profile.json                         # v2 manifest
+pac-profile.json                         # v3 manifest
 bootstrap.md                             # optional short always-on private text
 context/**/*.md                          # optional on-demand private context
 skills/<name>/SKILL.md                   # optional embedded, digest-locked Skills
@@ -501,8 +505,9 @@ catalog/capabilities.jsonl               # optional Skill/context routing metada
 README.md, LICENSE, LICENSE.md            # optional metadata
 ```
 
-The manifest declares `bootstrap`, embedded Skill paths/digests/host targets,
-and Plugin `enabled`/`disabled` overlays. Context rows use `context:<id>` plus a
+The manifest declares `bootstrap`, embedded Skill paths/digests/Agent targets,
+Plugin `enabled`/`disabled` overlays, and portable `providers.enabled` choices.
+Context rows use `context:<id>` plus a
 Profile-relative Markdown `path`; the resolver indexes only their routing
 metadata. Top-level Hooks, scripts, Rulesync rules, symlinks, and
 unknown top-level paths are rejected; explicitly locked Skill and Plugin

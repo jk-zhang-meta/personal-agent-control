@@ -9,6 +9,7 @@ node	24.18.0	nodejs/node	runtime for JavaScript CLIs	mise.lock
 rulesync	16.7.0	dyoshikawa/rulesync	host adapter compiler	sha512-Qx9BKHhHIZ6nLERqVdZBN9cR6a48P7OR6eda5sKX67uozxsedIGzw224hPLhFXL8k8iwbJsJCJtZZ5K7gl7zZQ==
 apm	0.28.0	microsoft/apm	portable agent package dependency engine	mise.lock plus GitHub artifact attestation and SLSA provenance
 skills	1.5.22	vercel-labs/skills	local Skill materializer and linker	sha512-cHiLjwZEawWFvudIqeeMZlvZayTLbRouydMbblyrdiyH7ZLbqUrSrEEr+Tg+X265iztRlVMsyOYRwpD5JxBsvg==
+codegraph	1.5.0	colbymchenry/codegraph	cross-Agent code graph MCP provider	mise.lock
 uv	0.12.1	astral-sh/uv	Python tool runtime for Skill validation	mise.lock
 skills-ref	0.1.1	agentskills/agentskills	official Agent Skills validator	PyPI wheel SHA-256 d35db5bb8de71ae301daf5ca9cb71f8a555e8c6f83a6d40e46a5bc09f8f461b5
 gitleaks	8.30.1	gitleaks/gitleaks	secret scanning	mise.lock

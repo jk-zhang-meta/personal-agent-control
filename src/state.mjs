@@ -234,10 +234,11 @@ function skillTargetsHost(skill, host) {
   if (skill.targets === undefined) return true;
   if (!Array.isArray(skill.targets) || skill.targets.length === 0
       || new Set(skill.targets).size !== skill.targets.length
-      || skill.targets.some((target) => !HOSTS.includes(target))) {
+      || skill.targets.some((target) => target !== '*' && !HOSTS.includes(target))
+      || (skill.targets.includes('*') && skill.targets.length !== 1)) {
     throw new PacError('SKILL_TARGETS_INVALID', `Managed Skill ${skill.id} has invalid host targets.`);
   }
-  return skill.targets.includes(host);
+  return skill.targets.includes('*') || skill.targets.includes(host);
 }
 
 export async function preflightProjectionCollisions(context, config, neutralStore, desiredSkills, selectedHosts = HOSTS) {
@@ -391,6 +392,7 @@ const BACKUP_REGULAR_FILES = new Set([
   '.config/personal-agent-control/profile-bootstrap.md',
   '.config/personal-agent-control/state.boltdb',
   '.local/state/personal-agent-control/owned-host-adapters.json',
+  '.local/state/personal-agent-control/owned-providers.json',
   '.local/state/personal-agent-control/profile-bootstrap.json',
   '.local/state/personal-agent-control/owned-skills.txt',
   '.local/state/personal-agent-control/owned-skill-map.json',
@@ -531,6 +533,7 @@ export async function createBackup(context, config, neutralStore, desiredSkills,
     '.config/personal-agent-control/profile-bootstrap.md',
     '.config/personal-agent-control/state.boltdb',
     '.local/state/personal-agent-control/owned-host-adapters.json',
+    '.local/state/personal-agent-control/owned-providers.json',
     '.local/state/personal-agent-control/profile-bootstrap.json',
     '.local/state/personal-agent-control/owned-skills.txt',
     '.local/state/personal-agent-control/owned-skill-map.json',
@@ -648,6 +651,7 @@ export async function createBackup(context, config, neutralStore, desiredSkills,
     'packages/skills/apm.yml',
     'packages/skills/apm.lock.yaml',
     'catalog/capabilities.jsonl',
+    'catalog/providers.json',
     'catalog/files.sha256',
   ];
   for (const relative of repoPaths) {

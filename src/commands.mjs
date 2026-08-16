@@ -31,6 +31,7 @@ import { run } from './exec.mjs';
 import { PacError, usage } from './errors.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
 import { hostAdapterStatus, reconcileHostAdapters } from './host-adapters.mjs';
+import { providerStatus, reconcileProviders } from './providers.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { profileBootstrapStatus, reconcileProfileBootstrap } from './profile-bootstrap.mjs';
 import {
@@ -444,6 +445,7 @@ async function applyUnlocked(context, options = {}) {
       })),
     ]);
     const adapters = await reconcileHostAdapters(context, enabled, reconciliationScope);
+    const providers = await reconcileProviders(context, effectiveProfile, enabled, reconciliationScope, 'apply');
     const projections = await reconcileProjections(context, effectiveConfig, neutral, desired, enabled, reconciliationScope);
     const retiredProfileSkills = await retireProfileSkills(context, neutral, priorOwnedMap, desired);
     const plugins = await reconcilePlugins(context, effectiveConfig, reconciliationScope, 'apply', profile);
@@ -455,13 +457,14 @@ async function applyUnlocked(context, options = {}) {
     const receipt = await writeReceipt(context, {
       operation: 'apply', backup, hosts: scopedEnabledHosts, enabledHosts: enabled,
       neutralSkillStore: neutral, skills: desired, plugins: effectivePlugins,
+      providers: providers.providers,
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
     });
     return {
       backup, receipt, hosts: scopedEnabledHosts, neutralSkillStore: neutral, skills: desired,
       materializers, profileSkills, retiredProfileSkills,
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
-      bootstrap, profileApm, adapters, projections, plugins, resolver, verification, sourceIntegrity,
+      bootstrap, profileApm, adapters, providers, projections, plugins, resolver, verification, sourceIntegrity,
     };
   } catch (error) {
     try {
@@ -510,7 +513,7 @@ async function projectionStatus(context, config, neutral, skills, hosts, scoped 
         if (stat.isSymbolicLink() && path.resolve(path.dirname(link), await fs.readlink(link)) === target) state = 'managed';
         else state = 'collision';
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
-      const compatible = skill.targets === undefined || skill.targets.includes(host);
+      const compatible = skill.targets === undefined || skill.targets.includes('*') || skill.targets.includes(host);
       const expected = selected.has(host) && compatible ? 'managed' : 'missing';
       const valid = state === expected || (!compatible && state === 'collision');
       results.push({
@@ -636,6 +639,11 @@ async function status(context, options = {}) {
   };
   const projections = await projectionStatus(context, effectiveConfig, neutral, skills, enabled, activeScope);
   const adapters = await hostAdapterStatus(context, enabled, activeScope);
+  let providers;
+  try { providers = await providerStatus(context, effectiveProfile, enabled, scope); }
+  catch (error) {
+    providers = [{ provider: 'catalog', host: 'core', valid: false, error: error.message, details: error.details }];
+  }
   let plugins;
   try { plugins = await reconcilePlugins(context, effectiveConfig, activeScope, 'check', profile); }
   catch (error) { plugins = { valid: false, error: error.message, details: error.details }; }
@@ -646,6 +654,7 @@ async function status(context, options = {}) {
       && materializers.every((entry) => entry.valid) && profileSkills.every((entry) => entry.valid)
       && ownership.valid
       && adapters.every((entry) => entry.valid)
+      && providers.every((entry) => entry.valid)
       && projections.every((entry) => entry.valid) && plugins.valid,
     root: context.root,
     home: context.home,
@@ -675,6 +684,7 @@ async function status(context, options = {}) {
     bootstrap,
     ownership,
     adapters,
+    providers,
     projections,
     plugins,
   };
@@ -688,6 +698,7 @@ async function plan(context, options) {
     changes: {
       runtimeLock: current.runtimeLock.matchesCanonical ? 'unchanged' : 'replace',
       adapters: current.adapters.filter((entry) => !entry.valid),
+      providers: current.providers.filter((entry) => !entry.valid),
       projections: current.projections.filter((entry) => !entry.valid),
       materializers: [
         ...current.materializerExceptions.filter((entry) => !entry.valid).map((entry) => entry.name),
@@ -1124,7 +1135,7 @@ async function hostCommand(context, action, args, options) {
     };
   }
   if (!['enable', 'disable'].includes(action) || args.length !== 1 || !HOSTS.includes(args[0])) {
-    throw usage('Usage: pac host enable|disable|list codex|claude');
+    throw usage(`Usage: pac host enable|disable|list ${HOSTS.join('|')}`);
   }
   const host = args[0];
   return await mutateMachineAndApply(context, { ...options, hosts: includeHostInScope(options, host) }, (enabled) => {
@@ -1174,7 +1185,9 @@ async function rollback(context, args) {
 }
 
 async function install(context, args, options) {
-  if (args.length > 1 || (args[0] && ![...HOSTS, 'all'].includes(args[0]))) throw usage('Usage: pac install [codex|claude|all]');
+  if (args.length > 1 || (args[0] && ![...HOSTS, 'all'].includes(args[0]))) {
+    throw usage(`Usage: pac install [${HOSTS.join('|')}|all]`);
+  }
   const requested = args[0] || 'all';
   const environmentProfile = profileRequestFromEnvironment();
   const installOptions = {

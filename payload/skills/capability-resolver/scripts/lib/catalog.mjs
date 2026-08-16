@@ -861,11 +861,13 @@ function readProfileManifest(profile) {
     throw new Error(`Profile manifest must be a regular file: ${file}`);
   }
   const manifest = readJson(file);
-  if (!isPlainObject(manifest) || ![1, 2].includes(manifest.schemaVersion)
+  if (!isPlainObject(manifest) || ![1, 2, 3].includes(manifest.schemaVersion)
       || !Array.isArray(manifest.skills)
       || !isPlainObject(manifest.plugins) || !Array.isArray(manifest.plugins.enabled)
-      || (manifest.schemaVersion === 2 && !Array.isArray(manifest.plugins.disabled))) {
-    throw new Error('pac-profile.json must use schemaVersion 1 or 2 and declare Skills and Plugin overlays');
+      || (manifest.schemaVersion >= 2 && !Array.isArray(manifest.plugins.disabled))
+      || (manifest.schemaVersion === 3
+        && (!isPlainObject(manifest.providers) || !Array.isArray(manifest.providers.enabled)))) {
+    throw new Error('pac-profile.json must use schemaVersion 1, 2, or 3 and declare its overlays');
   }
   const skillNames = new Set();
   const skills = manifest.skills.map((skill) => {
@@ -893,7 +895,12 @@ function readProfileManifest(profile) {
       || disabled.some((plugin) => enabled.includes(plugin))) {
     throw new Error('pac-profile.json plugins.disabled must be unique and disjoint from enabled');
   }
-  return { schemaVersion: manifest.schemaVersion, skills, plugins: { enabled, disabled } };
+  const providers = manifest.providers?.enabled ?? [];
+  if (providers.some((provider) => typeof provider !== 'string')
+      || new Set(providers).size !== providers.length) {
+    throw new Error('pac-profile.json providers.enabled must contain unique provider names');
+  }
+  return { schemaVersion: manifest.schemaVersion, skills, plugins: { enabled, disabled }, providers: { enabled: providers } };
 }
 
 function readProfileIdentity(profile) {
@@ -965,6 +972,10 @@ function resolveProfileContextPath(profile, value, id) {
 
 function parseTargets(value) {
   const values = Array.isArray(value) ? value : parseList(value);
+  if (values.includes('*')) {
+    if (values.length !== 1) throw new Error('wildcard host target must be declared alone');
+    return uniqueSorted([...new Set(HOST_NAMES.values())]);
+  }
   return uniqueSorted(values.map((target) => {
     const normalized = HOST_NAMES.get(String(target).trim().toLowerCase());
     if (!normalized) throw new Error(`unsupported host target: ${target}`);

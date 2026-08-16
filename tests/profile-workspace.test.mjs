@@ -38,9 +38,10 @@ test('Profile workspace init is versioned, valid, and idempotent', async (t) => 
   const { context } = await fixture(t);
   const first = await ensureProfileWorkspace(context);
   assert.equal(first.created, true);
-  assert.equal((await validateProfileWorkspace(first.path)).schemaVersion, 2);
+  assert.equal((await validateProfileWorkspace(first.path)).schemaVersion, 3);
   const manifest = JSON.parse(await fs.readFile(path.join(first.path, 'pac-profile.json'), 'utf8'));
   assert.deepEqual(manifest.plugins, { enabled: [], disabled: [] });
+  assert.deepEqual(manifest.providers, { enabled: [] });
   const second = await ensureProfileWorkspace(context);
   assert.equal(second.created, false);
   assert.equal(second.path, first.path);
