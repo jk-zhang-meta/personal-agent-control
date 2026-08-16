@@ -78,10 +78,17 @@ function compileSourceModel({ repo, profile, home, skillRoot, strictRouting, val
     ...readTsv(path.join(repo, "catalog/plugins.tsv"), HEADERS.plugins),
     ...readOptionalTsv(profile, "catalog/plugins.tsv", HEADERS.plugins),
   ];
+  const providerRows = readProviderCatalog(repo);
   validatePluginRows(pluginRows);
   const toolRows = readTsv(path.join(repo, "catalog/tools.tsv"), HEADERS.tools);
   const pluginRuntime = loadPluginRuntime(repo, home, pluginRows, validationOnly, profileManifest);
   const profileIdentity = profile === null ? null : readProfileIdentity(profile);
+  const enabledProviders = profileManifest?.providers?.enabled ?? [];
+  const knownProviders = new Set(providerRows.map(({ name }) => name));
+  const unknownProviders = enabledProviders.filter((name) => !knownProviders.has(name));
+  if (unknownProviders.length) {
+    throw new Error(`pac-profile.json enables unknown provider(s): ${unknownProviders.join(", ")}`);
+  }
 
   const toolNames = new Set(toolRows.map((row) => row.name));
   const capabilities = new Map();
@@ -264,6 +271,36 @@ function compileSourceModel({ repo, profile, home, skillRoot, strictRouting, val
     }
   }
 
+  for (const row of providerRows) {
+    const providerId = `provider:${row.name}`;
+    declareId(declaredIds, providerId);
+    const metadata = overlay.get(providerId);
+    if (strictRouting && !metadata) throw new Error(`missing capability overlay metadata for ${providerId}`);
+    validateOverlayIdentity(metadata, "provider", row.kind, providerId, row.name);
+    const catalogTargets = parseTargets(Object.keys(row.hosts));
+    const targets = validationOnly
+      ? catalogTargets
+      : enabledProviders.includes(row.name)
+        ? catalogTargets.filter((target) => pluginRuntime.enabledHosts.includes(target))
+        : [];
+    capabilities.set(providerId, makeCapability({
+      id: providerId,
+      role: "provider",
+      kind: row.kind,
+      name: row.name,
+      summary: metadata?.summary ?? "",
+      metadata,
+      memberships: ["kind.provider", `kind.provider.${row.kind}`],
+      targets,
+      providerId: null,
+      delivery: "mcp",
+      requires: [],
+      visibility: metadata?.visibility ?? "private",
+      activation: { type: "mcp-server", name: row.name, command: row.command, args: row.args },
+      resource: null,
+    }, categoryIds));
+  }
+
   const agentRows = loadCanonicalSubagents(repo);
   for (const agent of agentRows) {
     const id = `subagent:${agent.name}`;
@@ -300,6 +337,7 @@ function compileSourceModel({ repo, profile, home, skillRoot, strictRouting, val
   const normalizedCatalogs = {
     plugins: sortRecords(pluginRows),
     tools: sortRecords(toolRows),
+    providers: sortRecords(providerRows),
   };
   const logicalCapabilities = sortedCapabilities.map(({ resource: _resource, activation, ...rest }) => ({
     ...rest,
@@ -792,6 +830,25 @@ function readJson(file) {
   } catch (error) {
     throw new Error(`invalid JSON in ${file}: ${error.message}`);
   }
+}
+
+function readProviderCatalog(repo) {
+  const file = path.join(repo, "catalog/providers.json");
+  if (!existsSync(file)) return [];
+  const value = readJson(file);
+  if (!isPlainObject(value) || value.schemaVersion !== 1 || !Array.isArray(value.providers)) {
+    throw new Error("catalog/providers.json must use schemaVersion 1 and declare providers");
+  }
+  const names = new Set();
+  return value.providers.map((provider) => {
+    if (!isPlainObject(provider) || typeof provider.name !== "string" || names.has(provider.name)
+        || typeof provider.kind !== "string" || !isPlainObject(provider.hosts)
+        || typeof provider.command !== "string" || !Array.isArray(provider.args)) {
+      throw new Error("catalog/providers.json contains an invalid provider");
+    }
+    names.add(provider.name);
+    return provider;
+  });
 }
 
 function loadPluginRuntime(repo, home, pluginRows, validationOnly, profileManifest) {
