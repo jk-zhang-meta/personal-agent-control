@@ -153,6 +153,11 @@ append `automated-rebuttal-workflow` or another reviewed native package. Draw.io
 is installed as the shared standalone Skill; the prior native Plugin is removed
 once through the reviewed migration catalog. Unknown installed Plugins are
 preserved and reported as `UNMANAGED`.
+The CodeGraph MCP adapter launches the pinned `codegraph serve --mcp` binary
+through `mise --cd <PAC Core> exec`; generated host configuration expands
+`{{PAC_ROOT}}` to the active Core checkout. This keeps the provider usable from
+any project working directory and avoids relying on a machine-specific
+`/usr/local` wrapper or an unrelated global installation.
 An inactive host is outside the active Plugin audit: PAC removes only Plugins
 it previously owned there and preserves unrelated native Plugins and their
 marketplaces. Re-enabling that host restores strict `UNMANAGED` checking.

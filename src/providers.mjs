@@ -84,26 +84,33 @@ function providerConfigPath(context, relative) {
   return path.join(context.home, relative);
 }
 
-function expectedArgs(provider) {
-  return JSON.stringify(provider.args);
+function expandedArgs(context, provider) {
+  return provider.args.map((argument) => {
+    if (argument === '{{PAC_ROOT}}') return context.root;
+    return typeof argument === 'string' ? argument.replaceAll('{{PAC_ROOT}}', context.root) : argument;
+  });
 }
 
-function codexBlock(provider) {
+function expectedArgs(context, provider) {
+  return JSON.stringify(expandedArgs(context, provider));
+}
+
+function codexBlock(context, provider) {
   return [
     `[mcp_servers.${provider.name}]`,
     `command = ${JSON.stringify(provider.command)}`,
-    `args = ${expectedArgs(provider)}`,
+    `args = ${expectedArgs(context, provider)}`,
     'startup_timeout_sec = 30',
   ];
 }
 
-function upsertCodex(text, provider) {
+function upsertCodex(text, context, provider) {
   const lines = text ? text.split(/\r?\n/u) : [];
   const header = `[mcp_servers.${provider.name}]`;
   const start = lines.findIndex((line) => line.trim() === header);
   const endFrom = start < 0 ? -1 : lines.findIndex((line, index) => index > start && /^\s*\[[^[]/u.test(line));
   const end = endFrom < 0 ? lines.length : endFrom;
-  const block = start < 0 ? codexBlock(provider) : lines.slice(start, end);
+  const block = start < 0 ? codexBlock(context, provider) : lines.slice(start, end);
   const setLine = (name, value) => {
     const index = block.findIndex((line) => new RegExp(`^${name}\\s*=`).test(line));
     const line = `${name} = ${value}`;
@@ -111,7 +118,7 @@ function upsertCodex(text, provider) {
     else block[index] = line;
   };
   setLine('command', JSON.stringify(provider.command));
-  setLine('args', expectedArgs(provider));
+  setLine('args', expectedArgs(context, provider));
   if (start < 0) {
     const prefix = lines.length && lines.at(-1) !== '' ? [''] : [];
     return [...lines, ...prefix, ...block, ''].join('\n');
@@ -141,7 +148,7 @@ async function readCodex(context, provider, file) {
   const block = lines.slice(start, end < 0 ? lines.length : end).join('\n');
   const command = block.match(/^\s*command\s*=\s*"([^"]*)"/mu)?.[1];
   const args = block.match(/^\s*args\s*=\s*(\[[^\n]*\])/mu)?.[1];
-  return { present: true, valid: command === provider.command && args === expectedArgs(provider), path: file };
+  return { present: true, valid: command === provider.command && args === expectedArgs(context, provider), path: file };
 }
 
 async function readClaude(context, provider, file) {
@@ -150,7 +157,7 @@ async function readClaude(context, provider, file) {
   catch (error) { if (error.code !== 'ENOENT') throw new PacError('PROVIDER_CONFIG_INVALID', `Cannot parse ${file}: ${error.message}`); }
   const entry = value.mcpServers?.[provider.name];
   const valid = entry?.type === 'stdio' && entry.command === provider.command
-    && JSON.stringify(entry.args) === expectedArgs(provider);
+    && JSON.stringify(entry.args) === expectedArgs(context, provider);
   return { present: Boolean(entry), valid, path: file };
 }
 
@@ -159,7 +166,7 @@ async function applyCodex(context, provider, file) {
   let text = '';
   try { text = await fs.readFile(file, 'utf8'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  await atomicWriteFile(file, upsertCodex(text, provider));
+  await atomicWriteFile(file, upsertCodex(text, context, provider));
 }
 
 async function applyClaude(context, provider, file) {
@@ -169,7 +176,7 @@ async function applyClaude(context, provider, file) {
   catch (error) { if (error.code !== 'ENOENT') throw new PacError('PROVIDER_CONFIG_INVALID', `Cannot parse ${file}: ${error.message}`); }
   value.mcpServers = { ...(value.mcpServers || {}), [provider.name]: {
     ...(value.mcpServers?.[provider.name] || {}),
-    type: 'stdio', command: provider.command, args: [...provider.args],
+    type: 'stdio', command: provider.command, args: expandedArgs(context, provider),
   } };
   await atomicWriteFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }

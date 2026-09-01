@@ -109,6 +109,11 @@ for (const provider of providers.providers) {
   }
   providerIds.add(provider.name);
 }
+const codegraph = providers.providers.find((provider) => provider.name === 'codegraph');
+if (!codegraph || codegraph.command !== 'mise' ||
+    JSON.stringify(codegraph.args) !== JSON.stringify(['--cd', '{{PAC_ROOT}}', 'exec', '--', 'codegraph', 'serve', '--mcp'])) {
+  throw new Error('CodeGraph provider must launch the pinned binary through the PAC Core mise project.');
+}
 rows('catalog/plugin-migrations.tsv', 5);
 rows('catalog/owners.tsv', 3);
 const tools = rows('catalog/tools.tsv', 5);

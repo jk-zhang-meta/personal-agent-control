@@ -7,7 +7,7 @@
       "versionPolicy": "pinned",
       "version": "1.5.0",
       "command": "mise",
-      "args": ["exec", "--", "/usr/local/bin/mw", "codegraph-mcp"],
+      "args": ["--cd", "{{PAC_ROOT}}", "exec", "--", "codegraph", "serve", "--mcp"],
       "hosts": {
         "codex": {
           "config": ".codex/config.toml",
