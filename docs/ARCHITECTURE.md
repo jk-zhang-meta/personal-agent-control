@@ -402,7 +402,7 @@ packages/skills/apm.yml         # optional Profile APM graph
 packages/skills/apm.lock.yaml   # required iff that graph is non-empty
 catalog/plugins.tsv             # optional
 catalog/capabilities.jsonl      # optional
-README.md, LICENSE, LICENSE.md  # optional metadata
+AGENTS.md, README.md, LICENSE, LICENSE.md  # optional metadata; AGENTS.md is the project contract
 ```
 
 Unknown top-level content, including top-level Hooks, scripts, and Rulesync

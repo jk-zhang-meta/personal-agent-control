@@ -8,7 +8,7 @@ import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mj
 
 const WORKSPACE_PATHS = [
   'pac-profile.json', 'bootstrap.md', 'context', 'catalog', 'skills', 'packages',
-  'README.md', 'LICENSE', 'LICENSE.md',
+  'AGENTS.md', 'README.md', 'LICENSE', 'LICENSE.md',
 ];
 
 function descriptorPath(context) {
@@ -183,6 +183,50 @@ scripts: {}
     fs.writeFile(
       path.join(root, 'README.md'),
       '# Personal Agent Profile\n\nPrivate PAC overlay. Keep the bootstrap small and route larger context modules through catalog metadata.\n',
+      { flag: 'wx', mode: 0o600 },
+    ),
+    fs.writeFile(
+      path.join(root, 'AGENTS.md'),
+      `# Personal Agent Profile project contract
+
+## Scope and source of truth
+
+This repository is the private, commit-locked Profile overlay. Edit
+pac-profile.json, bootstrap.md, context/, skills/, catalog/, and
+packages/skills/ as canonical source. Keep generated runtime, indexes, logs,
+and intermediate output outside synchronized source.
+
+## Operating constraints
+
+Do not store secrets or machine-only absolute paths in committed Profile
+content. The Profile is data-only: it cannot add top-level hooks, scripts, or
+Rulesync rules. Keep bootstrap.md short and route detail through reviewed
+context modules and Skills.
+
+## Request scope routing
+
+When the user adds a constraint, default it to the active project's contract
+and ledger. Use the global Profile only for explicit global/all-projects/PAC or
+repository-independent wording. Keep ambiguous wording as an inferred project
+candidate; never promote a project fact silently.
+
+## Verification oracles
+
+Run the PAC Profile validator and inspect the exact Git diff before commit. A
+valid Profile has matching Skill digests, closed catalogs, safe regular files,
+and a frozen lock for every non-empty APM dependency graph.
+
+## Workflow and completion
+
+Use the WSL-local PAC runtime for task state and receipts. Commit only after
+validation; activate or publish the exact resulting commit. Record unresolved
+risks rather than weakening a fail-closed check.
+
+## Map
+
+See context/project-agent-md-v1.md for the project-contract protocol and
+README.md for the Profile surface.
+`,
       { flag: 'wx', mode: 0o600 },
     ),
   ]);

@@ -794,7 +794,7 @@ packages/skills/apm.yml         # optional private dependency graph
 packages/skills/apm.lock.yaml   # required iff dependencies exist
 catalog/plugins.tsv             # optional
 catalog/capabilities.jsonl      # optional
-README.md, LICENSE, LICENSE.md  # optional metadata
+AGENTS.md, README.md, LICENSE, LICENSE.md  # optional metadata; AGENTS.md is the project contract
 ```
 
 Top-level Hooks, scripts, Rulesync rules, unknown top-level content,

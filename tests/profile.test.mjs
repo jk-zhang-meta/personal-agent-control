@@ -272,10 +272,11 @@ test('invalid Profile manifests, paths, links, and digests are rejected', async 
 });
 
 test('Profile root accepts only its manifest, declared content, and safe metadata', async (t) => {
-  await t.test('README and license metadata are allowed', async (subtest) => {
+  await t.test('AGENTS, README, and license metadata are allowed', async (subtest) => {
     const { context, repository } = await fixture(subtest);
     await writeProfile(repository, async ({ repository: root }) => {
       await Promise.all([
+        fs.writeFile(path.join(root, 'AGENTS.md'), '# Profile contract\n'),
         fs.writeFile(path.join(root, 'README.md'), '# Private profile\n'),
         fs.writeFile(path.join(root, 'LICENSE'), 'license text\n'),
         fs.writeFile(path.join(root, 'LICENSE.md'), 'license notes\n'),

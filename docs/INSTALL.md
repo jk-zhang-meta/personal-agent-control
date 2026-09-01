@@ -177,7 +177,7 @@ packages/skills/apm.yml                  # optional APM dependency manifest
 packages/skills/apm.lock.yaml            # required for non-empty dependencies
 catalog/plugins.tsv                      # optional Plugin provider overlay
 catalog/capabilities.jsonl               # optional routing overlay
-README.md, LICENSE, LICENSE.md            # optional metadata
+AGENTS.md, README.md, LICENSE, LICENSE.md # optional metadata; AGENTS.md is the project contract
 ```
 
 The canonical v3 manifest has this shape:
