@@ -205,7 +205,7 @@ cat > "$fixture_bin/git" <<'SH'
 set -eu
 if [ "${1:-}" = ls-remote ]; then
     printf '%s\t%s\n' \
-        '51cb529d00638097e70fd3e9d865a0bf061b5e19' \
+        'f5410f968e0fadbbd1f9815539238a8dda34b4d2' \
         'refs/tags/v4.3.0'
     exit 0
 fi
@@ -227,7 +227,7 @@ if [ "${1:-}" = -C ] && [ "$materializer" = 1 ]; then
             exit 0
             ;;
         rev-parse)
-            printf '%s\n' '51cb529d00638097e70fd3e9d865a0bf061b5e19'
+            printf '%s\n' 'f5410f968e0fadbbd1f9815539238a8dda34b4d2'
             exit 0
             ;;
     esac

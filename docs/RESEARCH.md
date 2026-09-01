@@ -188,7 +188,7 @@ editable SVG-to-PPTX generation, native template fill and enhancement,
 structured quality gates, source conversion, visual review, and reusable
 template workspaces. PAC installs the public
 [v4.3.0 release](https://github.com/hugohe3/ppt-master/tree/v4.3.0/skills/ppt-master),
-resolved to commit `51cb529d00638097e70fd3e9d865a0bf061b5e19`, rather than a moving branch or a
+resolved to commit `f5410f968e0fadbbd1f9815539238a8dda34b4d2`, rather than a moving branch or a
 vendored copy.
 
 Keeping the upstream Skill intact avoids fragile renaming or selective

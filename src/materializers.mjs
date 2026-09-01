@@ -11,7 +11,7 @@ export const MATERIALIZER_EXCEPTIONS = [{
   engineVersion: '1.5.22',
   source: 'hugohe3/ppt-master',
   ref: 'v4.3.0',
-  commit: '51cb529d00638097e70fd3e9d865a0bf061b5e19',
+  commit: 'f5410f968e0fadbbd1f9815539238a8dda34b4d2',
   skillPath: 'skills/ppt-master',
   contentSha256: '18facf0343aba4c9cabb356fdc370802c36913eaa8d52f45e62f09f84185294f',
   reason: 'APM 0.28.0 cannot safely reload the generated lock for this 12,230-file Skill.',

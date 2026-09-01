@@ -135,7 +135,7 @@ if (JSON.stringify(dependencies) !== JSON.stringify(expectedDependencies)) {
 const materializers = read('src/materializers.mjs');
 for (const required of [
   "source: 'hugohe3/ppt-master'",
-  "commit: '51cb529d00638097e70fd3e9d865a0bf061b5e19'",
+  "commit: 'f5410f968e0fadbbd1f9815539238a8dda34b4d2'",
   "skillPath: 'skills/ppt-master'",
   "contentSha256: '18facf0343aba4c9cabb356fdc370802c36913eaa8d52f45e62f09f84185294f'",
 ]) {
@@ -189,7 +189,7 @@ cp "$repo/packages/skills/apm.lock.yaml" "$tmp/apm-root/apm.lock.yaml"
 # to be installed in the developer's real HOME.  APM materializes its locked
 # Skills; the sole reviewed materializer exception contributes only the exact
 # SKILL.md needed by the resolver's metadata oracle.
-ppt_commit=51cb529d00638097e70fd3e9d865a0bf061b5e19
+ppt_commit=f5410f968e0fadbbd1f9815539238a8dda34b4d2
 ppt_skill_sha=c96eb86efc0ec0a4c0ddea39bad3072b68e09624e045d8308a417ea6344c7892
 ppt_checkout="$tmp/ppt-master"
 ppt_target="$tmp/ppt-master"

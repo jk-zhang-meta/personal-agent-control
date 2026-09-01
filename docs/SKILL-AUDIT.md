@@ -76,7 +76,7 @@ public Core by deleting current files alone.
   pinned to commit `7c180d9044c9ae2b442b567aad4e42a28dd5ed62`, supply the selected MIT
   React/Next performance and React composition Skills.
 - [PPT Master v4.3.0](https://github.com/hugohe3/ppt-master/tree/v4.3.0/skills/ppt-master),
-  commit `51cb529d00638097e70fd3e9d865a0bf061b5e19`, remains the presentation
+  commit `f5410f968e0fadbbd1f9815539238a8dda34b4d2`, remains the presentation
   workflow under MIT.
 - [draw.io MCP repository](https://github.com/jgraph/drawio-mcp/tree/14b318b19cc37b159f841227b9d11fbd18ce18ea/plugins/codex/drawio/skills/drawio),
   pinned to commit `14b318b19cc37b159f841227b9d11fbd18ce18ea`,
