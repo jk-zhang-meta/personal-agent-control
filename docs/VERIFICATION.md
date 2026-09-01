@@ -65,6 +65,9 @@ be edited as an authoring surface.
   marketplace, provider, or bundled-Skill identities fail closed.
 - PAC calls each selected host's native Plugin mechanism and verifies the native
   registration/cache result rather than flattening the package into Skills.
+- A runtime-generated Plugin manifest rewrite is accepted only when it matches
+  the strict, semantics-preserving normalization contract; arbitrary source
+  edits, index changes, and untracked files still fail closed.
 - Hooks, MCP servers, Apps, authentication, sessions, and unrelated native
   state stay host-owned.
 - Removal touches only state whose prior ownership and exact identity are

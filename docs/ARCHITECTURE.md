@@ -206,6 +206,14 @@ checkout under
 Codex and Claude then create their required native caches. Those caches are
 projections, not duplicate Skill sources.
 
+Some Plugin runtimes perform a deterministic startup self-heal in the source
+checkout itself. For example, context-mode on Linux resolves
+`${CLAUDE_PLUGIN_ROOT}` and the Node executable in its Claude manifests. PAC
+does not ignore a dirty checkout: `src/plugin-source-state.mjs` accepts only
+that exact two-file, semantics-preserving rewrite after the pinned Git commit
+and tree still match; every other tracked or untracked change remains a hard
+drift.
+
 The public Core native Plugin is `context-mode`, whose Skills require hooks and
 an MCP runtime. The private `automated-rebuttal-workflow` Plugin and its
 host-specific confirmation adapter belong to the Configuration Profile.

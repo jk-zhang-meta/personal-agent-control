@@ -214,7 +214,14 @@ source_current() {
     [ "$(git -C "$directory" remote get-url origin 2>/dev/null)" = "$source" ] || return 1
     [ "$(git -C "$directory" rev-parse HEAD 2>/dev/null)" = "$commit" ] || return 1
     [ "$(git -C "$directory" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$tree" ] || return 1
-    [ -z "$(git -C "$directory" status --porcelain --untracked-files=all 2>/dev/null)" ] || return 1
+    dirty=$(git -C "$directory" status --porcelain=v1 --untracked-files=all 2>/dev/null)
+    if [ -n "$dirty" ]; then
+        # A few native Plugin runtimes (notably context-mode on Linux) rewrite
+        # their own Claude manifests at MCP boot. Accept only the exact,
+        # semantics-preserving rewrite recognized by the checked-in helper;
+        # arbitrary edits, index changes, and untracked files still fail closed.
+        node "$repo/src/plugin-source-state.mjs" check "$directory" >/dev/null 2>&1 || return 1
+    fi
     if [ "$acquisition" = github-tag ]; then
         [ "$(git -C "$directory" rev-parse "$ref^{commit}" 2>/dev/null)" = "$commit" ] || return 1
     fi
