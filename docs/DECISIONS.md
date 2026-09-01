@@ -1017,8 +1017,11 @@ AGENT`; it does not require a Profile migration.
 
 The first provider is CodeGraph. Core owns its reviewed version pin, Codex TOML,
 and Claude JSON adapters; `pac update` advances the pin and lock rather than
-floating at install time. The Agent remains the runtime owner of the resulting MCP process;
-PAC does not implement an MCP server or background supervisor.
+floating at install time. The reviewed launch includes `--no-watch`: provider
+watchers are not a safe default on WSL/OneDrive mounts, and a caller must pass
+an explicit project path when it needs a semantic graph. The Agent remains the
+runtime owner of the resulting MCP process; PAC does not implement an MCP
+server or background supervisor.
 
 ### Consequences
 

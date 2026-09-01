@@ -35,7 +35,7 @@ test('CodeGraph provider is projected to Codex and Claude and preserves surround
     const claude = JSON.parse(await fs.readFile(path.join(home, '.claude.json'), 'utf8'));
     assert.equal(claude.theme, 'dark');
     assert.equal(claude.mcpServers.codegraph.command, 'mise');
-    assert.deepEqual(claude.mcpServers.codegraph.args, ['--cd', root, 'exec', '--', 'codegraph', 'serve', '--mcp']);
+    assert.deepEqual(claude.mcpServers.codegraph.args, ['--cd', root, 'exec', '--', 'codegraph', 'serve', '--mcp', '--no-watch']);
     const ownership = JSON.parse(await fs.readFile(path.join(stateDir, 'owned-providers.json'), 'utf8'));
     assert.deepEqual(Object.keys(ownership.providers.codegraph).sort(), ['claude', 'codex']);
   } finally {
@@ -52,8 +52,8 @@ test('CodeGraph provider retirement removes only the PAC-owned entries', async (
   const root = process.cwd();
   const stateDir = path.join(home, '.local/state/personal-agent-control');
   await fs.mkdir(path.join(home, '.codex'), { recursive: true });
-  await fs.writeFile(path.join(home, '.codex/config.toml'), '[mcp_servers.codegraph]\ncommand = "mise"\nargs = ["--cd",' + JSON.stringify(root) + ',"exec","--","codegraph","serve","--mcp"]\n\n[projects."/tmp"]\ntrust_level = "trusted"\n');
-  await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { codegraph: { type: 'stdio', command: 'mise', args: ['--cd', root, 'exec', '--', 'codegraph', 'serve', '--mcp'] } }, other: true }));
+  await fs.writeFile(path.join(home, '.codex/config.toml'), '[mcp_servers.codegraph]\ncommand = "mise"\nargs = ["--cd",' + JSON.stringify(root) + ',"exec","--","codegraph","serve","--mcp","--no-watch"]\n\n[projects."/tmp"]\ntrust_level = "trusted"\n');
+  await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ mcpServers: { codegraph: { type: 'stdio', command: 'mise', args: ['--cd', root, 'exec', '--', 'codegraph', 'serve', '--mcp', '--no-watch'] } }, other: true }));
   const context = { root, home, stateDir };
   const profile = { manifest: { providers: { enabled: ['codegraph'] } } };
   const previous = process.env.PAC_PROVIDER_NO_UPGRADE;
