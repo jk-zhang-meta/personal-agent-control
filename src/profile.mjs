@@ -180,6 +180,68 @@ async function regularFiles(root, label) {
   return files;
 }
 
+function markdownLinkTarget(raw) {
+  let value = String(raw || '').trim();
+  if (!value) return null;
+  if (value.startsWith('<')) {
+    const end = value.indexOf('>');
+    if (end < 0) return null;
+    value = value.slice(1, end);
+  } else {
+    value = value.split(/\s+/u, 1)[0];
+  }
+  if (!value || value.startsWith('#') || /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value)) return null;
+  value = value.split('#', 1)[0].split('?', 1)[0];
+  if (!value) return null;
+  try { return decodeURIComponent(value); }
+  catch { return value; }
+}
+
+async function validateSkillReferences(root, skillRoot, skillName) {
+  const files = await regularFiles(skillRoot, `Profile Skill ${skillName}`);
+  // SKILL.md is the installed entry point. Keep every relative link from that
+  // entry self-contained without imposing a new schema on arbitrary archived
+  // reference prose that may intentionally mention unavailable case material.
+  for (const file of files.filter(({ relative }) => relative === 'SKILL.md')) {
+    const text = await fs.readFile(file.absolute, 'utf8');
+    for (const match of text.matchAll(/!?\[[^\]\r\n]*\]\(([^)\r\n]+)\)/gu)) {
+      const targetText = markdownLinkTarget(match[1]);
+      if (targetText === null) continue;
+      if (targetText.includes('\0')) {
+        throw new PacError('PROFILE_CONTENT_INVALID',
+          `Profile Skill ${skillName} contains an invalid Markdown link in ${file.relative}.`);
+      }
+      const target = path.resolve(path.dirname(file.absolute), targetText);
+      const suffix = path.relative(skillRoot, target);
+      if (suffix === '..' || suffix.startsWith(`..${path.sep}`) || path.isAbsolute(suffix)) {
+        throw new PacError('PROFILE_CONTENT_INVALID',
+          `Profile Skill ${skillName} Markdown links must stay inside the installed Skill: ${file.relative} -> ${targetText}`);
+      }
+      const stat = await lstatOrNull(target);
+      if (!stat || !stat.isFile() || stat.isSymbolicLink()) {
+        throw new PacError('PROFILE_CONTENT_INVALID',
+          `Profile Skill ${skillName} has an unresolved Markdown link: ${file.relative} -> ${targetText}`);
+      }
+    }
+  }
+
+  const contextRoot = path.join(root, 'context');
+  for (const file of files.filter(({ relative }) => relative.startsWith('references/'))) {
+    const canonical = path.join(contextRoot, path.basename(file.relative));
+    const stat = await lstatOrNull(canonical);
+    if (!stat) continue;
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new PacError('PROFILE_CONTENT_INVALID',
+        `Profile context mirror must be a regular file: context/${path.basename(file.relative)}`);
+    }
+    const [vendored, source] = await Promise.all([fs.readFile(file.absolute), fs.readFile(canonical)]);
+    if (!vendored.equals(source)) {
+      throw new PacError('PROFILE_CONTENT_INVALID',
+        `Profile Skill ${skillName} vendored context differs from context/${path.basename(file.relative)}.`);
+    }
+  }
+}
+
 async function validateRootContract(root) {
   await requireRealDirectory(root, 'Profile checkout');
   const metadata = [];
@@ -473,6 +535,7 @@ async function validateProfileTree(root) {
         `Profile Skill ${skill.name} must declare the same frontmatter name in SKILL.md.`,
       );
     }
+    await validateSkillReferences(root, skillRoot, skill.name);
     const actual = await hashDirectory(skillRoot);
     if (actual !== skill.contentSha256) {
       throw new PacError(

@@ -253,6 +253,27 @@ test('invalid Profile manifests, paths, links, and digests are rejected', async 
       code: 'PROFILE_CONTENT_INVALID',
     },
     {
+      name: 'escaping Markdown link',
+      mutate: async ({ repository, skillRoot, manifest }) => {
+        await fs.writeFile(path.join(repository, 'outside.md'), 'outside\n');
+        await fs.appendFile(path.join(skillRoot, 'SKILL.md'), '\n[Outside](../../outside.md)\n');
+        manifest.skills[0].contentSha256 = await hashDirectory(skillRoot);
+      },
+      code: 'PROFILE_CONTENT_INVALID',
+    },
+    {
+      name: 'drifted vendored context',
+      mutate: async ({ repository, skillRoot, manifest }) => {
+        await fs.mkdir(path.join(repository, 'context'));
+        await fs.writeFile(path.join(repository, 'context/protocol.md'), '# Canonical\n');
+        await fs.mkdir(path.join(skillRoot, 'references'));
+        await fs.writeFile(path.join(skillRoot, 'references/protocol.md'), '# Drifted\n');
+        await fs.appendFile(path.join(skillRoot, 'SKILL.md'), '\n[Protocol](references/protocol.md)\n');
+        manifest.skills[0].contentSha256 = await hashDirectory(skillRoot);
+      },
+      code: 'PROFILE_CONTENT_INVALID',
+    },
+    {
       name: 'digest',
       mutate: async ({ manifest }) => { manifest.skills[0].contentSha256 = '0'.repeat(64); },
       code: 'PROFILE_DIGEST_MISMATCH',

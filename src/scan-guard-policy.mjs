@@ -180,6 +180,19 @@ const DEFAULT_APPROVED_MCP_TOOLS = Object.freeze([
   'mcp__plugin_codegraph_codegraph__codegraph_explore',
   'mcp__plugin_codegraph__codegraph_explore',
 ]);
+const TRUSTED_HELPER_OPTIONS = Object.freeze({
+  '--trusted-resource-guard': 'resource-guard.mjs',
+  '--trusted-locator': 'locator.mjs',
+  '--trusted-memory-ledger': 'memory-ledger.mjs',
+  '--trusted-project-contract': 'check-project-contract.mjs',
+  '--trusted-runtime-cleaner': 'runtime-cleaner.mjs',
+  '--trusted-artifact-publish': 'artifact-publish.mjs',
+  '--trusted-gpu-plan': 'gpu-plan.mjs',
+});
+const APPROVED_PROFILE_HELPERS = new Set([
+  'memory-ledger.mjs', 'check-project-contract.mjs', 'runtime-cleaner.mjs',
+  'artifact-publish.mjs', 'gpu-plan.mjs',
+]);
 const DEFAULT_REGISTRY_RELATIVE = '.config/personal-agent-control/search-roots.json';
 const MAX_REGISTERED_ROOTS = 128;
 const MAX_REGISTRY_BYTES = 1024 * 1024;
@@ -1150,6 +1163,29 @@ function trustedFileMatches(targetPath, options, base) {
     secureFileDigest(targetPath) === expected;
 }
 
+function trustedLauncherMatches(executable, options) {
+  const approvedDigests = new Set([
+    options.trustedLauncherDigest,
+    ...(Array.isArray(options.approvedNodeDigests) ? options.approvedNodeDigests : []),
+  ].filter(Boolean));
+  if (!approvedDigests.size || typeof executable !== 'string' || !path.isAbsolute(executable)) return false;
+  const resolved = path.resolve(executable);
+  try {
+    const root = path.parse(resolved).root;
+    let cursor = root;
+    for (const component of resolved.slice(root.length).split(path.sep).filter(Boolean)) {
+      cursor = path.join(cursor, component);
+      const stat = fs.lstatSync(cursor);
+      const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+      if (stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+          (uid !== null && stat.uid !== 0 && stat.uid !== uid)) return false;
+    }
+    const stat = fs.lstatSync(resolved);
+    return stat.isFile() && !stat.isSymbolicLink() && !isSyncedStorage(resolved) &&
+      approvedDigests.has(secureFileDigest(resolved));
+  } catch { return false; }
+}
+
 function trustedHelperTarget(tokens, options, expectedBase) {
   const { index, wrapped } = unwrap(tokens);
   if (wrapped) return false;
@@ -1160,16 +1196,16 @@ function trustedHelperTarget(tokens, options, expectedBase) {
   const resolved = path.resolve(String(target));
   if (commandName(target) !== expectedBase ||
       !(options.trustedExecutables || []).some((candidate) => path.resolve(candidate) === resolved)) return false;
-  if (!options.trustedLauncher || path.resolve(String(tokens[index])) !== path.resolve(options.trustedLauncher)) return false;
-  if (!options.trustedLauncherDigest || secureFileDigest(path.resolve(options.trustedLauncher)) !== options.trustedLauncherDigest) return false;
+  if (!trustedLauncherMatches(String(tokens[index]), options)) return false;
   try {
     const root = path.parse(resolved).root;
     let cursor = root;
     for (const component of resolved.slice(root.length).split(path.sep).filter(Boolean)) {
       cursor = path.join(cursor, component);
       const stat = fs.lstatSync(cursor);
+      const uid = typeof process.getuid === 'function' ? process.getuid() : null;
       if (stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
-          (typeof process.getuid === 'function' && stat.uid !== process.getuid())) return false;
+          (uid !== null && stat.uid !== 0 && stat.uid !== uid)) return false;
     }
     const stat = fs.lstatSync(resolved);
     return stat.isFile() && !stat.isSymbolicLink() && !isSyncedStorage(resolved) &&
@@ -1689,11 +1725,8 @@ function trustedRoute(tokens, options, cwd = process.cwd()) {
   // runtime. A PATH executable named `node` (or a copied helper) is not a
   // broker and must never create an exemption.
   if (launcher === 'node' || launcher === 'nodejs' || launcher === 'bun' || launcher === 'deno') {
-    if (!options.trustedLauncher || path.resolve(String(executable)) !== path.resolve(options.trustedLauncher)) {
-      return routeBlock('trusted helper must be launched by PAC\'s pinned runtime');
-    }
-    if (!options.trustedLauncherDigest || secureFileDigest(path.resolve(options.trustedLauncher)) !== options.trustedLauncherDigest) {
-      return routeBlock('PAC launcher digest does not match PAC state');
+    if (!trustedLauncherMatches(String(executable), options)) {
+      return routeBlock('trusted helper must use an absolute runtime matching PAC\'s launcher pin');
     }
   } else return routeBlock('trusted helper requires an explicit PAC runtime');
   // A trusted route is useful only when the exact file still exists as a
@@ -1708,6 +1741,10 @@ function trustedRoute(tokens, options, cwd = process.cwd()) {
       const componentStat = fs.lstatSync(cursor);
       if (componentStat.isSymbolicLink()) return routeBlock('trusted helper path contains a symlink');
       if ((componentStat.mode & 0o022) !== 0) return routeBlock('trusted helper path is group/world writable');
+      const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+      if (uid !== null && componentStat.uid !== 0 && componentStat.uid !== uid) {
+        return routeBlock('trusted helper path is not root/current-user controlled');
+      }
     }
     const stat = fs.lstatSync(targetPath);
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0) return routeBlock('trusted helper file is unsafe');
@@ -1726,11 +1763,25 @@ function trustedRoute(tokens, options, cwd = process.cwd()) {
   if (base === 'resource-guard.mjs') {
     if ((options._trustedRouteDepth || 0) > 0) return routeBlock('nested resource-guard brokers are not allowed');
     if (args.some((token) => SHELL_OPERATORS.has(token))) return routeBlock('resource-guard arguments may not compose shell commands');
+    if (['snapshot', 'assess', 'help'].includes(String(args[0] || ''))) {
+      // These actions inspect/plan only; the signed helper owns their strict
+      // argv and path grammar. Only `run` receives an executable exemption.
+      return routeAllow();
+    }
     return parseResourceRoute(args, options, cwd);
   }
   if (base === 'locator.mjs') {
     if (args.some((token) => SHELL_OPERATORS.has(token))) return routeBlock('locator arguments may not compose shell commands');
     return parseLocatorRoute(args, options, cwd);
+  }
+  if (APPROVED_PROFILE_HELPERS.has(base)) {
+    if (args.some((token) => SHELL_OPERATORS.has(token))) {
+      return routeBlock('Profile helper arguments may not compose shell commands');
+    }
+    // These are content-pinned Profile front doors. Their own strict argv and
+    // path validators own memory/runtime/project/GPU semantics; the shell gate
+    // only authenticates the exact helper and runtime before allowing them.
+    return routeAllow();
   }
   return routeBlock('trusted executable is not an approved PAC broker');
 }
@@ -2969,7 +3020,7 @@ function cliOptions(argv) {
   const options = {
     home: process.env.HOME, registryPath: undefined, registrySha256: undefined, runtimePath: undefined,
     trustedExecutables: [], trustedDigests: {}, trustedLauncher: undefined,
-    trustedLauncherDigest: undefined, expectedPolicyDigest: undefined,
+    trustedLauncherDigest: undefined, approvedNodeDigests: [], expectedPolicyDigest: undefined,
     approvedMcpTools: [],
   };
   let host = null;
@@ -2987,6 +3038,11 @@ function cliOptions(argv) {
     else if (token === '--runtime') { options.runtimePath = requireValue(token, index); index += 1; }
     else if (token === '--launcher') { options.trustedLauncher = requireValue(token, index); index += 1; }
     else if (token === '--launcher-sha256') { options.trustedLauncherDigest = requireValue(token, index); index += 1; }
+    else if (token === '--approved-node-sha256') {
+      const value = requireValue(token, index);
+      if (options.approvedNodeDigests.includes(value)) throw new Error('approved Node digest is duplicated');
+      options.approvedNodeDigests.push(value); index += 1;
+    }
     else if (token === '--policy-sha256') { options.expectedPolicyDigest = requireValue(token, index); index += 1; }
     else if (token === '--approved-mcp-tool') {
       const value = requireValue(token, index);
@@ -2994,19 +3050,19 @@ function cliOptions(argv) {
       if (options.approvedMcpTools.includes(value)) throw new Error('approved MCP tool is duplicated');
       options.approvedMcpTools.push(value); index += 1;
     }
-    else if (token === '--trusted-resource-guard' || token === '--trusted-locator') {
+    else if (Object.prototype.hasOwnProperty.call(TRUSTED_HELPER_OPTIONS, token)) {
       const value = requireValue(token, index); index += 1;
       options.trustedExecutables.push(value);
-      const digestFlag = token === '--trusted-resource-guard'
-        ? '--trusted-resource-guard-sha256' : '--trusted-locator-sha256';
+      const digestFlag = `${token}-sha256`;
       const next = argv[index + 1];
       if (next === digestFlag) {
         const digestValue = requireValue(digestFlag, index + 1);
         options.trustedDigests[commandName(value)] = digestValue; index += 2;
       }
-    } else if (token === '--trusted-resource-guard-sha256' || token === '--trusted-locator-sha256') {
+    } else if (token.endsWith('-sha256') && Object.prototype.hasOwnProperty.call(
+      TRUSTED_HELPER_OPTIONS, token.slice(0, -'-sha256'.length))) {
       const value = requireValue(token, index); index += 1;
-      const base = token.includes('resource-guard') ? 'resource-guard.mjs' : 'locator.mjs';
+      const base = TRUSTED_HELPER_OPTIONS[token.slice(0, -'-sha256'.length)];
       options.trustedDigests[base] = value;
     } else if (token === '--marker') {
       if (argv[index + 1] !== SCAN_GUARD_MARKER) throw new Error('scan-guard marker is invalid');
@@ -3018,7 +3074,8 @@ function cliOptions(argv) {
   if (!host || !['codex', 'claude'].includes(host)) throw new Error('host must be codex or claude');
   if (options.trustedExecutables.some((value) => typeof value !== 'string' || !value)) throw new Error('trusted executable is missing');
   if (options.trustedLauncher && !path.isAbsolute(options.trustedLauncher)) throw new Error('trusted launcher must be absolute');
-  for (const value of [options.registrySha256, options.trustedLauncherDigest, options.expectedPolicyDigest, ...Object.values(options.trustedDigests)]) {
+  for (const value of [options.registrySha256, options.trustedLauncherDigest, ...options.approvedNodeDigests,
+    options.expectedPolicyDigest, ...Object.values(options.trustedDigests)]) {
     if (value !== undefined && !/^[0-9a-f]{64}$/u.test(String(value))) throw new Error('trusted digest is invalid');
   }
   return { host, options };

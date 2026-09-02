@@ -85,15 +85,22 @@ test('missing PAC adapters recover stale Chezmoi state without forcing drift', a
     'source=',
     'destination=',
     'force=false',
+    'exclude=',
+    'refresh=',
+    'override=',
     'while [ "$#" -gt 0 ]; do',
     '  case "$1" in',
     '    --source) source=$2; shift 2 ;;',
     '    --destination) destination=$2; shift 2 ;;',
+    '    --override-data) override=$2; shift 2 ;;',
+    '    --exclude) exclude=$2; shift 2 ;;',
+    '    --refresh-externals=*) refresh=${1#*=}; shift ;;',
     '    --force) force=true; shift ;;',
     '    *) shift ;;',
     '  esac',
     'done',
-    'printf "%s\\n" "$force" > "$PAC_TEST_INVOCATION"',
+    'case "$override" in *skipExternals*true*) ;; *) exit 19 ;; esac',
+    'printf "%s:%s:%s\\n" "$force" "$exclude" "$refresh" > "$PAC_TEST_INVOCATION"',
     'for target in "$destination/.codex/AGENTS.md" "$destination/.codex/agents/independent-reviewer.toml"; do',
     '  case "$target" in',
     '    */.codex/AGENTS.md) expected="$source/generated/codex/AGENTS.md" ;;',
@@ -116,7 +123,7 @@ test('missing PAC adapters recover stale Chezmoi state without forcing drift', a
   process.env.PAC_TEST_STALE_STATE = staleState;
   try {
     await reconcileHostAdapters(context, ['codex'], ['codex']);
-    assert.equal(await fs.readFile(invocation, 'utf8'), 'true\n');
+    assert.equal(await fs.readFile(invocation, 'utf8'), 'true:externals:never\n');
 
     // Model a successful prior Chezmoi write followed by an external
     // deletion: its persistent state still exists, but both targets are gone.
@@ -124,13 +131,13 @@ test('missing PAC adapters recover stale Chezmoi state without forcing drift', a
     await fs.unlink(path.join(home, '.codex/AGENTS.md'));
     await fs.unlink(path.join(home, '.codex/agents/independent-reviewer.toml'));
     await reconcileHostAdapters(context, ['codex'], ['codex']);
-    assert.equal(await fs.readFile(invocation, 'utf8'), 'true\n');
+    assert.equal(await fs.readFile(invocation, 'utf8'), 'true:externals:never\n');
 
     // The mixed recovery branch must also force only because the other entry
     // is already canonical; it must not require both files to be absent.
     await fs.unlink(path.join(home, '.codex/AGENTS.md'));
     await reconcileHostAdapters(context, ['codex'], ['codex']);
-    assert.equal(await fs.readFile(invocation, 'utf8'), 'true\n');
+    assert.equal(await fs.readFile(invocation, 'utf8'), 'true:externals:never\n');
 
     await fs.writeFile(path.join(home, '.codex/AGENTS.md'), 'user drift\n');
     await fs.unlink(path.join(home, '.codex/agents/independent-reviewer.toml'));
@@ -138,7 +145,7 @@ test('missing PAC adapters recover stale Chezmoi state without forcing drift', a
       reconcileHostAdapters(context, ['codex'], ['codex']),
       (error) => error.code === 'HOST_ADAPTER_APPLY_FAILED',
     );
-    assert.equal(await fs.readFile(invocation, 'utf8'), 'false\n');
+    assert.equal(await fs.readFile(invocation, 'utf8'), 'false:externals:never\n');
     assert.equal(await fs.readFile(path.join(home, '.codex/AGENTS.md'), 'utf8'), 'user drift\n');
   } finally {
     if (priorMode === undefined) delete process.env.PAC_HOST_ADAPTER_MODE;

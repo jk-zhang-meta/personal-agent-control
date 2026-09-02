@@ -23,7 +23,11 @@ async function fixture(t) {
     '',
     '# Personal environment',
     '',
+    '[Protocol](references/protocol.md)',
+    '',
   ].join('\n'));
+  await fs.mkdir(path.join(source, 'references'));
+  await fs.writeFile(path.join(source, 'references/protocol.md'), '# Protocol\n');
   await fs.mkdir(home, { recursive: true });
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const profile = {
@@ -44,6 +48,7 @@ test('Profile Skills are materialized once and repaired only when PAC owns the t
   assert.equal(installed[0].valid, true);
 
   const target = path.join(neutral, '.agents/skills/personal-environment/SKILL.md');
+  assert.equal(await fs.readFile(path.join(path.dirname(target), 'references/protocol.md'), 'utf8'), '# Protocol\n');
   await fs.appendFile(target, '\ndrift\n');
   assert.equal((await profileSkillStatus(neutral, profile))[0].valid, false);
   await assert.rejects(

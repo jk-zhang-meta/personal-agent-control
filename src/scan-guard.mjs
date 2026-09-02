@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 
 import {
   SCAN_GUARD_MARKER,
@@ -159,6 +160,106 @@ function hostHookState(context, host, config) {
   return codexHookFeatures(context);
 }
 
+async function codexHookTrustStatus(context, descriptor, expected) {
+  if (typeof context.codexHookTrustProbe === 'function') {
+    return await context.codexHookTrustProbe({ descriptor, expected });
+  }
+  const executable = process.env.PAC_CODEX || 'codex';
+  const maxBytes = 2 * 1024 * 1024;
+  const timeoutMs = 5000;
+  return await new Promise((resolve) => {
+    let settled = false;
+    let stdout = '';
+    let stderrBytes = 0;
+    let initialized = false;
+    const child = spawn(executable, ['app-server', '--stdio'], {
+      cwd: context.root,
+      env: {
+        ...process.env,
+        HOME: context.home,
+        CODEX_HOME: path.join(context.home, '.codex'),
+        RUST_LOG: 'error',
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.stdin.end(); } catch { /* already closed */ }
+      try { child.kill('SIGTERM'); } catch { /* already exited */ }
+      resolve(value);
+    };
+    const timer = setTimeout(() => finish({ observable: false, active: false, trustStatus: 'unknown', reason: 'Codex hooks/list timed out.' }), timeoutMs);
+    const send = (value) => {
+      try { child.stdin.write(`${JSON.stringify(value)}\n`); }
+      catch { finish({ observable: false, active: false, trustStatus: 'unknown', reason: 'Codex app-server stdin closed.' }); }
+    };
+    const inspectLine = (line) => {
+      if (!line.trim()) return;
+      let message;
+      try { message = JSON.parse(line); }
+      catch { return; }
+      if (message.id === 1 && !initialized) {
+        if (message.error) {
+          finish({ observable: false, active: false, trustStatus: 'unknown', reason: 'Codex app-server initialization failed.' });
+          return;
+        }
+        initialized = true;
+        send({ method: 'initialized' });
+        send({ id: 2, method: 'hooks/list', params: { cwds: [context.root] } });
+        return;
+      }
+      if (message.id !== 2) return;
+      const hooks = Array.isArray(message.result?.data?.[0]?.hooks) ? message.result.data[0].hooks : [];
+      const matches = hooks.filter((entry) => entry && entry.eventName === 'pre_tool_use' &&
+        entry.handlerType === 'command' && entry.matcher === expected.matcher &&
+        entry.command === expected.hooks[0].command &&
+        path.resolve(String(entry.sourcePath || '')) === path.resolve(descriptor.file));
+      if (matches.length !== 1) {
+        finish({ observable: true, active: false, trustStatus: 'unknown',
+          reason: `Codex hooks/list found ${matches.length} exact PAC entries.` });
+        return;
+      }
+      const entry = matches[0];
+      const trustStatus = String(entry.trustStatus || 'unknown').toLowerCase();
+      finish({
+        observable: true,
+        active: entry.enabled === true && ['trusted', 'managed'].includes(trustStatus),
+        enabled: entry.enabled === true,
+        trustStatus,
+        key: typeof entry.key === 'string' ? entry.key : null,
+        currentHash: typeof entry.currentHash === 'string' ? entry.currentHash : null,
+      });
+    };
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+      if (Buffer.byteLength(stdout) > maxBytes) {
+        finish({ observable: false, active: false, trustStatus: 'unknown', reason: 'Codex hooks/list output exceeded 2 MiB.' });
+        return;
+      }
+      let newline;
+      while ((newline = stdout.indexOf('\n')) >= 0) {
+        const line = stdout.slice(0, newline);
+        stdout = stdout.slice(newline + 1);
+        inspectLine(line);
+        if (settled) return;
+      }
+    });
+    child.stderr.on('data', (chunk) => {
+      stderrBytes += Buffer.byteLength(chunk);
+      if (stderrBytes > maxBytes) finish({ observable: false, active: false, trustStatus: 'unknown', reason: 'Codex app-server diagnostics exceeded 2 MiB.' });
+    });
+    child.on('error', () => finish({ observable: false, active: false, trustStatus: 'unknown', reason: 'Codex app-server is unavailable.' }));
+    child.on('close', () => finish({ observable: false, active: false, trustStatus: 'unknown', reason: 'Codex app-server closed before hooks/list completed.' }));
+    send({ id: 1, method: 'initialize', params: {
+      clientInfo: { name: 'personal_agent_control', title: 'Personal Agent Control', version: '1.0.0' },
+      capabilities: null,
+    } });
+  });
+}
+
 function assertConfigObject(value, file) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new PacError('SCAN_GUARD_CONFIG_INVALID', `Host config must be a JSON object: ${file}`);
@@ -241,9 +342,15 @@ function quotePosix(value) {
 }
 
 const TRUSTED_HELPERS = Object.freeze([
-  Object.freeze({ skill: 'resource-guard', file: 'resource-guard.mjs', relative: 'scripts/resource-guard.mjs' }),
-  Object.freeze({ skill: 'workspace-locator', file: 'locator.mjs', relative: 'scripts/locator.mjs' }),
+  Object.freeze({ skill: 'resource-guard', file: 'resource-guard.mjs', relative: 'scripts/resource-guard.mjs', flag: '--trusted-resource-guard' }),
+  Object.freeze({ skill: 'workspace-locator', file: 'locator.mjs', relative: 'scripts/locator.mjs', flag: '--trusted-locator' }),
+  Object.freeze({ skill: 'memory-continuity', file: 'memory-ledger.mjs', relative: 'scripts/memory-ledger.mjs', flag: '--trusted-memory-ledger' }),
+  Object.freeze({ skill: 'project-contracts', file: 'check-project-contract.mjs', relative: 'scripts/check-project-contract.mjs', flag: '--trusted-project-contract' }),
+  Object.freeze({ skill: 'runtime-hygiene', file: 'runtime-cleaner.mjs', relative: 'scripts/runtime-cleaner.mjs', flag: '--trusted-runtime-cleaner' }),
+  Object.freeze({ skill: 'runtime-hygiene', file: 'artifact-publish.mjs', relative: 'scripts/artifact-publish.mjs', flag: '--trusted-artifact-publish' }),
+  Object.freeze({ skill: 'gpu-experiment', file: 'gpu-plan.mjs', relative: 'scripts/gpu-plan.mjs', flag: '--trusted-gpu-plan' }),
 ]);
+const REQUIRED_SCAN_HELPERS = Object.freeze(['resource-guard', 'workspace-locator']);
 
 function profileHelperExpectations(profile) {
   if (!profile) return null;
@@ -308,7 +415,7 @@ function scanGuardProfileSelection(profile) {
   if (!profile) return { requested: false, skills: [] };
   const names = new Set((profile.skills || []).map((entry) =>
     typeof entry === 'string' ? entry : entry?.name).filter(Boolean));
-  const required = [...TRUSTED_HELPERS.values()].map(({ skill }) => skill);
+  const required = [...REQUIRED_SCAN_HELPERS];
   const present = required.filter((name) => names.has(name));
   if (present.length > 0 && present.length !== required.length) {
     throw new PacError('SCAN_GUARD_PROFILE_INCOMPLETE',
@@ -320,6 +427,27 @@ function scanGuardProfileSelection(profile) {
 
 function fileDigest(file) {
   return digest(fs.readFileSync(file));
+}
+
+function approvedSystemNodeDigests(primaryLauncher) {
+  if (process.platform === 'win32') return [];
+  const digests = [];
+  for (const candidate of ['/usr/bin/node']) {
+    try {
+      const resolved = path.resolve(candidate);
+      if (resolved === path.resolve(primaryLauncher) || syncedPath(resolved)) continue;
+      const root = path.parse(resolved).root;
+      let cursor = root;
+      for (const component of resolved.slice(root.length).split(path.sep).filter(Boolean)) {
+        cursor = path.join(cursor, component);
+        const stat = fs.lstatSync(cursor);
+        if (stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 || stat.uid !== 0) throw new Error('unsafe system Node path');
+      }
+      const stat = fs.lstatSync(resolved);
+      if (stat.isFile() && !stat.isSymbolicLink()) digests.push(fileDigest(resolved));
+    } catch { /* optional fixed system Node is absent or unsafe */ }
+  }
+  return [...new Set(digests)].sort();
 }
 
 function registryPath(context) {
@@ -354,9 +482,8 @@ function registryDigest(context) {
 
 function hookCommand(context, host, hookRuntime, registryInfo = null, profile = null) {
   const trusted = trustedExecutableCandidates(context, profile);
-  const guard = trusted.find((candidate) => path.basename(candidate) === 'resource-guard.mjs');
-  const locator = trusted.find((candidate) => path.basename(candidate) === 'locator.mjs');
   const launcher = fs.realpathSync(process.execPath);
+  const approvedNodes = approvedSystemNodeDigests(launcher);
   const registry = registryInfo || registryDigest(context);
   const args = [
     // Strip user-controlled NODE_OPTIONS/LD_PRELOAD/etc. before Node loads the
@@ -369,13 +496,16 @@ function hookCommand(context, host, hookRuntime, registryInfo = null, profile = 
       path.join(context.home, '.config/personal-agent-control/search-roots.json')),
     '--registry-sha256', quotePosix(registry.sha256),
     '--launcher', quotePosix(launcher), '--launcher-sha256', quotePosix(fileDigest(launcher)),
+    ...approvedNodes.flatMap((value) => ['--approved-node-sha256', quotePosix(value)]),
     '--policy-sha256', quotePosix(fileDigest(hookRuntime)), '--marker', quotePosix(SCAN_GUARD_MARKER),
     '--approved-mcp-tool', quotePosix('mcp__codegraph__codegraph_explore'),
     '--approved-mcp-tool', quotePosix('mcp__plugin_codegraph_codegraph__codegraph_explore'),
     '--approved-mcp-tool', quotePosix('mcp__plugin_codegraph__codegraph_explore'),
   ];
-  if (guard) args.push('--trusted-resource-guard', quotePosix(guard), '--trusted-resource-guard-sha256', quotePosix(fileDigest(guard)));
-  if (locator) args.push('--trusted-locator', quotePosix(locator), '--trusted-locator-sha256', quotePosix(fileDigest(locator)));
+  for (const helper of TRUSTED_HELPERS) {
+    const candidate = trusted.find((value) => path.basename(value) === helper.file);
+    if (candidate) args.push(helper.flag, quotePosix(candidate), `${helper.flag}-sha256`, quotePosix(fileDigest(candidate)));
+  }
   return args.join(' ');
 }
 
@@ -608,17 +738,22 @@ export async function scanGuardStatus(context, enabledHosts, scopeHosts, profile
     const drifted = Boolean(prior) && (!actual || !owned || (actual && jsonDigest(actual) !== prior.entrySha256));
     const registryMismatch = enabled.has(host) &&
       (!registry || ownership.registrySha256 !== registry.sha256);
+    const codexTrust = host === 'codex' && expected && actual && !drifted
+      ? await codexHookTrustStatus(context, descriptor, expected)
+      : null;
+    const operational = host === 'codex' ? Boolean(codexTrust?.active) : !disabled;
     const valid = enabled.has(host)
       ? Boolean(actual) && Boolean(expected) && !drifted && jsonDigest(actual) === jsonDigest(expected) && Boolean(prior)
         && runtime.valid && !disabled && hostState.activation !== 'unknown' && !registryError
         && helperReadiness.resourceGuard && helperReadiness.locator
-        && !registryMismatch
+        && !registryMismatch && operational
       : prior ? !drifted && !actual : true;
     results.push({
       host, target: descriptor.file, expected: enabled.has(host) ? 'managed' : 'missing',
       state: drifted ? 'drift' : (actual ? 'managed' : 'missing'), owned: Boolean(prior), valid,
       hooksDisabled: disabled, entrySha256: actual ? jsonDigest(actual) : null,
-      hookTrust: hostState.trust, activation: hostState.activation, runtime,
+      hookTrust: codexTrust?.trustStatus || hostState.trust, operational,
+      hookTrustProbe: codexTrust, activation: hostState.activation, runtime,
       registry: registry ? { path: registry.path, bytes: registry.bytes, sha256: registry.sha256,
         matchesOwnership: ownership.registrySha256 === registry.sha256 } : { error: registryError?.message || 'unavailable' },
       helpers: helperReadiness,
@@ -630,7 +765,10 @@ export async function scanGuardStatus(context, enabledHosts, scopeHosts, profile
               ? `PAC scan-guard runtime is ${runtime.state}.`
               : (registryMismatch ? 'Search registry digest does not match PAC ownership.'
                 : (enabled.has(host) && hostState.activation === 'unknown'
-                  ? 'Codex hooks feature is not explicitly enabled.' : undefined)))),
+                  ? 'Codex hooks feature is not explicitly enabled.'
+                  : (enabled.has(host) && host === 'codex' && !operational
+                    ? (codexTrust?.reason || `Codex PAC hook trust is ${codexTrust?.trustStatus || 'unknown'}; review the exact entry in /hooks.`)
+                    : undefined))))),
     });
   }
   return results;

@@ -1,3 +1,4 @@
+{{- if not (default false (index .pac "skipExternals")) }}
 {{- if and (eq .chezmoi.os "linux") (eq .chezmoi.arch "amd64") }}
 [".local/bin/mise"]
     type = "archive-file"
@@ -14,4 +15,5 @@
     checksum.sha256 = "2b551938d1c5eb7e20193340b657c78f1e3815d1c65efb8ebe3f1a3b5fb7e019"
 {{- else }}
 {{- fail "Personal Agent Control v1 supports linux-amd64 and darwin-arm64 only" }}
+{{- end }}
 {{- end }}

@@ -109,14 +109,19 @@ async function applyAdapter(context, host, entries) {
     agents: host,
     codex: host === 'codex',
     claude: host === 'claude',
+    skipExternals: true,
   };
+  // This operation owns only the explicitly listed adapter files.  Externals
+  // (notably the pinned mise archive) belong to bootstrap and must not be
+  // downloaded again during a host-only reconcile.
   await run(chezmoi, [
     '--source', context.root,
     '--config', path.join(context.home, '.config/personal-agent-control/chezmoi.toml'),
     '--destination', context.home,
     '--override-data', JSON.stringify({ pac: selected }),
+    '--refresh-externals=never',
     '--no-tty', recoverMissing ? '--force' : '--error-on-conflict',
-    'apply', '--parent-dirs',
+    'apply', '--exclude', 'externals', '--parent-dirs',
     ...entries.map((entry) => entry.target),
   ], { cwd: context.root, errorCode: 'HOST_ADAPTER_APPLY_FAILED' });
 }

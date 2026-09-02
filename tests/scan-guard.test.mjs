@@ -28,6 +28,7 @@ const profile = profileCandidates.find((candidate) =>
 if (!profile) throw new Error('PAC_PROFILE_SOURCE must point to a checked-out PAC Profile for scan-guard integration tests');
 const guardSource = path.join(profile, 'skills/resource-guard/scripts/resource-guard.mjs');
 const locatorSource = path.join(profile, 'skills/workspace-locator/scripts/locator.mjs');
+const memorySource = path.join(profile, 'skills/memory-continuity/scripts/memory-ledger.mjs');
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -37,7 +38,7 @@ function quote(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 }
 
-async function fixture(t, { codexHooks = true } = {}) {
+async function fixture(t, { codexHooks = true, codexTrust = 'trusted' } = {}) {
   // The policy rejects world-writable ancestors such as /tmp. Keep the
   // synthetic HOME under the same private local runtime tree as production.
   const base = await fs.realpath(await fs.mkdtemp(path.join('/root/.agent-work', 'pac-scan-guard-')));
@@ -62,43 +63,63 @@ async function fixture(t, { codexHooks = true } = {}) {
   const helperRoot = path.join(home, '.local/share/agent-skills/.agents/skills');
   const guard = path.join(helperRoot, 'resource-guard/scripts/resource-guard.mjs');
   const locator = path.join(helperRoot, 'workspace-locator/scripts/locator.mjs');
+  const memory = path.join(helperRoot, 'memory-continuity/scripts/memory-ledger.mjs');
   await fs.mkdir(path.dirname(guard), { recursive: true, mode: 0o700 });
   await fs.mkdir(path.dirname(locator), { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.dirname(memory), { recursive: true, mode: 0o700 });
   await fs.copyFile(guardSource, guard);
   await fs.copyFile(locatorSource, locator);
+  await fs.copyFile(memorySource, memory);
   await fs.chmod(guard, 0o500);
   await fs.chmod(locator, 0o500);
+  await fs.chmod(memory, 0o500);
   const launcher = await fs.realpath(process.execPath);
+  const alternateLauncher = path.join(home, 'safe-node/node');
+  await fs.mkdir(path.dirname(alternateLauncher), { recursive: true, mode: 0o700 });
+  await fs.writeFile(alternateLauncher, '#!/bin/sh\nexit 0\n', { mode: 0o500 });
   const guardBytes = await fs.readFile(guard);
   const locatorBytes = await fs.readFile(locator);
+  const memoryBytes = await fs.readFile(memory);
   const launcherBytes = await fs.readFile(launcher);
   const context = {
     root: repo,
     home,
     stateDir: path.join(home, '.local/state/personal-agent-control'),
     searchRegistryPath: registry,
+    codexHookTrustProbe: async () => ({
+      observable: true,
+      active: codexTrust === 'trusted',
+      enabled: true,
+      trustStatus: codexTrust,
+      key: `${path.join(home, '.codex/hooks.json')}:pre_tool_use:0:0`,
+      currentHash: 'sha256:fixture',
+    }),
   };
   const options = {
     home,
     registryPath: registry,
     registrySha256: sha256(registryRaw),
     runtimePath: path.join(home, '.agent-work/runtime/pac'),
-    trustedExecutables: [guard, locator],
+    trustedExecutables: [guard, locator, memory],
     trustedDigests: {
       'resource-guard.mjs': sha256(guardBytes),
       'locator.mjs': sha256(locatorBytes),
+      'memory-ledger.mjs': sha256(memoryBytes),
     },
     trustedLauncher: launcher,
     trustedLauncherDigest: sha256(launcherBytes),
+    approvedNodeDigests: [sha256(await fs.readFile(alternateLauncher))],
   };
   const activeProfile = {
     skills: [
       { name: 'resource-guard', root: path.join(profile, 'skills/resource-guard') },
       { name: 'workspace-locator', root: path.join(profile, 'skills/workspace-locator') },
+      { name: 'memory-continuity', root: path.join(profile, 'skills/memory-continuity') },
     ],
   };
   t.after(() => fs.rm(base, { recursive: true, force: true }));
-  return { base, home, project, registry, guard, locator, launcher, context, options, activeProfile };
+  return { base, home, project, registry, guard, locator, memory, launcher, alternateLauncher,
+    context, options, activeProfile };
 }
 
 function resourceCommand(fixtureValue, inner = ['find', 'src', '-maxdepth', '2', '-type', 'f'], extra = [], profile = 'scan') {
@@ -468,6 +489,8 @@ test('PAC broker binds local root, registry digest, helper identity, and runtime
   const { home, project, options, registry } = value;
   const valid = resourceCommand(value);
   assert.equal(inspectCommand(valid, project, options), null);
+  assert.equal(inspectCommand([value.launcher, value.guard, 'snapshot', '--cwd', project]
+    .map(quote).join(' '), project, options), null);
 
   const replacements = [
     ['--cwd', project, path.join(value.base, 'other')],
@@ -523,6 +546,18 @@ test('PAC broker binds local root, registry digest, helper identity, and runtime
     '--max-files', '50000', '--max-ms', '30000', '--max-read-bytes', '268435456',
   ]);
   assert.equal(inspectCommand(indexed, project, options), null);
+
+  const memory = [value.launcher, value.memory, 'show', '--project-id', 'fixture'].map(quote).join(' ');
+  assert.equal(inspectCommand(memory, project, options), null);
+  const alternateMemory = [value.alternateLauncher, value.memory, 'show', '--project-id', 'fixture']
+    .map(quote).join(' ');
+  assert.equal(inspectCommand(alternateMemory, project, options), null,
+    'a separately content-pinned secure Node runtime is accepted');
+  assert.ok(inspectCommand(memory.replace(value.launcher, 'node'), project, options),
+    'a PATH-resolved runtime cannot claim the content-pinned helper route');
+  assert.ok(inspectCommand(memory, project, {
+    ...options, trustedDigests: { ...options.trustedDigests, 'memory-ledger.mjs': '0'.repeat(64) },
+  }), 'a modified memory helper cannot claim the trusted route');
 });
 
 test('PAC stages a local hook and the real stdin path denies raw scans', async (t) => {
@@ -546,6 +581,10 @@ test('PAC stages a local hook and the real stdin path denies raw scans', async (
     if (host === 'claude') assert.match(entry.matcher, /Read/u);
     assert.equal(entry.hooks[0].command.includes(path.join(repo, 'src')), false);
     assert.equal(entry.hooks[0].command.includes('--registry-sha256'), true);
+    if (existsSync('/usr/bin/node') && await fs.realpath('/usr/bin/node') !== await fs.realpath(process.execPath)) {
+      assert.equal(entry.hooks[0].command.includes('--approved-node-sha256'), true);
+    }
+    assert.equal(entry.hooks[0].command.includes('--trusted-memory-ledger-sha256'), true);
     const result = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
       cwd: project,
       input: JSON.stringify({ tool_name: 'Bash', cwd: project, tool_input: { command: 'find /' } }),
@@ -564,6 +603,17 @@ test('PAC stages a local hook and the real stdin path denies raw scans', async (
     });
     assert.equal(allowed.status, 0, allowed.stderr || allowed.stdout);
     assert.equal(allowed.stdout, '');
+    const memoryAllowed = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
+      cwd: project,
+      input: JSON.stringify({ tool_name: 'Bash', cwd: project, tool_input: { command: [
+        await fs.realpath(process.execPath),
+        path.join(home, '.local/share/agent-skills/.agents/skills/memory-continuity/scripts/memory-ledger.mjs'),
+        'show', '--project-id', 'fixture',
+      ].map(quote).join(' ') } }),
+      encoding: 'utf8',
+    });
+    assert.equal(memoryAllowed.status, 0, memoryAllowed.stderr || memoryAllowed.stdout);
+    assert.equal(memoryAllowed.stdout, '');
   }
   assert.deepEqual((await scanGuardStatus(context, ['codex', 'claude'], ['codex', 'claude'], activeProfile)).map((entry) => entry.valid), [true, true]);
   assert.equal(await hasPriorScanGuardState(context, 'codex'), true);
@@ -591,6 +641,16 @@ test('Codex hooks must be explicitly enabled and unmanaged markers are preserved
     reconcileScanGuard(value.context, [], ['codex'], value.activeProfile),
     (error) => ['SCAN_GUARD_DRIFT', 'SCAN_GUARD_DUPLICATE'].includes(error.code),
   );
+});
+
+test('Codex status is unhealthy until the exact PAC hook is trusted by the host', async (t) => {
+  const value = await fixture(t, { codexTrust: 'untrusted' });
+  await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
+  const status = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
+  assert.equal(status.valid, false);
+  assert.equal(status.operational, false);
+  assert.equal(status.hookTrust, 'untrusted');
+  assert.match(status.error, /review the exact entry in \/hooks/u);
 });
 
 test('registry tampering invalidates the hook binding', async (t) => {
