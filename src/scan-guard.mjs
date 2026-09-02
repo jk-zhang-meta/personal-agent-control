@@ -603,7 +603,8 @@ export async function scanGuardStatus(context, enabledHosts, scopeHosts, profile
     const owned = ownedConfigEntry(config, prior, host);
     const hostState = hostHookState(context, host, config);
     const disabled = hostState.disabled;
-    const expected = enabled.has(host) && registry ? expectedEntry(context, host, runtime.path, registry, profile) : null;
+    const expected = enabled.has(host) && registry && runtime.valid
+      ? expectedEntry(context, host, runtime.path, registry, profile) : null;
     const drifted = Boolean(prior) && (!actual || !owned || (actual && jsonDigest(actual) !== prior.entrySha256));
     const registryMismatch = enabled.has(host) &&
       (!registry || ownership.registrySha256 !== registry.sha256);
@@ -622,11 +623,14 @@ export async function scanGuardStatus(context, enabledHosts, scopeHosts, profile
         matchesOwnership: ownership.registrySha256 === registry.sha256 } : { error: registryError?.message || 'unavailable' },
       helpers: helperReadiness,
       error: drifted ? 'PAC scan-guard entry was removed or modified outside PAC.' :
-        (enabled.has(host) ? registryError?.message : undefined) || (registryMismatch ? 'Search registry digest does not match PAC ownership.' :
+        (enabled.has(host) ? registryError?.message : undefined) ||
           (enabled.has(host) && (!helperReadiness.resourceGuard || !helperReadiness.locator)
             ? 'PAC scan-guard helpers do not match the active Profile source.'
-            : (enabled.has(host) && hostState.activation === 'unknown'
-              ? 'Codex hooks feature is not explicitly enabled.' : undefined))),
+            : (enabled.has(host) && !runtime.valid
+              ? `PAC scan-guard runtime is ${runtime.state}.`
+              : (registryMismatch ? 'Search registry digest does not match PAC ownership.'
+                : (enabled.has(host) && hostState.activation === 'unknown'
+                  ? 'Codex hooks feature is not explicitly enabled.' : undefined)))),
     });
   }
   return results;

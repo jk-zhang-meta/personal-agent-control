@@ -604,6 +604,10 @@ test('registry tampering invalidates the hook binding', async (t) => {
 
 test('Core keeps the scan seam inactive when a Profile selects neither helper', async (t) => {
   const value = await fixture(t);
+  const pending = await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile);
+  assert.equal(pending[0].valid, false);
+  assert.equal(pending[0].runtime.state, 'missing');
+  assert.match(pending[0].error, /runtime is missing/u);
   const result = await reconcileScanGuard(value.context, ['codex'], ['codex'], null);
   assert.equal(result.skipped, true);
   assert.deepEqual(result.hosts, [{ host: 'codex', action: 'absent' }]);
