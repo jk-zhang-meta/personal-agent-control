@@ -292,7 +292,9 @@ Disposable fixtures established the following boundaries:
 - APM 0.28.0 audit does not correctly address a separate `--root` deployment,
   so PAC must verify the pinned lock's hashes and ownership itself; and
 - `--force` combines collision overwrite with security-policy bypass and is
-  therefore never an implicit PAC option.
+  therefore never a general PAC option; ADR-020 permits a narrow, inspected
+  exception for allowlisted adapters whose missing entries have no present
+  drift.
 
 PPT Master exposed a separate scale limit. Its v4.3.0 Skill directory contains
 12,230 files. APM created a roughly 7.1 MB lock with 134,890 lines, then its own

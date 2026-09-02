@@ -126,6 +126,12 @@ test('missing PAC adapters recover stale Chezmoi state without forcing drift', a
     await reconcileHostAdapters(context, ['codex'], ['codex']);
     assert.equal(await fs.readFile(invocation, 'utf8'), 'true\n');
 
+    // The mixed recovery branch must also force only because the other entry
+    // is already canonical; it must not require both files to be absent.
+    await fs.unlink(path.join(home, '.codex/AGENTS.md'));
+    await reconcileHostAdapters(context, ['codex'], ['codex']);
+    assert.equal(await fs.readFile(invocation, 'utf8'), 'true\n');
+
     await fs.writeFile(path.join(home, '.codex/AGENTS.md'), 'user drift\n');
     await fs.unlink(path.join(home, '.codex/agents/independent-reviewer.toml'));
     await assert.rejects(
