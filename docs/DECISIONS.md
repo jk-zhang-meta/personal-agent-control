@@ -1031,3 +1031,32 @@ new Agent is not advertised until Core ships and verifies its instruction,
 Skill, Plugin, provider, backup, rollback, and doctor adapters. Provider
 configuration drift fails closed, while unrelated Agent settings remain
 unmanaged and preserved.
+
+## ADR-020: Restore missing PAC adapters without overriding drift
+
+Decision date: 2026-09-02. Extends ADR-002 and the host-adapter rollback
+contract.
+
+### Context
+
+Chezmoi records the last bytes it wrote in persistent state. If a PAC-owned
+adapter is later absent (for example after a rollback, a cleanup, or an
+external deletion), Chezmoi's --error-on-conflict can classify that absence as
+a conflict and refuse to recreate the file. A blanket --force would repair the
+absence but could overwrite a user-modified adapter.
+
+### Decision
+
+Before applying an enabled host adapter, PAC inspects its exact expected
+entries. It adds Chezmoi's --force only when at least one entry is missing and
+every present entry already matches the current canonical bytes. Any content
+drift, symlink, or other collision keeps --error-on-conflict and fails closed.
+The post-apply byte and ownership checks remain authoritative.
+
+### Consequences
+
+Normal recovery from a missing PAC-owned file is automatic and bounded to the
+allowlisted adapter paths. User changes and unsafe path shapes remain
+preserved or rejected rather than silently replaced. A mixed state containing
+both a missing entry and a changed entry intentionally requires explicit
+repair, because preserving the changed entry is safer than guessing ownership.

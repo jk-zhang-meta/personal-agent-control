@@ -97,6 +97,14 @@ async function applyAdapter(context, host, entries) {
   catch {
     throw new PacError('HOST_ADAPTER_TOOL_MISSING', `Chezmoi is required to install the ${host} adapter: ${chezmoi}`);
   }
+  // Chezmoi remembers a previously written file even after an external
+  // rollback or a user removes it. In that state --error-on-conflict treats a
+  // missing PAC-owned adapter as a conflict and refuses to restore it. Force
+  // is safe only when every present entry already equals the current canonical
+  // bytes; a modified or colliding entry remains fail-closed.
+  const inspected = await Promise.all(entries.map((entry) => inspectEntry(context, host, entry)));
+  const recoverMissing = inspected.some((entry) => entry.state === 'missing')
+    && inspected.every((entry) => entry.state === 'missing' || entry.state === 'managed');
   const selected = {
     agents: host,
     codex: host === 'codex',
@@ -107,7 +115,7 @@ async function applyAdapter(context, host, entries) {
     '--config', path.join(context.home, '.config/personal-agent-control/chezmoi.toml'),
     '--destination', context.home,
     '--override-data', JSON.stringify({ pac: selected }),
-    '--no-tty', '--error-on-conflict',
+    '--no-tty', recoverMissing ? '--force' : '--error-on-conflict',
     'apply', '--parent-dirs',
     ...entries.map((entry) => entry.target),
   ], { cwd: context.root, errorCode: 'HOST_ADAPTER_APPLY_FAILED' });

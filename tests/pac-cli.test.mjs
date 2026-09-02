@@ -69,6 +69,70 @@ test('host adapters are adopted, scoped, retired, and unmanaged disabled files s
   }
 });
 
+test('missing PAC adapters recover stale Chezmoi state without forcing drift', async () => {
+  const home = await temporary('pac-host-adapter-recovery-');
+  const fakeChezmoi = path.join(home, 'fake-chezmoi');
+  const invocation = path.join(home, 'invocation');
+  const context = {
+    root: repo,
+    home,
+    stateDir: path.join(home, '.local/state/personal-agent-control'),
+  };
+  await fs.writeFile(fakeChezmoi, [
+    '#!/bin/sh',
+    'set -eu',
+    'source=',
+    'destination=',
+    'force=false',
+    'while [ "$#" -gt 0 ]; do',
+    '  case "$1" in',
+    '    --source) source=$2; shift 2 ;;',
+    '    --destination) destination=$2; shift 2 ;;',
+    '    --force) force=true; shift ;;',
+    '    *) shift ;;',
+    '  esac',
+    'done',
+    'printf "%s\\n" "$force" > "$PAC_TEST_INVOCATION"',
+    'for target in "$destination/.codex/AGENTS.md" "$destination/.codex/agents/independent-reviewer.toml"; do',
+    '  case "$target" in',
+    '    */.codex/AGENTS.md) expected="$source/generated/codex/AGENTS.md" ;;',
+    '    *) expected="$source/generated/codex/agents/independent-reviewer.toml" ;;',
+    '  esac',
+    '  if [ "$force" != true ] && { [ ! -f "$target" ] || ! cmp -s "$target" "$expected"; }; then exit 17; fi',
+    '  mkdir -p "$(dirname "$target")"',
+    '  cp "$expected" "$target"',
+    'done',
+  ].join('\n'));
+  await fs.chmod(fakeChezmoi, 0o755);
+  const priorMode = process.env.PAC_HOST_ADAPTER_MODE;
+  const priorChezmoi = process.env.PAC_CHEZMOI;
+  const priorInvocation = process.env.PAC_TEST_INVOCATION;
+  delete process.env.PAC_HOST_ADAPTER_MODE;
+  process.env.PAC_CHEZMOI = fakeChezmoi;
+  process.env.PAC_TEST_INVOCATION = invocation;
+  try {
+    await reconcileHostAdapters(context, ['codex'], ['codex']);
+    assert.equal(await fs.readFile(invocation, 'utf8'), 'true\n');
+
+    await fs.writeFile(path.join(home, '.codex/AGENTS.md'), 'user drift\n');
+    await fs.unlink(path.join(home, '.codex/agents/independent-reviewer.toml'));
+    await assert.rejects(
+      reconcileHostAdapters(context, ['codex'], ['codex']),
+      (error) => error.code === 'HOST_ADAPTER_APPLY_FAILED',
+    );
+    assert.equal(await fs.readFile(invocation, 'utf8'), 'false\n');
+    assert.equal(await fs.readFile(path.join(home, '.codex/AGENTS.md'), 'utf8'), 'user drift\n');
+  } finally {
+    if (priorMode === undefined) delete process.env.PAC_HOST_ADAPTER_MODE;
+    else process.env.PAC_HOST_ADAPTER_MODE = priorMode;
+    if (priorChezmoi === undefined) delete process.env.PAC_CHEZMOI;
+    else process.env.PAC_CHEZMOI = priorChezmoi;
+    if (priorInvocation === undefined) delete process.env.PAC_TEST_INVOCATION;
+    else process.env.PAC_TEST_INVOCATION = priorInvocation;
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
 test('forged host-adapter ownership cannot authorize deletion outside the adapter allowlist', async () => {
   const home = await temporary('pac-host-adapter-forgery-');
   const context = {
