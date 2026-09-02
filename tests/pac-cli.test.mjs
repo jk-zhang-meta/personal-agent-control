@@ -73,6 +73,7 @@ test('missing PAC adapters recover stale Chezmoi state without forcing drift', a
   const home = await temporary('pac-host-adapter-recovery-');
   const fakeChezmoi = path.join(home, 'fake-chezmoi');
   const invocation = path.join(home, 'invocation');
+  const staleState = path.join(home, 'stale-chezmoi-state');
   const context = {
     root: repo,
     home,
@@ -98,7 +99,8 @@ test('missing PAC adapters recover stale Chezmoi state without forcing drift', a
     '    */.codex/AGENTS.md) expected="$source/generated/codex/AGENTS.md" ;;',
     '    *) expected="$source/generated/codex/agents/independent-reviewer.toml" ;;',
     '  esac',
-    '  if [ "$force" != true ] && { [ ! -f "$target" ] || ! cmp -s "$target" "$expected"; }; then exit 17; fi',
+    '  if [ "$force" != true ] && [ -f "$PAC_TEST_STALE_STATE" ] && [ ! -f "$target" ]; then exit 17; fi',
+    '  if [ "$force" != true ] && [ -f "$target" ] && ! cmp -s "$target" "$expected"; then exit 17; fi',
     '  mkdir -p "$(dirname "$target")"',
     '  cp "$expected" "$target"',
     'done',
@@ -107,10 +109,20 @@ test('missing PAC adapters recover stale Chezmoi state without forcing drift', a
   const priorMode = process.env.PAC_HOST_ADAPTER_MODE;
   const priorChezmoi = process.env.PAC_CHEZMOI;
   const priorInvocation = process.env.PAC_TEST_INVOCATION;
+  const priorStaleState = process.env.PAC_TEST_STALE_STATE;
   delete process.env.PAC_HOST_ADAPTER_MODE;
   process.env.PAC_CHEZMOI = fakeChezmoi;
   process.env.PAC_TEST_INVOCATION = invocation;
+  process.env.PAC_TEST_STALE_STATE = staleState;
   try {
+    await reconcileHostAdapters(context, ['codex'], ['codex']);
+    assert.equal(await fs.readFile(invocation, 'utf8'), 'true\n');
+
+    // Model a successful prior Chezmoi write followed by an external
+    // deletion: its persistent state still exists, but both targets are gone.
+    await fs.writeFile(staleState, 'Chezmoi remembers these paths\n');
+    await fs.unlink(path.join(home, '.codex/AGENTS.md'));
+    await fs.unlink(path.join(home, '.codex/agents/independent-reviewer.toml'));
     await reconcileHostAdapters(context, ['codex'], ['codex']);
     assert.equal(await fs.readFile(invocation, 'utf8'), 'true\n');
 
@@ -129,6 +141,8 @@ test('missing PAC adapters recover stale Chezmoi state without forcing drift', a
     else process.env.PAC_CHEZMOI = priorChezmoi;
     if (priorInvocation === undefined) delete process.env.PAC_TEST_INVOCATION;
     else process.env.PAC_TEST_INVOCATION = priorInvocation;
+    if (priorStaleState === undefined) delete process.env.PAC_TEST_STALE_STATE;
+    else process.env.PAC_TEST_STALE_STATE = priorStaleState;
     await fs.rm(home, { recursive: true, force: true });
   }
 });
