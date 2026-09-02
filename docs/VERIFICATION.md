@@ -13,6 +13,13 @@ and recovery checks pass together. A passing unit test cannot compensate for a
 failed lock, path, Plugin, rollback, or live-host check. Optional tests must be
 identified as optional rather than silently counted as acceptance.
 
+`activation.ready` is a transaction-staging signal, not a healthy result. It
+may be true only when every ordinary invariant passes and the sole remaining
+condition is an exact, structurally verified Codex hook whose host trust state
+is `untrusted` or `modified`. `ok` remains false, strict doctor remains red, and
+deployment is incomplete until the exact current hook hash is trusted and a
+real host deny canary proves enforcement.
+
 ## State-layer invariants
 
 | Layer | Required invariant | Primary oracle |
@@ -128,6 +135,18 @@ immutable Profile cache, authentication, sessions, unrelated Skills, or
 unmanaged Plugin data. Synchronization is not treated as backup.
 
 ## Current evidence
+
+Targeted hook-staging checks run on Linux x86-64 on 2026-09-02:
+
+- the real PAC apply path reconciled an exact scan guard, observed Codex's
+  camelCase `hooks/list` entry as `untrusted`, retained the installation as
+  explicitly non-healthy staged state, then converged to healthy only after
+  the same key/hash was reported trusted;
+- the built-in doctor accepted only `healthy + exit 0` or one fully bound
+  pending Codex trust action with `exit 1`; forged pending metadata and a
+  payload/exit-code mismatch both failed; and
+- staged state propagated through JSON, the operation receipt, and human
+  output without using the word `complete` or triggering rollback.
 
 Targeted checks run on Linux x86-64 on 2026-08-07:
 

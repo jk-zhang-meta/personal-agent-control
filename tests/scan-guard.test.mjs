@@ -648,9 +648,75 @@ test('Codex status is unhealthy until the exact PAC hook is trusted by the host'
   await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
   const status = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
   assert.equal(status.valid, false);
+  assert.equal(status.structuralValid, true);
+  assert.equal(status.pendingTrust, true);
   assert.equal(status.operational, false);
   assert.equal(status.hookTrust, 'untrusted');
   assert.match(status.error, /review the exact entry in \/hooks/u);
+});
+
+test('Codex trust probe accepts the camelCase event name returned by hooks/list', async (t) => {
+  const value = await fixture(t);
+  await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
+  const hookFile = path.join(value.home, '.codex/hooks.json');
+  const hook = JSON.parse(await fs.readFile(hookFile, 'utf8')).hooks.PreToolUse[0];
+  const fakeCodex = path.join(value.base, 'fake-codex.cjs');
+  const response = {
+    data: [{
+      cwd: value.context.root,
+      hooks: [{
+        key: `${hookFile}:pre_tool_use:0:0`,
+        eventName: 'preToolUse',
+        handlerType: 'command',
+        command: hook.hooks[0].command,
+        matcher: hook.matcher,
+        sourcePath: hookFile,
+        source: 'user',
+        isManaged: false,
+        enabled: true,
+        currentHash: `sha256:${'a'.repeat(64)}`,
+        trustStatus: 'trusted',
+      }],
+      warnings: [],
+      errors: [],
+    }],
+  };
+  const writeFakeCodex = async (result) => fs.writeFile(fakeCodex, `#!/usr/bin/env node
+process.stdin.setEncoding('utf8');
+let buffered = '';
+process.stdin.on('data', (chunk) => {
+  buffered += chunk;
+  let newline;
+  while ((newline = buffered.indexOf('\\n')) >= 0) {
+    const line = buffered.slice(0, newline);
+    buffered = buffered.slice(newline + 1);
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.id === 1) process.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\\n');
+    if (message.id === 2) process.stdout.write(JSON.stringify({ id: 2, result: ${JSON.stringify(result)} }) + '\\n');
+  }
+});
+`, { mode: 0o700 });
+  await writeFakeCodex(response);
+  const priorCodex = process.env.PAC_CODEX;
+  process.env.PAC_CODEX = fakeCodex;
+  delete value.context.codexHookTrustProbe;
+  try {
+    const status = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
+    assert.equal(status.hookTrustProbe?.observable, true);
+    assert.equal(status.hookTrust, 'trusted');
+    assert.equal(status.valid, true);
+
+    response.data[0].warnings.push('synthetic discovery warning');
+    await writeFakeCodex(response);
+    const warned = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
+    assert.equal(warned.valid, false);
+    assert.equal(warned.pendingTrust, false);
+    assert.match(warned.error || '', /warning/u);
+  } finally {
+    if (priorCodex === undefined) delete process.env.PAC_CODEX;
+    else process.env.PAC_CODEX = priorCodex;
+  }
 });
 
 test('registry tampering invalidates the hook binding', async (t) => {

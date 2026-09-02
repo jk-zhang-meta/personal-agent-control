@@ -218,6 +218,13 @@ async function directoryDigest(root) {
 
 async function sourceIntegrityManifest(root) {
   const files = ['catalog/capabilities.jsonl', 'catalog/taxonomy.json'];
+  for (const relative of [
+    'catalog/trusted-sources.sha256',
+    'src/scan-guard-policy.mjs',
+    'src/scan-guard.mjs',
+  ]) {
+    if (await exists(path.join(root, relative))) files.push(relative);
+  }
   async function collect(directory, relative) {
     for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
       const childRelative = `${relative}/${entry.name}`;
@@ -351,7 +358,7 @@ cp -R "$2"/. "$target"/
 
 async function makeProfileRepository({
   enabledPlugins = [], catalogPlugins = [], skillTargets = ['codex', 'claude'],
-  bootstrap = null,
+  bootstrap = null, scanGuard = false,
 } = {}) {
   const root = await temporary('pac-profile-repository-');
   const skill = path.join(root, 'skills/profile-fixture');
@@ -364,6 +371,30 @@ async function makeProfileRepository({
     '---',
     '',
   ].join('\n'));
+  const scanSkills = [];
+  if (scanGuard) {
+    for (const [name, script] of [
+      ['resource-guard', 'resource-guard.mjs'],
+      ['workspace-locator', 'locator.mjs'],
+    ]) {
+      const skillRoot = path.join(root, 'skills', name);
+      await fs.mkdir(path.join(skillRoot, 'scripts'), { recursive: true });
+      await fs.writeFile(path.join(skillRoot, 'SKILL.md'), [
+        '---',
+        `name: ${name}`,
+        `description: ${name} transaction fixture.`,
+        '---',
+        '',
+      ].join('\n'));
+      await fs.writeFile(path.join(skillRoot, 'scripts', script), '#!/usr/bin/env node\n', { mode: 0o755 });
+      scanSkills.push({
+        name,
+        path: `skills/${name}`,
+        contentSha256: await hashDirectory(skillRoot),
+        targets: ['codex'],
+      });
+    }
+  }
   const capabilities = [{
     id: 'skill:profile-fixture',
     memberships: ['kind.skill'],
@@ -377,6 +408,15 @@ async function makeProfileRepository({
     delivery: 'vercel-skills-exception',
     visibility: 'private',
   }];
+  for (const entry of scanSkills) {
+    capabilities.push({
+      id: `skill:${entry.name}`,
+      memberships: ['kind.skill'],
+      targets: entry.targets,
+      delivery: 'profile',
+      visibility: 'private',
+    });
+  }
   for (const plugin of catalogPlugins) {
     capabilities.push({
       id: `provider:plugin:${plugin.name}@${plugin.marketplace}`,
@@ -421,7 +461,7 @@ async function makeProfileRepository({
       path: 'skills/profile-fixture',
       contentSha256: await hashDirectory(skill),
       targets: skillTargets,
-    }],
+    }, ...scanSkills],
     plugins: bootstrap === null
       ? { enabled: enabledPlugins }
       : { enabled: enabledPlugins, disabled: [] },
@@ -1492,6 +1532,159 @@ test('scoped apply verifies only the requested host even when both hosts are ena
   ]);
 });
 
+test('a staged built-in doctor preserves the installation and propagates non-healthy state', { timeout: 120_000 }, async () => {
+  const { root, home, env } = await makeRealLifecycleFixture();
+  const doctor = path.join(root, 'scripts/doctor.sh');
+  await fs.writeFile(doctor, [
+    '#!/bin/sh',
+    'echo "STAGED: doctor passed structural checks for codex; installation awaits explicit Codex hook trust"',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const applied = runJsonPac(root, home, ['apply'], {
+    ...env,
+    PAC_SKIP_POST_DOCTOR: '0',
+  }, 'codex');
+  assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+  assert.deepEqual(applied.json?.data?.verification, {
+    skipped: false,
+    state: 'staged',
+    healthy: false,
+    output: 'STAGED: doctor passed structural checks for codex; installation awaits explicit Codex hook trust',
+  });
+  assert.equal(await exists(path.join(home, '.agents/skills/base-skill')), true);
+  const receipt = JSON.parse(await fs.readFile(applied.json.data.receipt, 'utf8'));
+  assert.deepEqual(receipt.verification, { state: 'staged', healthy: false });
+
+  const human = spawnSync(path.join(repo, 'bin/pac'), [
+    '--home', home,
+    '--hosts', 'codex',
+    'apply',
+  ], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: home,
+      PAC_ROOT: root,
+      PAC_NODE: process.execPath,
+      PAC_NO_PLUGINS: '1',
+      PAC_HOST_ADAPTER_MODE: 'skip',
+      ...env,
+      PAC_SKIP_POST_DOCTOR: '0',
+    },
+  });
+  assert.equal(human.status, 0, human.stderr || human.stdout);
+  assert.match(human.stdout, /PAC apply staged, but not yet healthy/u);
+  assert.doesNotMatch(human.stdout, /PAC apply complete/u);
+});
+
+test('real apply path stages an untrusted Codex hook and converges after the same hook is trusted', { timeout: 120_000 }, async () => {
+  const { root, home, env } = await makeRealLifecycleFixture();
+  const profile = await makeProfileRepository({ scanGuard: true, skillTargets: ['codex'] });
+  const hookFile = path.join(home, '.codex/hooks.json');
+  const trustFile = path.join(home, 'fake-codex-trust-state');
+  const fakeCodex = path.join(home, 'fake-codex.cjs');
+  const registry = path.join(home, '.config/personal-agent-control/search-roots.json');
+  const installedPac = path.join(home, '.local/bin/pac');
+  const sourcePac = path.join(root, 'bin/pac');
+  const fakeMise = path.join(home, '.local/bin/mise');
+  await Promise.all([
+    copyFileTree(path.join(repo, 'generated/codex/AGENTS.md'), path.join(root, 'generated/codex/AGENTS.md')),
+    copyFileTree(path.join(repo, 'generated/codex/agents/independent-reviewer.toml'), path.join(root, 'generated/codex/agents/independent-reviewer.toml')),
+    copyFileTree(path.join(repo, 'generated/codex/AGENTS.md'), path.join(home, '.codex/AGENTS.md')),
+    copyFileTree(path.join(repo, 'generated/codex/agents/independent-reviewer.toml'), path.join(home, '.codex/agents/independent-reviewer.toml')),
+    copyFileTree(path.join(repo, 'scripts/doctor.sh'), path.join(root, 'scripts/doctor.sh')),
+    copyFileTree(path.join(repo, 'src/scan-guard-policy.mjs'), path.join(root, 'src/scan-guard-policy.mjs')),
+    copyFileTree(path.join(repo, 'catalog/trusted-sources.sha256'), path.join(root, 'catalog/trusted-sources.sha256')),
+    fs.mkdir(path.dirname(sourcePac), { recursive: true }),
+    fs.mkdir(path.dirname(installedPac), { recursive: true }),
+    fs.mkdir(path.dirname(registry), { recursive: true }),
+  ]);
+  await fs.symlink(path.join(repo, 'bin/pac'), sourcePac);
+  await fs.symlink(sourcePac, installedPac);
+  await fs.writeFile(fakeMise, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  await fs.writeFile(path.join(home, '.codex/config.toml'), '[features]\nhooks = true\n', { mode: 0o600 });
+  await fs.writeFile(registry, `${JSON.stringify({
+    schemaVersion: 1,
+    roots: [{ id: 'fixture', path: root, kind: 'filesystem' }],
+  })}\n`, { mode: 0o600 });
+  await fs.writeFile(trustFile, 'untrusted\n', { mode: 0o600 });
+  await fs.writeFile(fakeCodex, `#!/usr/bin/env node
+const fs = require('node:fs');
+const hookFile = ${JSON.stringify(hookFile)};
+const trustFile = ${JSON.stringify(trustFile)};
+process.stdin.setEncoding('utf8');
+let buffered = '';
+process.stdin.on('data', (chunk) => {
+  buffered += chunk;
+  let newline;
+  while ((newline = buffered.indexOf('\\n')) >= 0) {
+    const line = buffered.slice(0, newline);
+    buffered = buffered.slice(newline + 1);
+    if (!line.trim()) continue;
+    const message = JSON.parse(line);
+    if (message.id === 1) {
+      process.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\\n');
+      continue;
+    }
+    if (message.id !== 2) continue;
+    const config = JSON.parse(fs.readFileSync(hookFile, 'utf8'));
+    const hook = config.hooks.PreToolUse.find((entry) =>
+      entry.hooks.some((handler) => handler.command.includes('--pac-scan-guard-v2')));
+    const cwd = message.params.cwds[0];
+    const result = { data: [{ cwd, hooks: hook ? [{
+      key: hookFile + ':pre_tool_use:0:0',
+      eventName: 'preToolUse',
+      handlerType: 'command',
+      command: hook.hooks[0].command,
+      matcher: hook.matcher,
+      sourcePath: hookFile,
+      source: 'user',
+      isManaged: false,
+      enabled: true,
+      currentHash: 'sha256:${'b'.repeat(64)}',
+      trustStatus: fs.readFileSync(trustFile, 'utf8').trim(),
+    }] : [], warnings: [], errors: [] }] };
+    process.stdout.write(JSON.stringify({ id: 2, result }) + '\\n');
+  }
+});
+`, { mode: 0o700 });
+  await fs.writeFile(path.join(root, 'catalog/files.sha256'), await sourceIntegrityManifest(root));
+
+  const guardedEnv = {
+    ...env,
+    PAC_CODEX: fakeCodex,
+    PAC_HOST_ADAPTER_MODE: 'adopt',
+    PAC_SKIP_POST_DOCTOR: '0',
+  };
+  const attached = runJsonPac(root, home, [
+    'profile', 'set', profile.root, 'main', profile.commit,
+  ], guardedEnv, 'codex');
+  assert.equal(attached.status, 0, attached.stderr || attached.stdout);
+  assert.equal(attached.json?.data?.verification?.state, 'staged');
+  assert.equal(attached.json?.data?.verification?.healthy, false);
+  assert.equal(await exists(path.join(home, '.agents/skills/resource-guard')), true);
+  assert.equal(await exists(path.join(home, '.config/personal-agent-control/profile.json')), true);
+  const stagedReceipt = JSON.parse(await fs.readFile(attached.json.data.receipt, 'utf8'));
+  assert.deepEqual(stagedReceipt.verification, { state: 'staged', healthy: false });
+
+  const pending = runJsonPac(root, home, ['status'], guardedEnv, 'codex');
+  assert.equal(pending.status, 1, pending.stderr || pending.stdout);
+  assert.equal(pending.json?.data?.activation?.ready, true);
+  assert.equal(pending.json?.data?.activation?.pending?.length, 1);
+  assert.equal(pending.json?.data?.scanGuard?.[0]?.pendingTrust, true);
+
+  await fs.writeFile(trustFile, 'trusted\n', { mode: 0o600 });
+  const converged = runJsonPac(root, home, ['apply'], guardedEnv, 'codex');
+  assert.equal(converged.status, 0, converged.stderr || converged.stdout);
+  assert.equal(converged.json?.data?.verification?.state, 'healthy');
+  assert.equal(converged.json?.data?.verification?.healthy, true);
+  const healthy = runJsonPac(root, home, ['status'], guardedEnv, 'codex');
+  assert.equal(healthy.status, 0, healthy.stderr || healthy.stdout);
+  assert.equal(healthy.json?.data?.ok, true);
+  assert.deepEqual(healthy.json?.data?.activation?.pending, []);
+  assert.equal(healthy.json?.data?.scanGuard?.[0]?.valid, true);
+});
+
 test('scoped apply snapshots only the selected enabled host and ignores an unsafe enabled peer', { timeout: 120_000 }, async () => {
   const { root, home, env } = await makeRealLifecycleFixture();
   const profile = path.join(home, '.config/personal-agent-control/machine.json');
@@ -1727,6 +1920,90 @@ test('doctor.sh checks the resolver revision with the exact active Profile root'
     '--db', path.join(home, '.cache/personal-agent-control/capabilities-v1.sqlite'),
     '--profile', profile,
   ]);
+
+  const pendingTrust = JSON.stringify({
+    ok: true,
+    data: {
+      ...JSON.parse(healthy).data,
+      ok: false,
+      activation: {
+        ready: true,
+        pending: [{
+          host: 'codex',
+          action: 'trust-hook',
+          trustStatus: 'untrusted',
+          key: 'fixture:pre_tool_use:0:0',
+          currentHash: `sha256:${'a'.repeat(64)}`,
+        }],
+      },
+      scanGuard: [{
+        host: 'codex',
+        valid: false,
+        structuralValid: true,
+        pendingTrust: true,
+        operational: false,
+        hookTrust: 'untrusted',
+        hookTrustProbe: {
+          key: 'fixture:pre_tool_use:0:0',
+          currentHash: `sha256:${'a'.repeat(64)}`,
+        },
+      }],
+    },
+  });
+  await fs.writeFile(pacSource, `#!/bin/sh\ncase " $* " in *" --help "*) exit 0 ;; esac\nprintf '%s\\n' ${JSON.stringify(pendingTrust)}\nexit 1\n`, { mode: 0o755 });
+  const strict = spawnSync('sh', [
+    path.join(root, 'scripts/doctor.sh'),
+    '--home', home,
+    '--agents', 'codex',
+    '--profile', profile,
+  ], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, PAC_APM: apm, DOCTOR_RESOLVER_LOG: resolverLog },
+  });
+  assert.notEqual(strict.status, 0, strict.stdout);
+
+  const staged = spawnSync('sh', [
+    path.join(root, 'scripts/doctor.sh'),
+    '--allow-pending-codex-hook-trust',
+    '--home', home,
+    '--agents', 'codex',
+    '--profile', profile,
+  ], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, PAC_APM: apm, DOCTOR_RESOLVER_LOG: resolverLog },
+  });
+  assert.equal(staged.status, 0, staged.stderr || staged.stdout);
+  assert.match(staged.stdout, /^STAGED:/u);
+  assert.match(staged.stdout, /awaits explicit Codex hook trust/u);
+
+  const forgedPending = JSON.parse(pendingTrust);
+  forgedPending.data.activation.pending[0].key = '';
+  await fs.writeFile(pacSource, `#!/bin/sh\ncase " $* " in *" --help "*) exit 0 ;; esac\nprintf '%s\\n' ${JSON.stringify(JSON.stringify(forgedPending))}\nexit 1\n`, { mode: 0o755 });
+  const forged = spawnSync('sh', [
+    path.join(root, 'scripts/doctor.sh'),
+    '--allow-pending-codex-hook-trust',
+    '--home', home,
+    '--agents', 'codex',
+    '--profile', profile,
+  ], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, PAC_APM: apm, DOCTOR_RESOLVER_LOG: resolverLog },
+  });
+  assert.notEqual(forged.status, 0, forged.stdout);
+
+  await fs.writeFile(pacSource, `#!/bin/sh\ncase " $* " in *" --help "*) exit 0 ;; esac\nprintf '%s\\n' ${JSON.stringify(pendingTrust)}\nexit 0\n`, { mode: 0o755 });
+  const inconsistent = spawnSync('sh', [
+    path.join(root, 'scripts/doctor.sh'),
+    '--allow-pending-codex-hook-trust',
+    '--home', home,
+    '--agents', 'codex',
+    '--profile', profile,
+  ], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, PAC_APM: apm, DOCTOR_RESOLVER_LOG: resolverLog },
+  });
+  assert.notEqual(inconsistent.status, 0, inconsistent.stdout);
+  assert.match(inconsistent.stderr, /exit code disagrees|PAC status contract/u);
 });
 
 test('host enable preserves profile order and re-enabled hosts append', { timeout: 120_000 }, async () => {

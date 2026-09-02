@@ -68,6 +68,23 @@ If a non-empty `~/.codex/AGENTS.override.md` exists, Codex installation stops
 before changing its managed global file. Rename or merge that override only
 after reviewing why it exists.
 
+When the selected Profile enables the scan guard, Codex may leave its exact
+new or changed user hook in `untrusted`/`modified` state. PAC keeps the verified
+installation staged instead of rolling back unrelated Skills, but it does not
+call that state healthy. Review and accept the exact PAC `PreToolUse` entry in
+Codex `/hooks` (or, after an operator authorizes that exact key/hash, use the
+version-pinned `config/batchWrite` path used by that Codex TUI), restart the
+session, then run
+`pac doctor` and the documented deny canary. Do not copy a stale trusted hash or
+edit trust state based only on a path/name match.
+
+For that canary, start a fresh Codex session in a disposable WSL-local Git
+repository and request the exact raw command `find . -maxdepth 3 -type f`. The
+expected result is a scan-guard denial that routes discovery to
+`workspace-locator` or the bounded guard, not filesystem output. Do not run the
+canary in OneDrive and do not use a hook-trust bypass flag as proof of durable
+activation.
+
 ## Review before apply
 
 For an initial dry review, split bootstrap, clone, diff, and apply:

@@ -1132,6 +1132,18 @@ host hooks, stale runtime/helper copy, ownership drift, or unavailable hard
 containment is visible in `pac status`; no such state is represented as “fully
 protected.”
 
+Codex user hooks add a separate host-owned trust step. PAC verifies the exact
+source path, event, matcher, command, ownership digest, runtime, registry, and
+Profile-bound helper bytes before it classifies a hook as structurally ready.
+An install may remain staged when that exact entry is visible but its host
+trust state is `untrusted` or `modified`; the post-apply structural doctor does
+not roll back the otherwise valid installation merely because the user has not
+yet accepted the current hash. Normal `pac status` and `pac doctor` remain
+unhealthy until Codex reports the entry `trusted` or `managed`, and release
+completion still requires a deny canary. Host API event names are compared by
+semantic identity because current Codex `hooks/list` reports camelCase while
+configuration and state keys use different casing conventions.
+
 The hook is a resource-routing boundary, not a second filesystem or network
 sandbox. Exact native file paths remain subject to the host sandbox and project
 contract. Public-host DNS resolution and redirects remain the Web provider's

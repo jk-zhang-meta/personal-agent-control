@@ -209,6 +209,12 @@ control/UI calls; native patch/read/write/image/Web inputs use bounded schemas,
 while the host sandbox remains the filesystem-authority boundary. Authentication,
 sessions, and history are never redirected into this repository.
 
+Codex keeps user-hook trust as a separate host-owned decision. An apply may
+therefore report a structurally valid installation as staged while the exact
+PAC hook hash awaits review. `pac status` and `pac doctor` stay unhealthy until
+Codex reports that entry trusted; start a fresh session and run the deny canary
+after accepting it. PAC never interprets staged as active protection.
+
 Each host links to one neutral runtime copy of a standalone Skill. Immutable
 Profile checkouts and package acquisition caches remain separate; Plugin caches
 stay host-native where package hooks, MCP, or host manifests require them.

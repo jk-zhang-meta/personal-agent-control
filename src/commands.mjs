@@ -274,11 +274,16 @@ async function outerTransactionFromEnvironment(context) {
 }
 
 async function postDoctor(context, hosts, profile = null) {
-  if (process.env.PAC_SKIP_POST_DOCTOR === '1' || hosts.length === 0) return { skipped: true };
+  if (process.env.PAC_SKIP_POST_DOCTOR === '1' || hosts.length === 0) {
+    return { skipped: true, state: 'skipped', healthy: null };
+  }
   const override = process.env.PAC_DOCTOR;
   const executable = override || 'sh';
   const args = [
-    ...(override ? [] : [path.join(context.root, 'scripts/doctor.sh')]),
+    ...(override ? [] : [
+      path.join(context.root, 'scripts/doctor.sh'),
+      '--allow-pending-codex-hook-trust',
+    ]),
     '--home', context.home, '--agents', hosts.join(','),
     ...profileResolverArgs(profile),
   ];
@@ -287,7 +292,9 @@ async function postDoctor(context, hosts, profile = null) {
     env: { ...process.env, HOME: context.home },
     errorCode: 'POST_APPLY_VERIFICATION_FAILED',
   });
-  return { skipped: false, output: result.stdout.trim() };
+  const output = result.stdout.trim();
+  const staged = !override && output.startsWith('STAGED:');
+  return { skipped: false, state: staged ? 'staged' : 'healthy', healthy: !staged, output };
 }
 
 async function rebuildResolverAfterRestore(context, neutral) {
@@ -462,6 +469,7 @@ async function applyUnlocked(context, options = {}) {
       operation: 'apply', backup, hosts: scopedEnabledHosts, enabledHosts: enabled,
       neutralSkillStore: neutral, skills: desired, plugins: effectivePlugins,
       providers: providers.providers,
+      verification: { state: verification.state, healthy: verification.healthy },
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
     });
     return {
@@ -658,15 +666,27 @@ async function status(context, options = {}) {
   try { plugins = await reconcilePlugins(context, effectiveConfig, activeScope, 'check', profile); }
   catch (error) { plugins = { valid: false, error: error.message, details: error.details }; }
   if (plugins && plugins.valid === undefined) plugins.valid = true;
-  const result = {
-    ok: sourceIntegrity.valid && profileState.valid && version.matches && runtimeMatchesDesired && runtimeContent.valid
+  const baseHealthy = sourceIntegrity.valid && profileState.valid && version.matches
+      && runtimeMatchesDesired && runtimeContent.valid
       && bootstrap.valid && profileApm.valid
       && materializers.every((entry) => entry.valid) && profileSkills.every((entry) => entry.valid)
       && ownership.valid
       && adapters.every((entry) => entry.valid)
-      && scanGuard.every((entry) => entry.valid)
       && providers.every((entry) => entry.valid)
-      && projections.every((entry) => entry.valid) && plugins.valid,
+      && projections.every((entry) => entry.valid) && plugins.valid;
+  const pendingActivation = scanGuard.filter((entry) => entry.pendingTrust).map((entry) => ({
+    host: entry.host,
+    action: 'trust-hook',
+    trustStatus: entry.hookTrust,
+    key: entry.hookTrustProbe?.key || null,
+    currentHash: entry.hookTrustProbe?.currentHash || null,
+  }));
+  const result = {
+    ok: baseHealthy && scanGuard.every((entry) => entry.valid),
+    activation: {
+      ready: baseHealthy && scanGuard.every((entry) => entry.valid || entry.pendingTrust),
+      pending: pendingActivation,
+    },
     root: context.root,
     home: context.home,
     sourceIntegrity,

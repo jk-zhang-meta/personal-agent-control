@@ -211,9 +211,27 @@ async function codexHookTrustStatus(context, descriptor, expected) {
         return;
       }
       if (message.id !== 2) return;
-      const hooks = Array.isArray(message.result?.data?.[0]?.hooks) ? message.result.data[0].hooks : [];
-      const matches = hooks.filter((entry) => entry && entry.eventName === 'pre_tool_use' &&
-        entry.handlerType === 'command' && entry.matcher === expected.matcher &&
+      const listedRoots = Array.isArray(message.result?.data) ? message.result.data.filter((entry) =>
+        typeof entry?.cwd === 'string' && entry.cwd.length > 0 &&
+        path.resolve(entry.cwd) === path.resolve(context.root)) : [];
+      if (listedRoots.length !== 1) {
+        finish({ observable: true, active: false, trustStatus: 'unknown',
+          reason: `Codex hooks/list returned ${listedRoots.length} records for the PAC root.` });
+        return;
+      }
+      const listed = listedRoots[0];
+      const warnings = Array.isArray(listed.warnings) ? listed.warnings : [];
+      const errors = Array.isArray(listed.errors) ? listed.errors : [];
+      if (warnings.length > 0 || errors.length > 0) {
+        finish({ observable: true, active: false, trustStatus: 'unknown',
+          reason: `Codex hooks/list reported ${warnings.length} warning(s) and ${errors.length} error(s).` });
+        return;
+      }
+      const hooks = Array.isArray(listed.hooks) ? listed.hooks : [];
+      const matches = hooks.filter((entry) => entry &&
+        String(entry.eventName || '').replace(/[^a-z0-9]/giu, '').toLowerCase() === 'pretooluse' &&
+        entry.handlerType === 'command' && entry.source === 'user' && entry.isManaged === false &&
+        entry.matcher === expected.matcher &&
         entry.command === expected.hooks[0].command &&
         path.resolve(String(entry.sourcePath || '')) === path.resolve(descriptor.file));
       if (matches.length !== 1) {
@@ -222,6 +240,12 @@ async function codexHookTrustStatus(context, descriptor, expected) {
         return;
       }
       const entry = matches[0];
+      if (typeof entry.key !== 'string' || entry.key.length === 0 ||
+          !/^sha256:[0-9a-f]{64}$/u.test(entry.currentHash || '')) {
+        finish({ observable: true, active: false, trustStatus: 'unknown',
+          reason: 'Codex hooks/list returned invalid PAC hook identity metadata.' });
+        return;
+      }
       const trustStatus = String(entry.trustStatus || 'unknown').toLowerCase();
       finish({
         observable: true,
@@ -742,15 +766,20 @@ export async function scanGuardStatus(context, enabledHosts, scopeHosts, profile
       ? await codexHookTrustStatus(context, descriptor, expected)
       : null;
     const operational = host === 'codex' ? Boolean(codexTrust?.active) : !disabled;
-    const valid = enabled.has(host)
+    const structuralValid = enabled.has(host)
       ? Boolean(actual) && Boolean(expected) && !drifted && jsonDigest(actual) === jsonDigest(expected) && Boolean(prior)
         && runtime.valid && !disabled && hostState.activation !== 'unknown' && !registryError
         && helperReadiness.resourceGuard && helperReadiness.locator
-        && !registryMismatch && operational
+        && !registryMismatch
       : prior ? !drifted && !actual : true;
+    const pendingTrust = enabled.has(host) && host === 'codex' && structuralValid && !operational
+      && codexTrust?.observable === true && codexTrust?.enabled === true
+      && ['untrusted', 'modified'].includes(codexTrust?.trustStatus);
+    const valid = enabled.has(host) ? structuralValid && operational : structuralValid;
     results.push({
       host, target: descriptor.file, expected: enabled.has(host) ? 'managed' : 'missing',
       state: drifted ? 'drift' : (actual ? 'managed' : 'missing'), owned: Boolean(prior), valid,
+      structuralValid, pendingTrust,
       hooksDisabled: disabled, entrySha256: actual ? jsonDigest(actual) : null,
       hookTrust: codexTrust?.trustStatus || hostState.trust, operational,
       hookTrustProbe: codexTrust, activation: hostState.activation, runtime,

@@ -85,6 +85,9 @@ function human(command, data) {
       ? `PAC Profile: ${data.profile.state} (${data.profile.lockedCommit || 'unknown revision'})`
       : 'PAC Profile: not configured';
   }
+  if (data?.receipt && data.verification?.state === 'staged') {
+    return `PAC ${command} staged, but not yet healthy: ${data.verification.output}\nReceipt: ${data.receipt}\nBackup: ${data.backup}`;
+  }
   if (data?.receipt) return `PAC ${command} complete.\nReceipt: ${data.receipt}\nBackup: ${data.backup}`;
   if (data?.output) return data.output;
   return `PAC ${command} complete.`;
