@@ -7,6 +7,14 @@ import { assertRealDirectory } from './path-safety.mjs';
 
 const REQUIRED_CATALOG_FILES = ['catalog/capabilities.jsonl', 'catalog/taxonomy.json'];
 const OPTIONAL_CATALOG_FILES = ['catalog/providers.json'];
+// The host hook is executable PAC control code rather than a Profile payload.
+// Keep its reviewed digests in the same canonical inventory when present; the
+// optional shape preserves the small synthetic fixtures used by unit tests.
+const OPTIONAL_CONTROL_FILES = [
+  'catalog/trusted-sources.sha256',
+  'src/scan-guard-policy.mjs',
+  'src/scan-guard.mjs',
+];
 
 function digest(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
@@ -51,6 +59,10 @@ export async function verifyCanonicalPayload(context) {
   const catalogFiles = [
     ...REQUIRED_CATALOG_FILES,
     ...OPTIONAL_CATALOG_FILES.filter((relative) => {
+      try { return fsSync.existsSync(path.join(context.root, relative)); }
+      catch { return false; }
+    }),
+    ...OPTIONAL_CONTROL_FILES.filter((relative) => {
       try { return fsSync.existsSync(path.join(context.root, relative)); }
       catch { return false; }
     }),

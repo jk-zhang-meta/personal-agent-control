@@ -66,6 +66,9 @@ export function resolveContext(options = {}) {
     profileStoreDir: path.join(home, '.local/share/personal-agent-profiles'),
     profileWorkspaceRoot: path.join(home, '.local/share/personal-agent-profile-workspaces/default'),
     profileRuntimeStoreDir: path.join(home, '.local/share/personal-agent-profile-runtimes'),
+    // The scan gate reads this small machine-local registry on each hook call;
+    // it is never copied into the synchronized Profile/source tree.
+    searchRegistryPath: path.join(home, '.config/personal-agent-control/search-roots.json'),
     apm: process.env.PAC_APM
       || (fsSync.existsSync(pinnedApm) ? pinnedApm : (fsSync.existsSync(apmShim) ? apmShim : 'apm')),
   };

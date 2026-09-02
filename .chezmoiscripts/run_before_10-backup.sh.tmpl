@@ -103,6 +103,8 @@ add_path .config/personal-agent-control/profile-bootstrap.md file
 add_path .config/personal-agent-control/state.boltdb file
 add_path .local/share/agent-skills directory
 add_path .local/state/personal-agent-control/last-backup file
+add_path .local/state/personal-agent-control/scan-guard.json file
+add_path .agent-work/runtime/pac/scan-guard-hook.mjs file
 add_path .local/state/personal-agent-control/owned-host-adapters.json file
 add_path .local/state/personal-agent-control/profile-bootstrap.json file
 add_path .local/state/personal-agent-control/owned-skills.txt file
@@ -113,6 +115,7 @@ add_path .local/state/personal-agent-control/migrations/neutral-skill-store-v1 f
 
 if [ "$codex" = true ]; then
     add_path .codex/config.toml file
+    add_path .codex/hooks.json file
     add_path .codex/AGENTS.md file
     add_path .codex/agents/independent-reviewer.toml file
     add_path .codex/agents/pac-reviewer.toml file
@@ -174,6 +177,7 @@ grep -Fqx codex "$tmp/current-hosts.tsv" && inventory_codex=true
 grep -Fqx claude "$tmp/current-hosts.tsv" && inventory_claude=true
 if [ "$inventory_codex" = true ]; then
     add_path .codex/config.toml file
+    add_path .codex/hooks.json file
     add_path .codex/AGENTS.md file
     add_path .codex/agents/independent-reviewer.toml file
     add_path .codex/agents/pac-reviewer.toml file

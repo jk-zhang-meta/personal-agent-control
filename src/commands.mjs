@@ -31,6 +31,7 @@ import { run } from './exec.mjs';
 import { PacError, usage } from './errors.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
 import { hostAdapterStatus, reconcileHostAdapters } from './host-adapters.mjs';
+import { scanGuardStatus, reconcileScanGuard } from './scan-guard.mjs';
 import { providerStatus, reconcileProviders } from './providers.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { profileBootstrapStatus, reconcileProfileBootstrap } from './profile-bootstrap.mjs';
@@ -449,6 +450,9 @@ async function applyUnlocked(context, options = {}) {
     const projections = await reconcileProjections(context, effectiveConfig, neutral, desired, enabled, reconciliationScope);
     const retiredProfileSkills = await retireProfileSkills(context, neutral, priorOwnedMap, desired);
     const plugins = await reconcilePlugins(context, effectiveConfig, reconciliationScope, 'apply', profile);
+    // Native Plugin reconciliation can refresh host hook files; install the
+    // PAC fragment last so the final transaction state is what status checks.
+    const scanGuard = await reconcileScanGuard(context, enabled, reconciliationScope, effectiveProfile);
     const resolver = await runResolver(context, [
       'rebuild', '--repo', context.root, '--home', context.home,
       ...profileResolverArgs(profile),
@@ -464,7 +468,7 @@ async function applyUnlocked(context, options = {}) {
       backup, receipt, hosts: scopedEnabledHosts, neutralSkillStore: neutral, skills: desired,
       materializers, profileSkills, retiredProfileSkills,
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
-      bootstrap, profileApm, adapters, providers, projections, plugins, resolver, verification, sourceIntegrity,
+      bootstrap, profileApm, adapters, scanGuard, providers, projections, plugins, resolver, verification, sourceIntegrity,
     };
   } catch (error) {
     try {
@@ -639,6 +643,12 @@ async function status(context, options = {}) {
   };
   const projections = await projectionStatus(context, effectiveConfig, neutral, skills, enabled, activeScope);
   const adapters = await hostAdapterStatus(context, enabled, activeScope);
+  let scanGuard;
+  try { scanGuard = await scanGuardStatus(context, enabled, scope, effectiveProfile); }
+  catch (error) {
+    scanGuard = [{ host: 'core', state: 'invalid', expected: 'managed', valid: false,
+      code: error.code || 'SCAN_GUARD_INVALID', error: error.message, details: error.details }];
+  }
   let providers;
   try { providers = await providerStatus(context, effectiveProfile, enabled, scope); }
   catch (error) {
@@ -654,6 +664,7 @@ async function status(context, options = {}) {
       && materializers.every((entry) => entry.valid) && profileSkills.every((entry) => entry.valid)
       && ownership.valid
       && adapters.every((entry) => entry.valid)
+      && scanGuard.every((entry) => entry.valid)
       && providers.every((entry) => entry.valid)
       && projections.every((entry) => entry.valid) && plugins.valid,
     root: context.root,
@@ -684,6 +695,7 @@ async function status(context, options = {}) {
     bootstrap,
     ownership,
     adapters,
+    scanGuard,
     providers,
     projections,
     plugins,
@@ -698,6 +710,7 @@ async function plan(context, options) {
     changes: {
       runtimeLock: current.runtimeLock.matchesCanonical ? 'unchanged' : 'replace',
       adapters: current.adapters.filter((entry) => !entry.valid),
+      scanGuard: current.scanGuard.filter((entry) => !entry.valid),
       providers: current.providers.filter((entry) => !entry.valid),
       projections: current.projections.filter((entry) => !entry.valid),
       materializers: [

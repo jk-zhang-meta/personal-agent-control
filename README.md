@@ -197,8 +197,16 @@ update, verification, selective-host, and recovery commands are in
 Codex reads the filtered `~/.agents/skills` projection natively; Claude reads
 its filtered `~/.claude/skills` projection. Both resolve to the same physical
 trees, and no catalogued copies are created under `~/.codex/skills`. PAC
-declares native Plugin desired state but leaves host manifests, hooks, MCP
-servers, runtime data, and caches in their native locations. Authentication,
+declares native Plugin desired state but leaves host manifests, MCP servers,
+runtime data, and caches in their native locations. When the active Profile
+selects both `resource-guard` and `workspace-locator`, the one deliberate
+exception is a marked `PreToolUse` scan-guard fragment in each enabled host
+config. Selecting neither leaves the seam inactive; selecting only one fails
+closed. PAC owns only that fragment, preserves all other host fields, snapshots
+it before mutation, and fails closed on removal or drift. Host-specific matchers
+cover the high-I/O/execution surfaces without launching the hook for harmless
+control/UI calls; native patch/read/write/image/Web inputs use bounded schemas,
+while the host sandbox remains the filesystem-authority boundary. Authentication,
 sessions, and history are never redirected into this repository.
 
 Each host links to one neutral runtime copy of a standalone Skill. Immutable

@@ -12,7 +12,9 @@ locators here.
 ## Operating constraints
 
 - PAC is a control plane, not a second agent runtime, package solver, router,
-  scheduler, or native Plugin/MCP implementation.
+  scheduler, or native Plugin/MCP implementation. It may install one explicitly
+  marked, fail-closed PreToolUse scan-guard fragment in each host config; the
+  host remains owner of every other hook, setting, Plugin, and MCP field.
 - Never build or run the full test suite in a synchronized OneDrive checkout.
   Use a WSL-local clone/runtime under ~/.agent-work and keep generated indexes,
   logs, caches, and intermediates outside source.
@@ -20,6 +22,10 @@ locators here.
   host, lock, and rollback boundaries documented in docs/ARCHITECTURE.md.
 - Use bounded, explicit roots for discovery; do not add recursive filesystem-wide
   scans or unreviewed network/update behavior.
+- Raw `rg`/`find`/equivalent directory traversal is denied by the host gate.
+  Directory discovery must use the local workspace index or the PAC
+  `resource-guard` route with one registered local root and its caps; small
+  exact-file reads still require an explicit result/file-size bound.
 - Keep public catalogs free of private Profile paths and secret-bearing values.
 
 ## Request scope routing

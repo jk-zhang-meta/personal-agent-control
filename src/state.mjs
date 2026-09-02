@@ -5,6 +5,7 @@ import { PacError } from './errors.mjs';
 import { HOSTS, hostSkillDirectory } from './config.mjs';
 import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mjs';
 import { atomicWriteFile } from './atomic-file.mjs';
+import { hasPriorScanGuardState, scanGuardManagedPaths } from './scan-guard.mjs';
 
 function utcStamp() {
   return new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
@@ -353,6 +354,7 @@ export async function reconcileProjections(context, config, neutralStore, desire
 
 export async function hasPriorHostState(context, config, neutralStore, host) {
   if ((await ownedAdapterTargets(context, host)).length) return true;
+  if (await hasPriorScanGuardState(context, host)) return true;
   if ((await readOwnedPluginRows(context)).some((entry) => entry.targets.includes(host))) return true;
 
   const owned = await readOwnedSkills(context);
@@ -398,8 +400,11 @@ const BACKUP_REGULAR_FILES = new Set([
   '.local/state/personal-agent-control/owned-skill-map.json',
   '.local/state/personal-agent-control/owned-plugins.tsv',
   '.local/state/personal-agent-control/external-skills.json',
+  '.local/state/personal-agent-control/scan-guard.json',
+  '.agent-work/runtime/pac/scan-guard-hook.mjs',
   '.local/share/agent-skills/apm.lock.yaml',
   '.codex/config.toml',
+  '.codex/hooks.json',
   '.codex/AGENTS.md',
   '.codex/agents/independent-reviewer.toml',
   '.claude.json',
@@ -543,6 +548,9 @@ export async function createBackup(context, config, neutralStore, desiredSkills,
     '.local/share/agent-skills/apm.lock.yaml',
     '.local/share/agent-skills/apm_modules',
   ]);
+  for (const relative of scanGuardManagedPaths(context, [...new Set([...activeHosts, ...cleanupHosts])])) {
+    paths.add(relative);
+  }
   for (const name of names) {
     assertSafeName(name);
     paths.add(`.local/share/agent-skills/.agents/skills/${name}`);
@@ -721,6 +729,9 @@ function desiredStateBackupPaths(desiredSkills, options = {}) {
     '.local/state/personal-agent-control/owned-skill-map.json',
     '.local/state/personal-agent-control/owned-plugins.tsv',
   ]);
+  if (options.context) {
+    for (const relative of scanGuardManagedPaths(options.context, [...activeHosts])) paths.add(relative);
+  }
 
   for (const skill of desiredSkills) {
     assertSafeName(skill.id);
@@ -797,7 +808,7 @@ export async function augmentBackup(
   if (existing.size !== existingLines.length) {
     throw new PacError('BACKUP_INVALID', `Backup manifest contains duplicate paths: ${manifest}`);
   }
-  const additions = desiredStateBackupPaths(desiredSkills, options)
+  const additions = desiredStateBackupPaths(desiredSkills, { ...options, context })
     .filter((relative) => ![...existing].some((prior) => managedPathCovers(prior, relative)));
 
   for (const relative of additions) {

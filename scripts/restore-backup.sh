@@ -74,6 +74,7 @@ validate_path() {
             kind='directory'
             ;;
         .codex/config.toml|.codex/AGENTS.md|\
+        .codex/hooks.json|\
         .codex/agents/independent-reviewer.toml|.codex/agents/pac-reviewer.toml|\
         .claude.json|.claude/.claude.json|.claude/settings.json|\
         .claude/plugins/installed_plugins.json|.claude/plugins/known_marketplaces.json|\
@@ -86,6 +87,7 @@ validate_path() {
         .config/personal-agent-control/state.boltdb|\
         .local/share/agent-skills/apm.lock.yaml|\
         .local/state/personal-agent-control/last-backup|\
+        .local/state/personal-agent-control/scan-guard.json|\
         .local/state/personal-agent-control/owned-host-adapters.json|\
         .local/state/personal-agent-control/owned-providers.json|\
         .local/state/personal-agent-control/profile-bootstrap.json|\
@@ -93,6 +95,8 @@ validate_path() {
         .local/state/personal-agent-control/owned-skill-map.json|\
         .local/state/personal-agent-control/owned-plugins.tsv|\
         .local/state/personal-agent-control/external-skills.json)
+            ;;
+        .agent-work/runtime/pac/scan-guard-hook.mjs)
             ;;
         .local/share/agent-skills/apm_modules)
             kind='directory'

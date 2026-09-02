@@ -18,6 +18,10 @@
 ~/.local/state/personal-agent-control/external-skills.json	personal-agent-control	legacy pre-APM state retained only so old snapshots remain recoverable
 ~/.local/share/agent-plugins/sources/<marketplace>	personal-agent-control	one pinned source checkout per managed native marketplace
 ~/.local/state/personal-agent-control/owned-plugins.tsv	personal-agent-control	per-host Plugin ownership used for safe reconciliation and retirement
+~/.local/state/personal-agent-control/scan-guard.json	personal-agent-control	ownership/digest for the marked scan-guard fragment; drift fails closed
+~/.agent-work/runtime/pac/scan-guard-hook.mjs	personal-agent-control	local staged policy copy; never a synchronized source artifact
+~/.codex/hooks.json	hook-fragment	preserve host content; PAC owns only its marked PreToolUse scan-guard entry
+~/.claude/settings.json	hook-fragment	preserve host content; PAC owns only its marked PreToolUse scan-guard entry
 ~/.local/state/personal-agent-control/migrations/<plugin-marker>-<host>	personal-agent-control	one-time distribution migration proof
 ~/.local/state/personal-agent-control/migrations/independent-reviewer-codex-v1	chezmoi-migration	one-time Codex reviewer rename state
 ~/.local/state/personal-agent-control/migrations/independent-reviewer-claude-v1	chezmoi-migration	one-time Claude reviewer rename state

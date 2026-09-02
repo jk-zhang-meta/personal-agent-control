@@ -465,9 +465,17 @@ and preserves unrelated files for an inactive host.
 
 Authentication, sessions, history, permissions, Plugin runtime state, logs, and
 caches stay host-owned. PAC reconciles only the declared Plugin installation and
-marketplace source through each host's native CLI. In particular, normal installation does not redirect `CODEX_HOME`
-or `CLAUDE_CONFIG_DIR`; those broad variables are suitable for isolated tests,
-not for locating one Markdown file.
+marketplace source through each host's native CLI. When an active Profile
+selects both scan helpers, the one deliberate exception is a marker-tagged
+`PreToolUse` scan-guard fragment in each enabled host JSON; neither helper keeps
+the seam inactive and a partial pair fails closed. PAC owns only that fragment,
+preserves every other host field, snapshots it before mutation, and fails closed
+when it is removed or modified. Its per-host matcher
+selects shell, recursive/MCP, and native high-I/O tools; the staged policy then
+validates each native payload by schema instead of treating file contents as a
+shell command. Normal installation
+does not redirect `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; those broad variables
+are suitable for isolated tests, not for locating one Markdown file.
 
 ### Machine dependency layer
 
@@ -531,8 +539,10 @@ invariant is that no two tools own the same target:
 - mise owns the shared tool store.
 - Codex and Claude native Plugin mechanisms own registration, Hooks, MCP/App
   lifecycles, and caches. PAC owns only the merged desired Plugin overlay,
-  pinned source identity, adapter invocation, and prior-ownership evidence.
-  Hosts also retain auth, sessions, and unrelated settings.
+  pinned source identity, adapter invocation, and prior-ownership evidence,
+  plus one explicitly marked scan-guard `PreToolUse` fragment. Hosts retain
+  auth, sessions, and every unrelated setting/hook; PAC never rewrites the
+  surrounding arrays or Plugin-owned entries.
 
 Rulesync Skill generation is disabled because it would create physical copies
 per host. APM 0.28.0 deploys the frozen dependency graph with `--root` and

@@ -416,8 +416,11 @@ optional Configuration Profile `catalog/plugins.tsv` files record immutable
 source, commit, Git tree, version, targets, license, visibility, and bundled
 Skills. PAC validates an append-only merge, then maintains one source
 checkout per marketplace, then invokes the Codex or Claude native Plugin CLI.
-PAC verifies the resulting native identity but never rewrites hooks, MCP,
-runtimes, or host manifests.
+PAC verifies the resulting native identity and does not rewrite Plugin-owned
+hooks, MCP, runtimes, or host manifests. A separate PAC scan-guard ADR owns
+only one marker-tagged `PreToolUse` fragment in each host's user configuration;
+that fragment is CAS-updated, backed up, digest-checked, and removed only when
+unchanged.
 
 PAC is the sole owner of each declared marketplace identity. Companion session
 launchers may use the resulting Plugin but may not provision another marketplace
@@ -1019,9 +1022,11 @@ The first provider is CodeGraph. Core owns its reviewed version pin, Codex TOML,
 and Claude JSON adapters; `pac update` advances the pin and lock rather than
 floating at install time. The reviewed launch includes `--no-watch`: provider
 watchers are not a safe default on WSL/OneDrive mounts, and a caller must pass
-an explicit project path when it needs a semantic graph. The Agent remains the
-runtime owner of the resulting MCP process; PAC does not implement an MCP
-server or background supervisor.
+an explicit project path when it needs a semantic graph. The scan gate accepts
+that request only when both the project path and caller cwd are in the same
+explicitly registered WSL-local root; provider-default scope is never treated
+as a project boundary. The Agent remains the runtime owner of the resulting
+MCP process; PAC does not implement an MCP server or background supervisor.
 
 ### Consequences
 
@@ -1060,3 +1065,80 @@ allowlisted adapter paths. User changes and unsafe path shapes remain
 preserved or rejected rather than silently replaced. A mixed state containing
 both a missing entry and a changed entry intentionally requires explicit
 repair, because preserving the changed entry is safer than guessing ownership.
+
+## ADR-021: Put a fail-closed scan gate in front of native shell tools
+
+Decision date: 2026-09-02. Extends ADR-001, ADR-010, and the resource budget
+contract.
+
+### Context
+
+Repeated raw `rg`/`find`/`fd` calls were traversing OneDrive and intermediate
+trees, causing avoidable WSL CPU, memory, and disk-I/O pressure. Prompt rules
+and context-mode `permissions.deny` patterns cannot express “this one root,
+this depth, this byte budget” and are bypassed by wrappers and MCP shell tools.
+
+### Decision
+
+When the active Profile selects both `resource-guard` and `workspace-locator`,
+PAC installs one marker-tagged `PreToolUse` fragment in each enabled Codex and
+Claude user configuration. Selecting neither keeps the Core seam inactive;
+selecting only one fails closed. Profile retirement removes only a digest-matched
+PAC-owned fragment and runtime. The fragment is the only host-config exception
+to the native ownership boundary. Its host-specific matcher covers shell, native
+file/patch/image operations, recursive search tools, context-mode, and MCP
+providers; it deliberately excludes harmless control/UI calls so the guard
+does not start a Node process for every plan, question, or agent message. It:
+
+1. denies raw directory traversal, shell composition, wrapper/loop forms,
+   symlink-following flags, unregistered roots, synchronized storage, and
+   unbounded exact-file/stdin output;
+2. allows only small exact-file/metadata reads directly; directory discovery
+   goes to `workspace-locator` or the exact local `resource-guard` executable;
+3. lets `resource-guard` run a scan without a confirmation prompt only when its
+   argv proves one local registered root, depth at most two, no follow/execute
+   predicate, and the scan profile's CPU, memory, read/write, wall, output,
+   task, and serialized-lease caps;
+4. validates known native tools by their actual host schema before generic
+   command inspection: patch and write payload bytes, edit/read targets and
+   ranges, notebook/image size, Web URL/prompt shape, and request counts are
+   capped without mistaking prose containing `grep` or `tree` for execution;
+5. recognizes native shell and context-mode MCP execution names, but reports
+   unknown custom binaries or encoded programs as best-effort residuals rather
+   than claiming an OS sandbox; Tier A cgroup containment remains the hard
+   control when available and Tier B is explicitly soft; and
+6. stages a digest-checked policy copy under local `~/.agent-work/runtime`,
+   never under OneDrive. CAS writes, ownership digests, backups, rollback, and
+   status checks preserve unrelated host configuration. Removing or editing a
+   PAC-owned fragment fails closed instead of appending a second copy. The
+   trusted locator and resource-guard paths are content-bound to the active
+   Profile source, so an older but otherwise private helper cannot be reported
+   healthy or pinned into a new hook.
+
+The machine-local workspace registry is the authority for direct-scan roots;
+its derived indexes remain outside synchronized source. The policy is a
+replaceable v1 seam: future OS sandboxing, watcher feeds, or a measured search
+provider may supersede it only after the resource and bypass regression suite
+passes.
+
+### Consequences
+
+Agents no longer need a user approval for a genuinely bounded scan, but a raw
+scan is intentionally rejected with a deterministic route to the index or
+guard. Pure locator searches read the local index directly; index refresh,
+freshness status, and SQLite recovery may touch the source or database and
+therefore cross the same serialized scan broker. A missing registry, disabled
+host hooks, stale runtime/helper copy, ownership drift, or unavailable hard
+containment is visible in `pac status`; no such state is represented as “fully
+protected.”
+
+The hook is a resource-routing boundary, not a second filesystem or network
+sandbox. Exact native file paths remain subject to the host sandbox and project
+contract. Public-host DNS resolution and redirects remain the Web provider's
+responsibility. Codex 0.152 does not emit PreToolUse for the outer Code Mode
+JavaScript `exec`/`wait`, and its Bash hook payload omits a per-call `workdir`;
+nested function tools are still gated, direct scanners are denied regardless
+of cwd, and broker commands carry an authenticated cwd/root explicitly, but
+outer-isolate CPU/RAM and provider response bytes are unobservable here. A host
+upgrade that changes canonical tool names or payload schemas requires the
+native compatibility canaries before PAC can claim the new surface is covered.
