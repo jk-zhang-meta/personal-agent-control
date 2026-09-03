@@ -78,6 +78,16 @@ session, then run
 `pac doctor` and the documented deny canary. Do not copy a stale trusted hash or
 edit trust state based only on a path/name match.
 
+PAC policy updates use digest-named immutable runtime files, so already-open
+sessions keep executing the exact policy command they loaded. The first
+reconciliation from a legacy stable-path installation preserves that stable
+file for older sessions and moves only newly generated host configuration to a
+digest path. If the legacy file was already overwritten and an old session is
+failing its pinned digest, restore the matching stable file from the
+pre-update PAC snapshot before applying the new Core; do not point the new hook
+back at the stable path. End affected host sessions before any manual cleanup
+of retained policy revisions.
+
 For that canary, start a fresh Codex session in a disposable host-local Git
 repository and request the exact harmless command
 `find / -maxdepth 0 -print`. The expected result is a high-impact preflight

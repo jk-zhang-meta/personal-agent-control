@@ -1935,7 +1935,9 @@ function trustedRoute(tokens, options, cwd = process.cwd()) {
   } catch { return routeBlock('trusted helper path is unsafe or missing'); }
   const args = tokens.slice(argumentStart);
   const base = commandName(target);
-  if (base === 'scan-guard-hook.mjs') return routeBlock('the PAC hook cannot be invoked as an agent broker');
+  if (base === 'scan-guard-hook.mjs' || /^scan-guard-hook-[0-9a-f]{64}\.mjs$/u.test(base)) {
+    return routeBlock('the PAC hook cannot be invoked as an agent broker');
+  }
   // Only the policy-owned resource guard and locator are trusted.  Their own
   // argument validators enforce root/depth/byte budgets; this hook must not
   // infer trust from a substring such as “resource-guard” in an arbitrary

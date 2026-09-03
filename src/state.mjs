@@ -418,6 +418,7 @@ const BACKUP_REGULAR_FILES = new Set([
 
 function backupObjectType(relative) {
   if (BACKUP_REGULAR_FILES.has(relative)) return 'file';
+  if (/^\.agent-work\/runtime\/pac\/scan-guard-hook-[0-9a-f]{64}\.mjs$/u.test(relative)) return 'file';
   const prefixes = [
     ['.local/state/personal-agent-control/migrations/', 'file'],
     ['.local/share/agent-skills/.agents/skills/', 'directory'],

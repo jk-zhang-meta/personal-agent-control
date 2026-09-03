@@ -735,13 +735,23 @@ test('PAC broker binds local root, registry digest, helper identity, and runtime
   assert.ok(inspectCommand(memory, project, {
     ...options, trustedDigests: { ...options.trustedDigests, 'memory-ledger.mjs': '0'.repeat(64) },
   }), 'a modified memory helper cannot claim the trusted route');
+  const policyName = `scan-guard-hook-${'a'.repeat(64)}.mjs`;
+  const stagedPolicy = path.join(options.runtimePath, policyName);
+  await fs.mkdir(path.dirname(stagedPolicy), { recursive: true, mode: 0o700 });
+  await fs.writeFile(stagedPolicy, '// staged policy\n', { mode: 0o500 });
+  const directPolicy = [value.launcher, stagedPolicy].map(quote).join(' ');
+  assert.match(inspectCommand(directPolicy, project, {
+    ...options,
+    trustedExecutables: [...options.trustedExecutables, stagedPolicy],
+    trustedDigests: { ...options.trustedDigests, [policyName]: sha256('// staged policy\n') },
+  })?.reason || '', /PAC hook cannot be invoked/u);
 });
 
 test('PAC stages local hooks and routes high-impact calls per host', async (t) => {
   const { home, project, context, activeProfile } = await fixture(t);
   const applied = await reconcileScanGuard(context, ['codex', 'claude'], ['codex', 'claude'], activeProfile);
   assert.equal(applied.hosts.every((entry) => entry.action === 'installed'), true);
-  const runtime = path.join(home, '.agent-work/runtime/pac/scan-guard-hook.mjs');
+  const runtime = applied.runtime.path;
   assert.equal((await fs.stat(runtime)).mode & 0o777, 0o500);
   for (const host of ['codex', 'claude']) {
     const configFile = path.join(home, host === 'codex' ? '.codex/hooks.json' : '.claude/settings.json');
@@ -818,16 +828,127 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
   assert.deepEqual((await scanGuardStatus(context, ['codex', 'claude'], ['codex', 'claude'], activeProfile)).map((entry) => entry.valid), [true, true]);
   assert.equal(await hasPriorScanGuardState(context, 'codex'), true);
   assert.deepEqual(scanGuardManagedPaths(context, ['codex']), [
+    path.relative(home, runtime),
     '.agent-work/runtime/pac/scan-guard-hook.mjs',
     '.codex/hooks.json',
     '.local/state/personal-agent-control/scan-guard.json',
   ]);
 });
 
+test('scan-guard policy revisions keep captured hook commands executable', async (t) => {
+  const value = await fixture(t);
+  const core = path.join(value.base, 'core');
+  const source = path.join(core, 'src/scan-guard-policy.mjs');
+  const manifest = path.join(core, 'catalog/trusted-sources.sha256');
+  await fs.mkdir(path.dirname(source), { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.dirname(manifest), { recursive: true, mode: 0o700 });
+  const revisionA = await fs.readFile(path.join(repo, 'src/scan-guard-policy.mjs'));
+  const writeRevision = async (content) => {
+    await fs.writeFile(source, content, { mode: 0o600 });
+    await fs.writeFile(manifest, `${sha256(content)}  src/scan-guard-policy.mjs\n`, { mode: 0o600 });
+  };
+  const command = async () => {
+    const config = JSON.parse(await fs.readFile(path.join(value.home, '.codex/hooks.json'), 'utf8'));
+    return config.hooks.PreToolUse[0].hooks[0].command;
+  };
+  const invoke = (hookCommand) => spawnSync('/bin/sh', ['-c', hookCommand], {
+    cwd: value.project,
+    input: JSON.stringify({ tool_name: 'Bash', cwd: value.project,
+      tool_input: { command: '/usr/bin/true' } }),
+    encoding: 'utf8',
+  });
+  const context = { ...value.context, root: core };
+
+  await writeRevision(revisionA);
+  const appliedA = await reconcileScanGuard(context, ['codex'], ['codex'], value.activeProfile);
+  const commandA = await command();
+
+  const revisionB = Buffer.concat([revisionA, Buffer.from('\n// revision B\n')]);
+  await writeRevision(revisionB);
+  const appliedB = await reconcileScanGuard(context, ['codex'], ['codex'], value.activeProfile);
+  const commandB = await command();
+
+  assert.notEqual(appliedA.runtime.path, appliedB.runtime.path);
+  assert.notEqual(commandA, commandB);
+  for (const captured of [commandA, commandB]) {
+    const result = invoke(captured);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(result.stdout, '');
+  }
+  const status = (await scanGuardStatus(context, ['codex'], ['codex'], value.activeProfile))[0];
+  assert.equal(status.valid, true);
+  assert.equal(status.runtime.path, appliedB.runtime.path);
+  assert.equal(status.runtime.sha256, sha256(revisionB));
+});
+
+test('legacy stable runtime remains executable during content-addressed migration', async (t) => {
+  const value = await fixture(t);
+  const applied = await reconcileScanGuard(
+    value.context, ['codex'], ['codex'], value.activeProfile,
+  );
+  const hookFile = path.join(value.home, '.codex/hooks.json');
+  const stateFile = path.join(value.home, '.local/state/personal-agent-control/scan-guard.json');
+  const stableRuntime = path.join(value.home, '.agent-work/runtime/pac/scan-guard-hook.mjs');
+  await fs.copyFile(applied.runtime.path, stableRuntime);
+  await fs.chmod(stableRuntime, 0o500);
+
+  const config = JSON.parse(await fs.readFile(hookFile, 'utf8'));
+  const entry = config.hooks.PreToolUse[0];
+  entry.hooks[0].command = entry.hooks[0].command.replace(applied.runtime.path, stableRuntime);
+  await fs.writeFile(hookFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  const ownership = JSON.parse(await fs.readFile(stateFile, 'utf8'));
+  ownership.schemaVersion = 3;
+  ownership.runtimeRelative = '.agent-work/runtime/pac/scan-guard-hook.mjs';
+  ownership.hosts.codex.entrySha256 = sha256(JSON.stringify(entry));
+  await fs.writeFile(stateFile, `${JSON.stringify(ownership, null, 2)}\n`, { mode: 0o600 });
+  const legacyCommand = entry.hooks[0].command;
+
+  const migrated = await reconcileScanGuard(
+    value.context, ['codex'], ['codex'], value.activeProfile,
+  );
+  assert.equal(migrated.hosts[0].action, 'updated');
+  assert.notEqual(migrated.runtime.path, stableRuntime);
+  assert.equal(await fs.readFile(stableRuntime, 'utf8'), await fs.readFile(migrated.runtime.path, 'utf8'));
+  const legacyResult = spawnSync('/bin/sh', ['-c', legacyCommand], {
+    cwd: value.project,
+    input: JSON.stringify({ tool_name: 'Bash', cwd: value.project,
+      tool_input: { command: '/usr/bin/true' } }),
+    encoding: 'utf8',
+  });
+  assert.equal(legacyResult.status, 0, legacyResult.stderr || legacyResult.stdout);
+  assert.equal(legacyResult.stdout, '');
+  const status = (await scanGuardStatus(
+    value.context, ['codex'], ['codex'], value.activeProfile,
+  ))[0];
+  assert.equal(status.valid, true);
+  assert.equal(status.runtime.path, migrated.runtime.path);
+});
+
+test('content-addressed runtime drift fails closed without overwriting bytes', async (t) => {
+  const value = await fixture(t);
+  const applied = await reconcileScanGuard(
+    value.context, ['codex'], ['codex'], value.activeProfile,
+  );
+  await fs.chmod(applied.runtime.path, 0o700);
+  await fs.appendFile(applied.runtime.path, '\n// drift\n');
+  await fs.chmod(applied.runtime.path, 0o500);
+  const drifted = await fs.readFile(applied.runtime.path);
+  await assert.rejects(
+    reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile),
+    (error) => error.code === 'SCAN_GUARD_RUNTIME_DRIFT',
+  );
+  assert.deepEqual(await fs.readFile(applied.runtime.path), drifted);
+  const status = (await scanGuardStatus(
+    value.context, ['codex'], ['codex'], value.activeProfile,
+  ))[0];
+  assert.equal(status.valid, false);
+  assert.match(status.error, /runtime is present/u);
+});
+
 test('PAC hook failures use stderr so Codex treats them as blocking', async (t) => {
   const value = await fixture(t);
-  await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
-  const runtime = path.join(value.home, '.agent-work/runtime/pac/scan-guard-hook.mjs');
+  const applied = await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
+  const runtime = applied.runtime.path;
   const result = spawnSync(process.execPath, [
     runtime, '--hook', '--host', 'codex', '--mode', 'balanced',
     '--home', value.home, '--runtime', path.join(value.home, '.agent-work/runtime/pac'),
@@ -964,13 +1085,13 @@ test('Core keeps the scan seam inactive when a Profile selects neither helper', 
     }),
     (error) => error.code === 'SCAN_GUARD_PROFILE_INCOMPLETE',
   );
-  await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
-  const runtime = path.join(value.home, '.agent-work/runtime/pac/scan-guard-hook.mjs');
+  const applied = await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
+  const runtime = applied.runtime.path;
   assert.equal(existsSync(runtime), true);
   const retired = await reconcileScanGuard(value.context, ['codex'], ['codex'], null);
   assert.equal(retired.hosts[0].action, 'retired');
-  assert.equal(retired.runtime.action, 'retired');
-  assert.equal(existsSync(runtime), false);
+  assert.equal(retired.runtime.action, 'preserved');
+  assert.equal(existsSync(runtime), true);
   assert.equal((await scanGuardStatus(value.context, ['codex'], ['codex'], null))[0].state, 'inactive');
 });
 

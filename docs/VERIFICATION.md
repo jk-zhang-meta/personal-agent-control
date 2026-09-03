@@ -137,8 +137,12 @@ unmanaged Plugin data. Synchronization is not treated as backup.
 
 ## Current evidence
 
-Targeted hook-staging checks run on Linux x86-64 on 2026-09-02:
+Targeted hook-staging checks run on Linux x86-64 on 2026-09-03:
 
+- the hot-update regression staged policy revision A, captured its generated
+  command, staged and activated revision B, then executed both captured
+  commands successfully while status validated B;
+- the backup/restore round trip preserved a digest-named policy file;
 - the real PAC apply path reconciled an exact scan guard, observed Codex's
   camelCase `hooks/list` entry as `untrusted`, retained the installation as
   explicitly non-healthy staged state, then converged to healthy only after

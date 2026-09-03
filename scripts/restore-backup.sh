@@ -98,6 +98,12 @@ validate_path() {
             ;;
         .agent-work/runtime/pac/scan-guard-hook.mjs)
             ;;
+        .agent-work/runtime/pac/scan-guard-hook-*.mjs)
+            digest=${rel#.agent-work/runtime/pac/scan-guard-hook-}
+            digest=${digest%.mjs}
+            [ "${#digest}" -eq 64 ] || return 1
+            case "$digest" in *[!0-9a-f]*) return 1 ;; esac
+            ;;
         .local/share/agent-skills/apm_modules)
             kind='directory'
             ;;

@@ -473,7 +473,12 @@ preserves every other host field, snapshots it before mutation, and fails closed
 when it is removed or modified. Its per-host matcher
 selects shell, recursive/MCP, and native high-I/O tools; the staged policy then
 validates each native payload by schema instead of treating file contents as a
-shell command. Normal installation
+shell command. Each generated command pins a digest-named immutable policy file
+under `~/.agent-work/runtime/pac`; reconciliation never overwrites or
+automatically removes older revisions because already-open host sessions may
+still hold those commands. The legacy stable runtime path remains a
+backup/restore-only compatibility surface and is never referenced by newly
+generated hooks. Normal installation
 does not redirect `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; those broad variables
 are suitable for isolated tests, not for locating one Markdown file.
 
@@ -625,6 +630,10 @@ not rewritten by runtime rollback. Managed Plugin source checkouts, native
 registration files, and only the catalogued marketplace cache subtrees are restored together;
 authentication, sessions, unrelated Skills, and Plugin data remain outside the
 surface.
+Scan-guard snapshots include the legacy stable path, the currently owned
+digest-named policy, and the prospective policy for the active Core source.
+This lets rollback remove a newly staged revision without deleting older
+immutable files that an open session may still execute.
 Apply, backup, doctor, and restore reject symlinks in managed path ancestors
 before mutation; this prevents a discovery or store root from redirecting an
 operation outside the declared HOME-relative target.

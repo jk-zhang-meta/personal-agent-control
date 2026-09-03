@@ -1282,3 +1282,40 @@ make a machine lag or alter remote state remain visible. The low-impact grammar
 is intentionally small and regression-tested; new routine diagnostics are
 added from observed false positives, not by disabling the hook or granting an
 unknown binary a permanent wildcard.
+
+## ADR-025: Stage scan-guard policy revisions at immutable digest paths
+
+Decision date: 2026-09-03. Refines ADR-021's staged-runtime and retirement
+contract.
+
+### Context
+
+Hook commands pin both a policy path and its SHA-256 digest. Reusing one stable
+runtime path meant a PAC update replaced those bytes while already-open Codex
+sessions retained the old expected digest. Every later tool call then failed
+closed, including harmless commands.
+
+### Decision
+
+Stage each verified policy as
+`~/.agent-work/runtime/pac/scan-guard-hook-<sha256>.mjs`. An existing file at
+that path must already match the exact bytes; PAC never rewrites it. Ownership
+and status bind the active host entry to its digest-named path, while backup and
+restore accept only the exact 64-lowercase-hex filename shape. Transaction
+snapshots cover the legacy stable path, the previously owned revision, and the
+prospective revision so rollback remains exact.
+
+Do not automatically delete staged revisions. PAC cannot observe commands held
+by already-open host sessions, so absence from the current JSON configuration
+is not proof that a file is unused. Cleanup requires an explicit maintenance
+operation after affected sessions have ended; it must preserve every path still
+referenced by a host configuration. Newly generated hooks never reference the
+legacy stable path.
+
+### Consequences
+
+Old and new hook commands can execute concurrently across an update, active
+status still validates only the currently owned revision, and a failed fresh
+apply removes its prospective file through rollback. Small immutable policy
+files may accumulate until a deliberate post-session cleanup; that storage
+cost is preferred to silently breaking a live fail-closed control path.

@@ -22,7 +22,7 @@ import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mj
 // by the host is staged under local agent-work runtime, never read from a live
 // OneDrive checkout.
 export { SCAN_GUARD_MARKER, SCAN_GUARD_POLICY_VERSION, inspectCommand, hookDecision };
-export const SCAN_GUARD_SCHEMA = 3;
+export const SCAN_GUARD_SCHEMA = 4;
 
 const HOSTS = new Set(['codex', 'claude']);
 const HOST_CONFIGS = Object.freeze({
@@ -40,7 +40,8 @@ const HOST_CONFIGS = Object.freeze({
     matcher: '^(?:Bash|Read|ReadFile|read_file|Write|WriteFile|write_file|Edit|MultiEdit|ApplyPatch|apply_patch|NotebookRead|NotebookEdit|view_image|WebSearch|WebFetch|Fetch|web__run|image_gen__imagegen|Glob|Grep|mcp__.*|ctx_.*)$',
   }),
 });
-const RUNTIME_RELATIVE = '.agent-work/runtime/pac/scan-guard-hook.mjs';
+const LEGACY_RUNTIME_RELATIVE = '.agent-work/runtime/pac/scan-guard-hook.mjs';
+const VERSIONED_RUNTIME_PATTERN = /^\.agent-work\/runtime\/pac\/scan-guard-hook-([0-9a-f]{64})\.mjs$/u;
 const STATE_RELATIVE = '.local/state/personal-agent-control/scan-guard.json';
 
 function digest(value) {
@@ -62,8 +63,15 @@ function statePath(context) {
   return path.join(context.home, STATE_RELATIVE);
 }
 
-function runtimePath(context) {
-  const target = path.join(context.home, RUNTIME_RELATIVE);
+function versionedRuntimeRelative(sourceSha256) {
+  return `.agent-work/runtime/pac/scan-guard-hook-${sourceSha256}.mjs`;
+}
+
+function runtimePath(context, relative) {
+  if (relative !== LEGACY_RUNTIME_RELATIVE && !VERSIONED_RUNTIME_PATTERN.test(relative)) {
+    throw new PacError('SCAN_GUARD_RUNTIME_UNSAFE', `Invalid scan-guard runtime path: ${relative}`);
+  }
+  const target = path.join(context.home, relative);
   if (syncedPath(target)) {
     throw new PacError('SCAN_GUARD_RUNTIME_UNSAFE', `Scan-guard runtime must be on local storage: ${target}`);
   }
@@ -109,7 +117,12 @@ function configuredHostPath(context, host) {
 }
 
 export function scanGuardManagedPaths(context, hosts = ['codex', 'claude']) {
-  const paths = new Set([STATE_RELATIVE, RUNTIME_RELATIVE]);
+  const paths = new Set([STATE_RELATIVE, LEGACY_RUNTIME_RELATIVE]);
+  const ownership = readOwnership(context);
+  if (ownership.sourceSha256) paths.add(ownership.runtimeRelative);
+  const files = scanGuardSourceFiles(context);
+  try { paths.add(versionedRuntimeRelative(fileDigest(files.policy))); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
   for (const host of hosts) {
     if (!HOSTS.has(host)) throw new PacError('HOST_SELECTION_INVALID', `Unknown scan-guard host: ${host}`);
     paths.add(configuredHostPath(context, host).relative);
@@ -321,15 +334,19 @@ function readOwnership(context) {
       throw new PacError('SCAN_GUARD_OWNERSHIP_INVALID', `Scan-guard ownership must be a regular file: ${file}`);
     }
     const value = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!value || Array.isArray(value) || ![2, SCAN_GUARD_SCHEMA].includes(value.schemaVersion)
+    const legacySchema = value?.schemaVersion === 2 || value?.schemaVersion === 3;
+    const versionedMatch = typeof value?.runtimeRelative === 'string'
+      ? value.runtimeRelative.match(VERSIONED_RUNTIME_PATTERN) : null;
+    if (!value || Array.isArray(value) || (!legacySchema && value.schemaVersion !== SCAN_GUARD_SCHEMA)
         || typeof value.policyVersion !== 'number'
         || (value.sourceSha256 !== null && (typeof value.sourceSha256 !== 'string' || !/^[0-9a-f]{64}$/u.test(value.sourceSha256)))
-        || value.runtimeRelative !== RUNTIME_RELATIVE
+        || (legacySchema ? value.runtimeRelative !== LEGACY_RUNTIME_RELATIVE
+          : (!versionedMatch || value.sourceSha256 !== versionedMatch[1]))
         || !value.hosts || typeof value.hosts !== 'object' || Array.isArray(value.hosts)
         || Object.keys(value).some((key) => !['schemaVersion', 'policyVersion', 'sourceSha256', 'registrySha256', 'runtimeRelative', 'hosts'].includes(key))) {
       throw new PacError('SCAN_GUARD_OWNERSHIP_INVALID', 'Scan-guard ownership has an invalid schema.');
     }
-    if (value.schemaVersion === 3 && value.registrySha256 !== null &&
+    if (value.schemaVersion >= 3 && value.registrySha256 !== null &&
         (typeof value.registrySha256 !== 'string' || !/^[0-9a-f]{64}$/u.test(value.registrySha256))) {
       throw new PacError('SCAN_GUARD_OWNERSHIP_INVALID', 'Scan-guard registry digest is invalid.');
     }
@@ -347,7 +364,7 @@ function readOwnership(context) {
     return {
       ...value,
       schemaVersion: SCAN_GUARD_SCHEMA,
-      registrySha256: value.schemaVersion === 3 ? value.registrySha256 : null,
+      registrySha256: value.schemaVersion >= 3 ? value.registrySha256 : null,
     };
   } catch (error) {
     if (error.code === 'ENOENT') return {
@@ -355,7 +372,7 @@ function readOwnership(context) {
       policyVersion: SCAN_GUARD_POLICY_VERSION,
       sourceSha256: null,
       registrySha256: null,
-      runtimeRelative: RUNTIME_RELATIVE,
+      runtimeRelative: LEGACY_RUNTIME_RELATIVE,
       hosts: {},
     };
     if (error instanceof PacError) throw error;
@@ -620,23 +637,34 @@ async function ensurePrivateDirectory(directory, label, home) {
 
 async function stageRuntime(context) {
   const source = path.join(context.root, 'src/scan-guard-policy.mjs');
-  const target = runtimePath(context);
   await assertSafeManagedObject(context.root, source, 'scan-guard policy source', 'file');
-  await assertSafeManagedPath(context.home, path.dirname(target), 'scan-guard runtime directory');
   const content = await fsp.readFile(source);
   await verifyPinnedPolicySource(context, source, content);
-  await ensurePrivateDirectory(path.dirname(target), 'Scan-guard runtime directory', context.home);
   const sourceSha256 = digest(content);
+  const runtimeRelative = versionedRuntimeRelative(sourceSha256);
+  const target = runtimePath(context, runtimeRelative);
+  await assertSafeManagedPath(context.home, path.dirname(target), 'scan-guard runtime directory');
+  await ensurePrivateDirectory(path.dirname(target), 'Scan-guard runtime directory', context.home);
   let current = null;
-  try { current = await fsp.readFile(target); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-  if (!current || !current.equals(content)) await atomicWriteFile(target, content, 0o500);
+  try {
+    const stat = await fsp.lstat(target);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new PacError('SCAN_GUARD_RUNTIME_UNSAFE', `Scan-guard runtime is not a regular file: ${target}`);
+    }
+    current = await fsp.readFile(target);
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (current && !current.equals(content)) {
+    throw new PacError('SCAN_GUARD_RUNTIME_DRIFT', `Immutable scan-guard runtime content changed: ${target}`);
+  }
+  if (!current) await atomicWriteFile(target, content, 0o500);
   await fsp.chmod(target, 0o500);
   const targetStat = await fsp.lstat(target);
   if (targetStat.isSymbolicLink() || !targetStat.isFile() || (targetStat.mode & 0o077) !== 0 ||
-      (typeof process.getuid === 'function' && targetStat.uid !== process.getuid())) {
+      (typeof process.getuid === 'function' && targetStat.uid !== process.getuid()) ||
+      fileDigest(target) !== sourceSha256) {
     throw new PacError('SCAN_GUARD_RUNTIME_UNSAFE', `Scan-guard runtime is not a private regular file: ${target}`);
   }
-  return { target, sourceSha256 };
+  return { target, runtimeRelative, sourceSha256 };
 }
 
 async function writeConfigIfChanged(context, host, file, config, originalRaw) {
@@ -659,7 +687,7 @@ async function writeConfigIfChanged(context, host, file, config, originalRaw) {
 }
 
 function runtimeStatus(context, ownership) {
-  const file = runtimePath(context);
+  const file = runtimePath(context, ownership.runtimeRelative);
   try {
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 ||
@@ -691,7 +719,8 @@ function runtimeStatus(context, ownership) {
 
 async function retireRuntimeIfOwned(context, ownership) {
   if (Object.keys(ownership.hosts).length > 0) return { action: 'preserved' };
-  const file = runtimePath(context);
+  if (!ownership.sourceSha256) return { action: 'absent' };
+  const file = runtimePath(context, ownership.runtimeRelative);
   let stat;
   try { stat = await fsp.lstat(file); }
   catch (error) {
@@ -700,14 +729,14 @@ async function retireRuntimeIfOwned(context, ownership) {
   }
   if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 ||
       (typeof process.getuid === 'function' && stat.uid !== process.getuid()) ||
-      !ownership.sourceSha256 || fileDigest(file) !== ownership.sourceSha256) {
+      fileDigest(file) !== ownership.sourceSha256) {
     throw new PacError('SCAN_GUARD_RUNTIME_DRIFT',
       `Refusing to retire a scan-guard runtime that no longer matches PAC ownership: ${file}`);
   }
-  await fsp.unlink(file);
-  ownership.sourceSha256 = null;
-  ownership.registrySha256 = null;
-  return { action: 'retired', path: file };
+  // Open host sessions retain the command they loaded. PAC cannot observe
+  // those references, so automatic retirement would reintroduce hot-update
+  // failures. Immutable policy files are intentionally retained.
+  return { action: 'preserved', path: file };
 }
 
 export async function scanGuardStatus(context, enabledHosts, scopeHosts, profile = null) {
@@ -833,7 +862,7 @@ export async function reconcileScanGuard(context, enabledHosts, scopeHosts, prof
     ownership.policyVersion = SCAN_GUARD_POLICY_VERSION;
     ownership.sourceSha256 = runtime.sourceSha256;
     ownership.registrySha256 = registry.sha256;
-    ownership.runtimeRelative = RUNTIME_RELATIVE;
+    ownership.runtimeRelative = runtime.runtimeRelative;
   }
   const results = [];
   for (const host of HOSTS) {

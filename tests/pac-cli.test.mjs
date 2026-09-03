@@ -989,6 +989,9 @@ test('backup preflight rejects an incompatible final object before creating a sn
 test('a desired-state transaction snapshot validates and round-trips through the restore contract', async () => {
   const root = await temporary('pac-backup-roundtrip-source-');
   const home = await temporary('pac-backup-roundtrip-home-');
+  const scanPolicy = '// fixture scan policy\n';
+  const policyDigest = crypto.createHash('sha256').update(scanPolicy).digest('hex');
+  const runtimeRelative = `.agent-work/runtime/pac/scan-guard-hook-${policyDigest}.mjs`;
   const repositoryFiles = {
     'pac.json': '{}\n',
     'packages/skills/apm.yml': 'packages: []\n',
@@ -997,6 +1000,7 @@ test('a desired-state transaction snapshot validates and round-trips through the
     'catalog/files.sha256': '',
     'catalog/plugins.tsv': '# fixture\n',
     'catalog/plugin-migrations.tsv': '# fixture\n',
+    'src/scan-guard-policy.mjs': scanPolicy,
   };
   await Promise.all(Object.entries(repositoryFiles).map(async ([relative, content]) => {
     const file = path.join(root, ...relative.split('/'));
@@ -1022,6 +1026,9 @@ test('a desired-state transaction snapshot validates and round-trips through the
   await fs.writeFile(chezmoiState, 'state-before\n');
   await fs.mkdir(path.dirname(adapterOwnership), { recursive: true });
   await fs.writeFile(adapterOwnership, 'ownership-before\n');
+  const runtime = path.join(home, runtimeRelative);
+  await fs.mkdir(path.dirname(runtime), { recursive: true });
+  await fs.writeFile(runtime, scanPolicy, { mode: 0o500 });
   const backup = await createBackup(ctx, config, path.join(home, '.local/share/agent-skills'), []);
   await augmentBackup(ctx, backup, [{
     id: 'profile-skill',
@@ -1044,6 +1051,8 @@ test('a desired-state transaction snapshot validates and round-trips through the
   await fs.writeFile(settings, '{"after":true}\n');
   await fs.writeFile(chezmoiState, 'state-after\n');
   await fs.writeFile(adapterOwnership, 'ownership-after\n');
+  await fs.chmod(runtime, 0o700);
+  await fs.writeFile(runtime, '// changed after backup\n');
 
   const restored = spawnSync('sh', [path.join(root, 'scripts/restore-backup.sh'), backup], {
     encoding: 'utf8',
@@ -1053,6 +1062,7 @@ test('a desired-state transaction snapshot validates and round-trips through the
   assert.equal(await fs.readFile(settings, 'utf8'), '{"before":true}\n');
   assert.equal(await fs.readFile(chezmoiState, 'utf8'), 'state-before\n');
   assert.equal(await fs.readFile(adapterOwnership, 'utf8'), 'ownership-before\n');
+  assert.equal(await fs.readFile(runtime, 'utf8'), scanPolicy);
   assert.equal((await fs.readFile(path.join(ctx.stateDir, 'last-backup'), 'utf8')).trim(), backup);
 });
 
