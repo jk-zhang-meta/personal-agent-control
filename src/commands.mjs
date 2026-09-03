@@ -430,6 +430,12 @@ async function applyUnlocked(context, options = {}) {
     desiredPlugins: effectivePlugins,
   });
   try {
+    // Apply native Plugins immediately after the complete backup has been
+    // captured and before any PAC Skill/projection state is touched.  The
+    // preflight above is an early, user-friendly rejection; this apply is the
+    // transaction's first host mutation so a concurrent Plugin drift cannot
+    // leave a partially updated PAC projection behind.
+    const plugins = await reconcilePlugins(context, effectiveConfig, reconciliationScope, 'apply', profile);
     if (profileResolution.descriptorAction === 'save') {
       await saveProfileDescriptor(context, profile.descriptor);
     } else if (profileResolution.descriptorAction === 'remove') {
@@ -460,9 +466,10 @@ async function applyUnlocked(context, options = {}) {
     const providers = await reconcileProviders(context, effectiveProfile, enabled, reconciliationScope, 'apply');
     const projections = await reconcileProjections(context, effectiveConfig, neutral, desired, enabled, reconciliationScope);
     const retiredProfileSkills = await retireProfileSkills(context, neutral, priorOwnedMap, desired);
-    const plugins = await reconcilePlugins(context, effectiveConfig, reconciliationScope, 'apply', profile);
-    // Native Plugin reconciliation can refresh host hook files; install the
-    // PAC fragment last so the final transaction state is what status checks.
+    // Native Plugin reconciliation may refresh host hook files.  The PAC
+    // fragment is still installed after all other work so the final state is
+    // what status checks, while Plugin failure can no longer occur after
+    // Skill/projection mutation.
     const scanGuard = await reconcileScanGuard(context, enabled, reconciliationScope, effectiveProfile);
     const resolver = await runResolver(context, [
       'rebuild', '--repo', context.root, '--home', context.home,

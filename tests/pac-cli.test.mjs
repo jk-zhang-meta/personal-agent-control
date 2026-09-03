@@ -1254,6 +1254,73 @@ test('unmanaged Plugin preflight cannot transiently break healthy Skill projecti
   assert.equal(await fs.readFile(path.join(projection, 'SKILL.md'), 'utf8'), before.skill);
 });
 
+test('Plugin apply failure after a successful preflight leaves PAC projections untouched', { timeout: 120_000 }, async () => {
+  const { root, home, env } = await makeRealLifecycleFixture();
+  const installed = runJsonPac(root, home, ['apply'], env);
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+
+  const projection = path.join(home, '.agents/skills/base-skill');
+  const physical = path.join(home, '.local/share/agent-skills/.agents/skills/base-skill');
+  const before = {
+    projection: await fs.lstat(projection),
+    physical: await fs.lstat(physical),
+    projectionTarget: path.resolve(path.dirname(projection), await fs.readlink(projection)),
+    skill: await fs.readFile(path.join(projection, 'SKILL.md'), 'utf8'),
+  };
+  const plugin = 'transaction-plugin';
+  const marketplace = 'transaction-marketplace';
+  await fs.writeFile(path.join(root, 'catalog/plugins.tsv'), [
+    '# plugin\tmarketplace\tacquisition\tsource\tref\tresolved-commit\ttree-id\tversion\ttargets\tbundled-skills\tlicense\tvisibility',
+    `${plugin}\t${marketplace}\tgithub-tag\texample/${plugin}\tv1.0.0\t${'c'.repeat(40)}\t${'d'.repeat(40)}\t1.0.0\tcodex\ttransaction-bundle\tMIT\tprivate`,
+    '',
+  ].join('\n'));
+  await fs.appendFile(path.join(root, 'catalog/capabilities.jsonl'), [
+    JSON.stringify({
+      id: `provider:plugin:${plugin}@${marketplace}`,
+      memberships: ['kind.provider.plugin'],
+      summary: 'Transaction Plugin fixture provider.',
+    }),
+    JSON.stringify({
+      id: 'skill:transaction-bundle',
+      memberships: ['kind.skill'],
+      summary: 'Transaction Plugin fixture Skill.',
+    }),
+    '',
+  ].join('\n'));
+  await fs.writeFile(path.join(root, 'catalog/files.sha256'), await sourceIntegrityManifest(root));
+  const configPath = path.join(root, 'pac.json');
+  const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+  config.plugins.enabled = [plugin];
+  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  const log = path.join(home, 'plugin-transaction.log');
+  const reconciler = path.join(root, 'preflight-pass-apply-fail.cjs');
+  await fs.writeFile(reconciler, [
+    '#!/usr/bin/env node',
+    "const fs = require('node:fs');",
+    `fs.appendFileSync(${JSON.stringify(log)}, process.argv[2] + '\\n');`,
+    "if (process.argv[2] === 'apply') process.exit(23);",
+    '',
+  ].join('\n'), { mode: 0o755 });
+
+  const failed = runJsonPac(root, home, ['apply'], {
+    ...env,
+    PAC_NO_PLUGINS: '0',
+    PAC_NO_RESOLVER: '1',
+    PAC_PLUGIN_RECONCILER: reconciler,
+  });
+  assert.notEqual(failed.status, 0, failed.stdout);
+  assert.equal(failed.json?.error?.code, 'PLUGIN_APPLY_FAILED', JSON.stringify(failed.json));
+  assert.equal(await fs.readFile(log, 'utf8'), 'preflight\npreflight\napply\n');
+  const afterProjection = await fs.lstat(projection);
+  const afterPhysical = await fs.lstat(physical);
+  assert.equal(afterProjection.isSymbolicLink(), before.projection.isSymbolicLink());
+  assert.equal(afterPhysical.isDirectory(), before.physical.isDirectory());
+  assert.equal(path.resolve(path.dirname(projection), await fs.readlink(projection)), before.projectionTarget);
+  assert.equal(await fs.readFile(path.join(physical, 'SKILL.md'), 'utf8'), before.skill);
+  assert.equal(await fs.readFile(path.join(projection, 'SKILL.md'), 'utf8'), before.skill);
+  assert.equal(failed.json?.error?.details?.rollback?.succeeded, true);
+});
+
 test('PAC_PROFILE_REPO seeds Chezmoi-style apply once and never follows a moving ref implicitly', { timeout: 120_000 }, async () => {
   const { root, home, env } = await makeRealLifecycleFixture();
   const profileRepository = await makeProfileRepository();
