@@ -6,8 +6,8 @@ repo=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd -P)
 . "$repo/scripts/path-safety.sh"
 
 mode=${1:-}
-case "$mode" in apply|check) shift ;; *)
-    echo "usage: $0 apply|check [--home PATH] [--agents codex|claude|codex,claude] [--catalog PATH]" >&2
+case "$mode" in apply|check|preflight) shift ;; *)
+    echo "usage: $0 apply|check|preflight [--home PATH] [--agents codex|claude|codex,claude] [--catalog PATH]" >&2
     exit 2
 esac
 
@@ -642,6 +642,7 @@ reconcile_current_for_host() {
 
 assert_all_installed_managed() {
     host_name=$1
+    allow_prior_owned=${2:-false}
     : > "$tmp/$host_name-all-desired"
     while IFS="$(printf '\t')" read -r plugin marketplace _a _s _r _c _t _v targets _rest; do
         case "$plugin" in ''|'#'*) continue ;; esac
@@ -649,6 +650,15 @@ assert_all_installed_managed() {
             printf '%s@%s\n' "$plugin" "$marketplace" >> "$tmp/$host_name-all-desired"
         fi
     done < "$catalog"
+    if [ "$allow_prior_owned" = true ] && [ -f "$owned" ]; then
+        while IFS="$(printf '\t')" read -r plugin marketplace targets; do
+            case "$plugin" in ''|'#'*) continue ;; esac
+            if target_includes "$host_name" "$targets"; then
+                printf '%s@%s\n' "$plugin" "$marketplace" \
+                    >> "$tmp/$host_name-all-desired"
+            fi
+        done < "$owned"
+    fi
     LC_ALL=C sort -u "$tmp/$host_name-all-desired" -o "$tmp/$host_name-all-desired"
     node - "$host_name" "$tmp/$host_name-plugins.json" \
         > "$tmp/$host_name-all-actual-unsorted" <<'NODE'
@@ -671,6 +681,18 @@ NODE
 
 for host_name in codex claude; do
     has_agent "$host_name" || continue
+    if [ "$mode" = preflight ]; then
+        command -v "$host_name" >/dev/null 2>&1 || {
+            echo "$host_name is required for Plugin preflight" >&2
+            exit 1
+        }
+        refresh_host "$host_name"
+        # A catalog mutation may intentionally remove a Plugin that PAC still
+        # owns in the pre-transaction state. Keep that exact removal eligible;
+        # reject anything known to neither the new catalog nor prior ownership.
+        assert_all_installed_managed "$host_name" true
+        continue
+    fi
     if host_has_desired_plugins "$host_name"; then
         command -v "$host_name" >/dev/null 2>&1 || {
             echo "$host_name is required for selected Plugin reconciliation" >&2

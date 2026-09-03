@@ -253,11 +253,16 @@ const rows = fs.readFileSync(catalog, 'utf8').split(/\r?\n/u)
   .filter((line) => line && !line.startsWith('#')).map((line) => line.split('\t'));
 const expected = rows.map((fields) => fields[0]).sort().join('\n') + (rows.length ? '\n' : '');
 const state = path.join(home, '.claude/plugins/installed_plugins.json');
-fs.mkdirSync(path.dirname(state), { recursive: true });
+const owned = path.join(home, '.local/state/personal-agent-control/owned-plugins.tsv');
 if (process.env.PAC_TEST_PLUGIN_LOG) fs.appendFileSync(process.env.PAC_TEST_PLUGIN_LOG, `${mode}\n`);
 
 if (mode === 'apply') {
+  fs.mkdirSync(path.dirname(state), { recursive: true });
   fs.writeFileSync(state, expected);
+  fs.mkdirSync(path.dirname(owned), { recursive: true });
+  fs.writeFileSync(owned, '# plugin\tmarketplace\ttargets\n'
+    + rows.map((fields) => `${fields[0]}\t${fields[1]}\t${fields[8]}`).join('\n')
+    + (rows.length ? '\n' : ''));
   for (const fields of rows) {
     const [plugin, marketplace] = fields;
     for (const skill of fields[9].split(',').filter(Boolean)) {
@@ -273,6 +278,18 @@ if (mode === 'apply') {
   if (process.env.PAC_TEST_PLUGIN_FAIL === '1') process.exit(43);
 } else if (mode === 'check') {
   if (!fs.existsSync(state) || fs.readFileSync(state, 'utf8') !== expected) process.exit(1);
+} else if (mode === 'preflight') {
+  const allowed = new Set(rows.map((fields) => fields[0]));
+  if (fs.existsSync(owned)) {
+    for (const line of fs.readFileSync(owned, 'utf8').split(/\r?\n/u)) {
+      if (!line || line.startsWith('#')) continue;
+      allowed.add(line.split('\t')[0]);
+    }
+  }
+  const actual = fs.existsSync(state)
+    ? fs.readFileSync(state, 'utf8').split(/\r?\n/u).filter(Boolean)
+    : [];
+  if (actual.some((plugin) => !allowed.has(plugin))) process.exit(1);
 } else process.exit(2);
 NODE
 

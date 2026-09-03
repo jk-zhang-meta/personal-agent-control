@@ -402,6 +402,10 @@ async function applyUnlocked(context, options = {}) {
   const effectivePlugins = effectivePluginNames(config, profile);
   const unknownPlugins = effectivePlugins.filter((name) => !knownPlugins.some((entry) => entry.name === name));
   if (unknownPlugins.length) throw new PacError('PLUGIN_UNKNOWN', `Unknown Plugin(s): ${unknownPlugins.join(', ')}`);
+  // Reject already-installed Plugins outside PAC's catalog before APM or host
+  // projections are touched. A late rejection would require rollback while a
+  // host may be loading a projected Skill.
+  await reconcilePlugins(context, effectiveConfig, scopedEnabledHosts, 'preflight', profile);
   await preflightManagedDrift(
     context,
     effectiveConfig,

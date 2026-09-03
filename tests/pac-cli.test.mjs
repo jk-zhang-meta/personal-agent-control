@@ -1217,6 +1217,43 @@ test('failed Profile set rolls back descriptor, Skill roots, and projections', {
   assert.equal(await exists(path.join(home, '.local/share/agent-skills/.agents/skills/profile-fixture')), false);
 });
 
+test('unmanaged Plugin preflight cannot transiently break healthy Skill projections', { timeout: 120_000 }, async () => {
+  const { root, home, env } = await makeRealLifecycleFixture();
+  const installed = runJsonPac(root, home, ['apply'], env);
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+
+  const projection = path.join(home, '.agents/skills/base-skill');
+  const physical = path.join(home, '.local/share/agent-skills/.agents/skills/base-skill');
+  const before = {
+    projection: await fs.lstat(projection),
+    physical: await fs.lstat(physical),
+    skill: await fs.readFile(path.join(projection, 'SKILL.md'), 'utf8'),
+  };
+  const log = path.join(home, 'plugin-preflight.log');
+  const reconciler = path.join(root, 'reject-unmanaged-plugin.cjs');
+  await fs.writeFile(reconciler, [
+    '#!/usr/bin/env node',
+    "const fs = require('node:fs');",
+    `fs.appendFileSync(${JSON.stringify(log)}, process.argv[2] + '\\n');`,
+    'process.exit(23);',
+    '',
+  ].join('\n'), { mode: 0o755 });
+
+  const failed = runJsonPac(root, home, ['apply'], {
+    ...env,
+    PAC_NO_PLUGINS: '0',
+    PAC_PLUGIN_RECONCILER: reconciler,
+  });
+  assert.notEqual(failed.status, 0, failed.stdout);
+  assert.equal(failed.json?.error?.code, 'PLUGIN_DRIFT');
+  assert.equal(await fs.readFile(log, 'utf8'), 'preflight\n');
+  const afterProjection = await fs.lstat(projection);
+  const afterPhysical = await fs.lstat(physical);
+  assert.equal(afterProjection.ino, before.projection.ino);
+  assert.equal(afterPhysical.ino, before.physical.ino);
+  assert.equal(await fs.readFile(path.join(projection, 'SKILL.md'), 'utf8'), before.skill);
+});
+
 test('PAC_PROFILE_REPO seeds Chezmoi-style apply once and never follows a moving ref implicitly', { timeout: 120_000 }, async () => {
   const { root, home, env } = await makeRealLifecycleFixture();
   const profileRepository = await makeProfileRepository();

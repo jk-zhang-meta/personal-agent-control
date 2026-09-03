@@ -100,6 +100,9 @@ async function assertSafeActivePluginSurfaces(context, host) {
 }
 
 export async function reconcilePlugins(context, config, hosts, mode = 'apply', profile = null) {
+  if (!['apply', 'check', 'preflight'].includes(mode)) {
+    throw new PacError('PLUGIN_MODE_INVALID', `Unknown Plugin reconciliation mode: ${mode}`);
+  }
   if (process.env.PAC_NO_PLUGINS === '1' || hosts.length === 0) return { skipped: true, reason: hosts.length ? 'PAC_NO_PLUGINS' : 'no-enabled-hosts' };
   const override = process.env.PAC_PLUGIN_RECONCILER;
   const executable = override || 'sh';
@@ -119,7 +122,7 @@ export async function reconcilePlugins(context, config, hosts, mode = 'apply', p
     try {
       const result = await run(executable, args, {
         cwd: context.root,
-        errorCode: mode === 'check' ? 'PLUGIN_DRIFT' : 'PLUGIN_APPLY_FAILED',
+        errorCode: mode === 'apply' ? 'PLUGIN_APPLY_FAILED' : 'PLUGIN_DRIFT',
       });
       results.push({ host, plugins: catalog.selected.map((entry) => entry.name), output: result.stdout.trim() });
     } finally {
