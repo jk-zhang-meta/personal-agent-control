@@ -175,7 +175,7 @@ const BALANCED_EXTERNAL_WRITE_RE = /(?:^|\s)(?:git\s+push\b|rsync\b[^\n]*\s--del
 const BALANCED_DESTRUCTIVE_GIT_RE = /(?:^|\s)git\s+(?:reset\b[^\n]*\s--hard\b|clean\b|checkout\b[^\n]*\s--\s|restore\b[^\n]*(?:--worktree|--staged\s+--worktree)|branch\s+-D\b|push\b[^\n]*(?:--force(?:-with-lease)?|-f)\b)/iu;
 const BALANCED_PRIVILEGE_RE = /(?:^|[;&|]\s*|\s)(?:sudo|doas)\s+/iu;
 const BALANCED_PROCESS_KILL_RE = /(?:^|[;&|]\s*|\s)(?:kill|killall|pkill)(?:\s|$)/iu;
-const BALANCED_SYSTEM_MUTATION_RE = /(?:^|\s)(?:chown|chgrp)\b|(?:^|\s)chmod\b[^\n]*(?:\s-R\b|\s--recursive\b)|(?:>|>>|\btee\b)\s*(?:\/etc|\/usr|\/var|\/opt|\/sys|\/proc|\/dev|~\/\.ssh|~\/\.config)/iu;
+const BALANCED_SYSTEM_MUTATION_RE = /(?:^|\s)(?:chown|chgrp)\b|(?:^|\s)chmod\b[^\n]*(?:\s-R\b|\s--recursive\b)|(?:>|>>|\btee\b)\s*(?:\/etc|\/usr|\/var|\/opt|\/sys|\/proc|\/dev(?!\/(?:null|stdin|stdout|stderr|fd\/[012])(?:\s|$|[;&|)]))|~\/\.ssh|~\/\.config)/iu;
 const BALANCED_SYSTEM_PACKAGE_REMOVE_RE = /(?:^|\s)(?:apt(?:-get)?|dnf|yum|pacman|brew)\s+(?:remove|uninstall|autoremove|purge|dist-upgrade|full-upgrade|system-upgrade)\b/iu;
 const BALANCED_WIDE_SCAN_RE = /(?:^|[;&|]\s*|\s)(?:find|du|tree)\s+\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)|(?:^|[;&|]\s*|\s)(?:rg|grep)\b[^\n]*\s\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)/iu;
 const BALANCED_EXTREME_PARALLEL_RE = /(?:^|\s)(?:make|ninja|gradle|mvn|cargo|go|pytest|tox|jest|vitest)\b[^\n]*(?:-j(?:=|\s*)?(?:0|[1-9]\d{2,})\b|-j\s*(?:$|[;&|])|--(?:jobs|max-workers|parallel|workers)(?:=|\s+)(?:0|[1-9]\d{2,})\b|-n(?:=|\s*)[1-9]\d{2,}\b)/iu;
@@ -3279,6 +3279,18 @@ export function hookFailure(reason) {
   return denyResponse(`hook failed closed (${reason})`);
 }
 
+// Codex treats exit code 2 as a blocking hook only when stderr contains the
+// reason.  Keep the machine-readable deny response for successful (exit 0)
+// decisions, but report fail-closed startup/input failures on stderr so they
+// are surfaced as a real block instead of "hook failed" with no reason.
+function writeHookFailure(reason) {
+  const response = hookFailure(reason);
+  const message = response.hookSpecificOutput?.permissionDecisionReason ||
+    `PAC scan guard: hook failed closed (${reason})`;
+  process.stderr.write(`${message}\n`);
+  process.exitCode = 2;
+}
+
 async function readStdin() {
   const chunks = [];
   let bytes = 0;
@@ -3369,25 +3381,21 @@ async function runHookCli() {
   // missing registry/policy/launcher/helper pin.
   if (!options.registrySha256 || !options.trustedLauncherDigest || !options.expectedPolicyDigest ||
       !options.trustedDigests['resource-guard.mjs'] || !options.trustedDigests['locator.mjs']) {
-    process.stdout.write(`${JSON.stringify(hookFailure('scan-guard trust digests are incomplete'))}\n`);
-    process.exitCode = 2;
+    writeHookFailure('scan-guard trust digests are incomplete');
     return;
   }
   if (options.expectedPolicyDigest && secureFileDigest(fileURLToPath(import.meta.url)) !== options.expectedPolicyDigest) {
-    process.stdout.write(`${JSON.stringify(hookFailure('staged scan policy digest does not match PAC state'))}\n`);
-    process.exitCode = 2;
+    writeHookFailure('staged scan policy digest does not match PAC state');
     return;
   }
   if (options.trustedLauncherDigest && secureFileDigest(options.trustedLauncher) !== options.trustedLauncherDigest) {
-    process.stdout.write(`${JSON.stringify(hookFailure('PAC launcher digest does not match PAC state'))}\n`);
-    process.exitCode = 2;
+    writeHookFailure('PAC launcher digest does not match PAC state');
     return;
   }
   let payload;
   try { payload = JSON.parse(await readStdin()); }
   catch (error) {
-    process.stdout.write(`${JSON.stringify(hookFailure(`invalid hook payload: ${error.message}`))}\n`);
-    process.exitCode = 2;
+    writeHookFailure(`invalid hook payload: ${error.message}`);
     return;
   }
   const finding = hookDecision(payload, options);
@@ -3397,7 +3405,6 @@ async function runHookCli() {
 if (fileURLToPath(import.meta.url) === path.resolve(process.argv[1] || '')) {
   try { await runHookCli(); }
   catch (error) {
-    process.stdout.write(`${JSON.stringify(hookFailure(error.message))}\n`);
-    process.exitCode = 2;
+    writeHookFailure(error.message);
   }
 }

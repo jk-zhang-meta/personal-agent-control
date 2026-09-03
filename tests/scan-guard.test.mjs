@@ -353,6 +353,9 @@ test('balanced host mode lets ordinary work run and asks only for sensitive effe
     ['Bash', { command: "ssh root@68.77.201.6 'journalctl -u xboard-node.service -n 50 --no-pager'" }],
     ['Bash', { command: 'ping -4 -c 3 -W 2 106.55.13.231' }],
     ['Bash', { command: 'curl -fsS https://example.com/health' }],
+    ['Bash', { command: "ssh -o BatchMode=yes A100-2 'for p in 8320 8321 8322 8330 8331 8332; do d=/data/chentao/.agent-work/runtime/worldloop-sat-improve-20260825/formal_b1f81bd_20260903_v1_stage3_598d96e_r1_p${p}; printf \"%s complete=%s rows=\" \"$p\" \"$(test -e \"$d/COMPLETE\" && echo y || echo n)\"; awk \"NF {n++} END {print n+0}\" \"$d/out/results.jsonl\" 2>/dev/null || true; done'" }],
+    ['Bash', { command: 'printf ok 2>/dev/null; true' }],
+    ['Bash', { command: 'printf ok 2>/dev/null||true' }],
     ['Bash', { command: 'npm install' }],
     ['Bash', { command: 'make -j16 test' }],
     ['Bash', { command: 'git commit -am "checkpoint"' }],
@@ -375,6 +378,7 @@ test('balanced host mode lets ordinary work run and asks only for sensitive effe
     ['Bash', 'make -j1000 test'],
     ['Bash', 'apt-get full-upgrade'],
     ['Bash', 'echo x > /etc/pac-test'],
+    ['Bash', 'echo x > /dev/sda; true'],
   ]) {
     const tool_input = typeof command === 'string' ? { command } : command;
     const result = hookDecision({ tool_name, cwd: project, tool_input }, balanced);
@@ -721,6 +725,24 @@ test('PAC stages a local hook and the real stdin path denies raw scans', async (
     '.codex/hooks.json',
     '.local/state/personal-agent-control/scan-guard.json',
   ]);
+});
+
+test('PAC hook failures use stderr so Codex treats them as blocking', async (t) => {
+  const value = await fixture(t);
+  await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
+  const runtime = path.join(value.home, '.agent-work/runtime/pac/scan-guard-hook.mjs');
+  const result = spawnSync(process.execPath, [
+    runtime, '--hook', '--host', 'codex', '--mode', 'balanced',
+    '--home', value.home, '--runtime', path.join(value.home, '.agent-work/runtime/pac'),
+    '--marker', '--pac-scan-guard-v2',
+  ], {
+    cwd: value.project,
+    input: '{}',
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 2);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /scan-guard trust digests are incomplete/u);
 });
 
 test('Codex hooks must be explicitly enabled and unmanaged markers are preserved', async (t) => {
