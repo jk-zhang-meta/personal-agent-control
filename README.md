@@ -210,6 +210,10 @@ tests, installs, project edits, local commits, and bounded network reads run;
 only materially high-impact deletion, service/security/infrastructure changes,
 external publication, filesystem-wide scans, or extreme parallelism require
 preflight. Exact user authorization is bound to the unchanged shell command.
+Claude uses its native `ask` decision so an approved tool call resumes without
+command rewriting. Codex currently denies once and binds the approved retry to
+the unchanged command with a digest because its native `ask` path is not an
+enforceable stop. Both hosts use the same impact classifier.
 The host sandbox remains the filesystem-authority boundary. Authentication,
 sessions, and history are never redirected into this repository.
 

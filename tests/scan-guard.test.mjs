@@ -356,6 +356,48 @@ test('balanced host mode lets ordinary work run and asks only for sensitive effe
     ['Bash', { command: "ssh -o BatchMode=yes A100-2 'for p in 8320 8321 8322 8330 8331 8332; do d=/data/chentao/.agent-work/runtime/worldloop-sat-improve-20260825/formal_b1f81bd_20260903_v1_stage3_598d96e_r1_p${p}; printf \"%s complete=%s rows=\" \"$p\" \"$(test -e \"$d/COMPLETE\" && echo y || echo n)\"; awk \"NF {n++} END {print n+0}\" \"$d/out/results.jsonl\" 2>/dev/null || true; done'" }],
     ['Bash', { command: 'printf ok 2>/dev/null; true' }],
     ['Bash', { command: 'printf ok 2>/dev/null||true' }],
+    ['Bash', { command: "while kill -0 683984 2>/dev/null; do sleep 5; done; if test -x target/x86_64-unknown-linux-gnu/release/codex; then stat -c 'LINUX_DONE %s %y' target/x86_64-unknown-linux-gnu/release/codex; else echo LINUX_ENDED_WITHOUT_BINARY; fi" }],
+    ['Bash', { command: 'kill -s 0 -- 683984' }],
+    ['Bash', { command: 'kill --signal=0 683984' }],
+    ['Bash', { command: '/bin/kill -0 -- 683984' }],
+    ['Bash', { command: "ssh compute 'kill -0 683984'" }],
+    ['Bash', { command: "if kill -0 683984; then echo running; fi" }],
+    ['Bash', { command: "sh -c 'while kill -0 683984; do sleep 5; done'" }],
+    ['Bash', { command: "ssh compute 'if kill -0 683984; then echo running; fi'" }],
+    ['Bash', { command: "printf '%s\\n' 'kill -9 is only documentation'" }],
+    ['Bash', { command: 'bash --version' }],
+    ['Bash', { command: 'bash ./check.sh' }],
+    ['Bash', { command: 'sh -n ./check.sh' }],
+    ['Bash', { command: 'time kill -0 683984' }],
+    ['Bash', { command: 'builtin kill -0 683984' }],
+    ['Bash', { command: 'nohup kill -0 683984' }],
+    ['Bash', { command: 'setsid kill -0 683984' }],
+    ['Bash', { command: 'time -ao /tmp/pac-time.txt kill -0 683984' }],
+    ['Bash', { command: 'setsid -fw kill -0 683984' }],
+    ['Bash', { command: 'time nohup setsid -fw kill -0 683984' }],
+    ['Bash', { command: "time -f '' kill -0 683984" }],
+    ['Bash', { command: 'exec -a marker kill -0 683984' }],
+    ['Bash', { command: 'command -v kill' }],
+    ['Bash', { command: 'env -u FOO kill -0 683984' }],
+    ['Bash', { command: 'env --help' }],
+    ['Bash', { command: 'env --version' }],
+    ['Bash', { command: 'env -uFOO true' }],
+    ['Bash', { command: 'env -C/tmp true' }],
+    ['Bash', { command: 'nice --adjustment 5 kill -0 683984' }],
+    ['Bash', { command: 'nice -n5 true' }],
+    ['Bash', { command: 'ionice -c 3 kill -0 683984' }],
+    ['Bash', { command: 'ionice -c3 true' }],
+    ['Bash', { command: 'ionice -tc3 true' }],
+    ['Bash', { command: 'timeout -k 1s 5s kill -0 683984' }],
+    ['Bash', { command: 'timeout -k1s 5s true' }],
+    ['Bash', { command: 'timeout -v 1s true' }],
+    ['Bash', { command: 'timeout -vk1s 5s true' }],
+    ['Bash', { command: 'time --format= kill -0 683984' }],
+    ['Bash', { command: 'command -pv kill' }],
+    ['Bash', { command: 'kill -l' }],
+    ['Bash', { command: 'kill -l 9' }],
+    ['Bash', { command: 'pkill -0 pac-probe-name' }],
+    ['Bash', { command: 'chmod 700 /tmp/pac-helper; read -r VOLCANO_PASSWORD' }],
     ['Bash', { command: 'npm install' }],
     ['Bash', { command: 'make -j16 test' }],
     ['Bash', { command: 'git commit -am "checkpoint"' }],
@@ -379,13 +421,54 @@ test('balanced host mode lets ordinary work run and asks only for sensitive effe
     ['Bash', 'apt-get full-upgrade'],
     ['Bash', 'echo x > /etc/pac-test'],
     ['Bash', 'echo x > /dev/sda; true'],
+    ['Bash', 'chmod -R /tmp/pac-helper; read -r PASSWORD'],
+    ['Bash', 'kill 683984'],
+    ['Bash', 'kill -9 683984'],
+    ['Bash', '/bin/kill 683984'],
+    ['Bash', '/usr/bin/pkill codex'],
+    ['Bash', 'kill -s 0 -s 9 683984'],
+    ['Bash', 'kill --signal 0 --signal 9 683984'],
+    ['Bash', 'kill -s 9 -s 0 683984'],
+    ['Bash', "sh -c 'kill -9 683984'"],
+    ['Bash', 'env /bin/kill 683984'],
+    ['Bash', "ssh compute 'kill -9 683984'"],
+    ['Bash', 'while kill -9 683984; do sleep 5; done'],
+    ['Bash', 'if kill -9 683984; then echo done; fi'],
+    ['Bash', '! kill -9 683984'],
+    ['Bash', "sh -c 'while kill -9 683984; do sleep 5; done'"],
+    ['Bash', "ssh compute 'if kill -9 683984; then echo done; fi'"],
+    ['Bash', 'time kill -9 683984'],
+    ['Bash', 'builtin kill -9 683984'],
+    ['Bash', 'nohup kill -9 683984'],
+    ['Bash', 'setsid kill -9 683984'],
+    ['Bash', "sh -c 'time kill -9 683984'"],
+    ['Bash', "ssh compute 'nohup kill -9 683984'"],
+    ['Bash', 'time -ao /tmp/pac-time.txt kill -9 683984'],
+    ['Bash', 'setsid -fw kill -9 683984'],
+    ['Bash', 'time nohup setsid -fw kill -9 683984'],
+    ['Bash', "time -f '' kill -9 683984"],
+    ['Bash', 'exec -a marker kill -9 683984'],
+    ['Bash', 'env -u FOO kill -9 683984'],
+    ['Bash', 'env -uFOO kill -9 683984'],
+    ['Bash', 'env -C/tmp kill -9 683984'],
+    ['Bash', 'nice --adjustment 5 kill -9 683984'],
+    ['Bash', 'nice -n5 kill -9 683984'],
+    ['Bash', 'ionice -c 3 kill -9 683984'],
+    ['Bash', 'ionice -c3 kill -9 683984'],
+    ['Bash', 'ionice -tc3 kill -9 683984'],
+    ['Bash', 'timeout -k 1s 5s kill -9 683984'],
+    ['Bash', 'timeout -k1s 5s kill -9 683984'],
+    ['Bash', 'timeout -vk1s 5s kill -9 683984'],
+    ['Bash', 'pkill codex'],
   ]) {
     const tool_input = typeof command === 'string' ? { command } : command;
     const result = hookDecision({ tool_name, cwd: project, tool_input }, balanced);
     assert.equal(result?.approval, true, JSON.stringify(command));
     assert.equal(result?.blocked, true, JSON.stringify(command));
     assert.equal(result?.response?.hookSpecificOutput?.permissionDecision, 'deny', JSON.stringify(command));
-    const token = result.response.hookSpecificOutput.permissionDecisionReason.match(/PAC_USER_AUTHORIZED_SHA256=([0-9a-f]{64})/u)?.[1];
+    const feedback = result.response.hookSpecificOutput.permissionDecisionReason;
+    assert.equal(feedback.split(command).length - 1, 1, `feedback repeats command: ${JSON.stringify(command)}`);
+    const token = feedback.match(/PAC_USER_AUTHORIZED_SHA256=([0-9a-f]{64})/u)?.[1];
     assert.ok(token, JSON.stringify(command));
     assert.equal(hookDecision({ tool_name, cwd: project,
       tool_input: { command: `PAC_USER_AUTHORIZED_SHA256=${token} ${command}` } }, balanced), null,
@@ -394,6 +477,16 @@ test('balanced host mode lets ordinary work run and asks only for sensitive effe
       tool_input: { command: `PAC_USER_AUTHORIZED_SHA256=${token} ${command} --changed` } }, balanced)?.blocked, true,
     `changed authorization: ${JSON.stringify(command)}`);
   }
+  const claudeCommand = 'git push origin main';
+  const claudeResult = hookDecision({ tool_name: 'Bash', cwd: project,
+    tool_input: { command: claudeCommand } }, { ...balanced, host: 'claude' });
+  assert.equal(claudeResult?.approval, true);
+  assert.equal(claudeResult?.response?.hookSpecificOutput?.permissionDecision, 'ask');
+  const claudeFeedback = claudeResult.response.hookSpecificOutput.permissionDecisionReason;
+  assert.equal(claudeFeedback.split(claudeCommand).length - 1, 1);
+  assert.doesNotMatch(claudeFeedback, /PAC_USER_AUTHORIZED_SHA256/u);
+  assert.equal(hookDecision({ tool_name: 'Bash', cwd: project,
+    tool_input: { command: 'git status --short' } }, { ...balanced, host: 'claude' }), null);
 });
 
 test('context execution/index tools and unknown command-shaped tools fail closed', async (t) => {
@@ -644,7 +737,7 @@ test('PAC broker binds local root, registry digest, helper identity, and runtime
   }), 'a modified memory helper cannot claim the trusted route');
 });
 
-test('PAC stages a local hook and the real stdin path denies raw scans', async (t) => {
+test('PAC stages local hooks and routes high-impact calls per host', async (t) => {
   const { home, project, context, activeProfile } = await fixture(t);
   const applied = await reconcileScanGuard(context, ['codex', 'claude'], ['codex', 'claude'], activeProfile);
   assert.equal(applied.hosts.every((entry) => entry.action === 'installed'), true);
@@ -676,19 +769,23 @@ test('PAC stages a local hook and the real stdin path denies raw scans', async (
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const response = JSON.parse(result.stdout);
-    assert.equal(response.hookSpecificOutput.permissionDecision, 'deny');
+    assert.equal(response.hookSpecificOutput.permissionDecision, host === 'claude' ? 'ask' : 'deny');
     assert.equal(response.hookSpecificOutput.hookEventName, 'PreToolUse');
     const authorization = response.hookSpecificOutput.permissionDecisionReason
       .match(/PAC_USER_AUTHORIZED_SHA256=([0-9a-f]{64})/u)?.[1];
-    assert.ok(authorization);
-    const authorized = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
-      cwd: project,
-      input: JSON.stringify({ tool_name: 'Bash', cwd: project,
-        tool_input: { command: `PAC_USER_AUTHORIZED_SHA256=${authorization} find /` } }),
-      encoding: 'utf8',
-    });
-    assert.equal(authorized.status, 0, authorized.stderr || authorized.stdout);
-    assert.equal(authorized.stdout, '');
+    if (host === 'codex') {
+      assert.ok(authorization);
+      const authorized = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
+        cwd: project,
+        input: JSON.stringify({ tool_name: 'Bash', cwd: project,
+          tool_input: { command: `PAC_USER_AUTHORIZED_SHA256=${authorization} find /` } }),
+        encoding: 'utf8',
+      });
+      assert.equal(authorized.status, 0, authorized.stderr || authorized.stdout);
+      assert.equal(authorized.stdout, '');
+    } else {
+      assert.equal(authorization, undefined);
+    }
     const ordinaryRemoteRead = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
       cwd: project,
       input: JSON.stringify({ tool_name: 'Bash', cwd: project,

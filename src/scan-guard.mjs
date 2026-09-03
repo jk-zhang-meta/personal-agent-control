@@ -16,7 +16,8 @@ import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mj
 
 // PAC owns a small, native PreToolUse impact gate. The host-facing policy is
 // deliberately balanced: ordinary work passes, while only high-impact effects
-// require a proactive review and exact-command authorization. It is not a
+// require a proactive review. Claude uses its native ask decision; Codex binds
+// an approved retry to the exact command. It is not a
 // replacement for the host sandbox or resource-guard. The policy copy executed
 // by the host is staged under local agent-work runtime, never read from a live
 // OneDrive checkout.

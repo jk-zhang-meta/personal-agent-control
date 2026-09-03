@@ -174,8 +174,7 @@ const BALANCED_SERVICE_CHANGE_RE = /(?:^|\s)(?:systemctl\s+(?:start|stop|restart
 const BALANCED_EXTERNAL_WRITE_RE = /(?:^|\s)(?:git\s+push\b|rsync\b[^\n]*\s--delete(?:\s|$)|curl\b[^\n]*(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|\s--request\s+(?:POST|PUT|PATCH|DELETE)\b|\s(?:-d|--data(?:-raw|-binary|-urlencode)?|--upload-file|-T)(?:\s|=))|wget\b[^\n]*(?:\s--post-(?:data|file)(?:\s|=)|\s--method(?:\s|=)(?:POST|PUT|PATCH|DELETE)\b))/iu;
 const BALANCED_DESTRUCTIVE_GIT_RE = /(?:^|\s)git\s+(?:reset\b[^\n]*\s--hard\b|clean\b|checkout\b[^\n]*\s--\s|restore\b[^\n]*(?:--worktree|--staged\s+--worktree)|branch\s+-D\b|push\b[^\n]*(?:--force(?:-with-lease)?|-f)\b)/iu;
 const BALANCED_PRIVILEGE_RE = /(?:^|[;&|]\s*|\s)(?:sudo|doas)\s+/iu;
-const BALANCED_PROCESS_KILL_RE = /(?:^|[;&|]\s*|\s)(?:kill|killall|pkill)(?:\s|$)/iu;
-const BALANCED_SYSTEM_MUTATION_RE = /(?:^|\s)(?:chown|chgrp)\b|(?:^|\s)chmod\b[^\n]*(?:\s-R\b|\s--recursive\b)|(?:>|>>|\btee\b)\s*(?:\/etc|\/usr|\/var|\/opt|\/sys|\/proc|\/dev(?!\/(?:null|stdin|stdout|stderr|fd\/[012])(?:\s|$|[;&|)]))|~\/\.ssh|~\/\.config)/iu;
+const BALANCED_SYSTEM_MUTATION_RE = /(?:^|\s)(?:chown|chgrp)\b|(?:^|\s)chmod\b[^;&|\n]*(?:\s-R\b|\s--recursive\b)|(?:>|>>|\btee\b)\s*(?:\/etc|\/usr|\/var|\/opt|\/sys|\/proc|\/dev(?!\/(?:null|stdin|stdout|stderr|fd\/[012])(?:\s|$|[;&|)]))|~\/\.ssh|~\/\.config)/iu;
 const BALANCED_SYSTEM_PACKAGE_REMOVE_RE = /(?:^|\s)(?:apt(?:-get)?|dnf|yum|pacman|brew)\s+(?:remove|uninstall|autoremove|purge|dist-upgrade|full-upgrade|system-upgrade)\b/iu;
 const BALANCED_WIDE_SCAN_RE = /(?:^|[;&|]\s*|\s)(?:find|du|tree)\s+\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)|(?:^|[;&|]\s*|\s)(?:rg|grep)\b[^\n]*\s\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)/iu;
 const BALANCED_EXTREME_PARALLEL_RE = /(?:^|\s)(?:make|ninja|gradle|mvn|cargo|go|pytest|tox|jest|vitest)\b[^\n]*(?:-j(?:=|\s*)?(?:0|[1-9]\d{2,})\b|-j\s*(?:$|[;&|])|--(?:jobs|max-workers|parallel|workers)(?:=|\s+)(?:0|[1-9]\d{2,})\b|-n(?:=|\s*)[1-9]\d{2,}\b)/iu;
@@ -247,12 +246,13 @@ function quotePosix(value) {
 function tokenize(command) {
   const tokens = [];
   let current = '';
+  let tokenStarted = false;
   let quote = null;
   let escaped = false;
   let unsafeSyntax = false;
   let unclosedQuote = false;
   const push = () => {
-    if (current !== '') { tokens.push(current); current = ''; }
+    if (tokenStarted) { tokens.push(current); current = ''; tokenStarted = false; }
   };
   for (let index = 0; index < command.length; index += 1) {
     const ch = command[index];
@@ -261,15 +261,15 @@ function tokenize(command) {
       // turn two harmless-looking fragments into `find`, `rg`, or another
       // scanner. Keep the resulting token but mark the syntax untrusted.
       if (ch === '\n' || ch === '\r') { escaped = false; unsafeSyntax = true; continue; }
-      current += ch; escaped = false; continue;
+      current += ch; tokenStarted = true; escaped = false; continue;
     }
-    if (ch === '\\' && quote !== "'") { escaped = true; continue; }
+    if (ch === '\\' && quote !== "'") { tokenStarted = true; escaped = true; continue; }
     if (quote) {
       if (ch === quote) quote = null;
-      else current += ch;
+      else { current += ch; tokenStarted = true; }
       continue;
     }
-    if (ch === "'" || ch === '"') { quote = ch; continue; }
+    if (ch === "'" || ch === '"') { tokenStarted = true; quote = ch; continue; }
     if (ch === '\n' || ch === '\r') {
       push(); tokens.push('\n'); unsafeSyntax = true; continue;
     }
@@ -283,7 +283,7 @@ function tokenize(command) {
       continue;
     }
     if (/\s/u.test(ch)) { push(); continue; }
-    current += ch;
+    current += ch; tokenStarted = true;
   }
   if (escaped) { current += '\\'; unsafeSyntax = true; }
   push();
@@ -3113,18 +3113,18 @@ function denyResponse(reason) {
   };
 }
 
-function approvalResponse(reason, target = null) {
+function approvalResponse(reason, target = null, host = 'codex') {
   const suffix = target ? ` Target: ${target}.` : '';
-  const authorization = target ? digest(String(target)) : null;
+  const nativeAsk = host === 'claude';
+  const authorization = !nativeAsk && target ? digest(String(target)) : null;
   return {
     hookSpecificOutput: {
       hookEventName: 'PreToolUse',
-      // Codex 0.152 parses `ask` but intentionally fails it open. A high-impact
-      // fallback therefore denies once and supplies an exact-command token.
-      // Cooperative agents may use that token only after explicit user
-      // authorization; the hash prevents accidental command/target widening.
-      permissionDecision: 'deny',
-      permissionDecisionReason: `PAC high-impact preflight required.${suffix} Why: this may modify, delete, interrupt, or publish a major resource. Benefit: it performs the requested change. Downside/worst case: data loss, service interruption, or an external side effect if the target is wrong. Rollback: verify the exact target and use the recorded backup/undo path before retrying. Narrower alternative: use a read-only/status command or a scoped project-local operation.${authorization ? ` After the user explicitly authorizes this exact command, rerun it unchanged as PAC_USER_AUTHORIZED_SHA256=${authorization} ${target}.` : ''} A changed target or materially changed command requires a new preflight. (${reason})`,
+      // Claude has a native ask path that resumes the unchanged tool call after
+      // approval. Codex 0.152 parses `ask` but intentionally fails it open, so
+      // Codex denies once and uses a digest-bound retry instead.
+      permissionDecision: nativeAsk ? 'ask' : 'deny',
+      permissionDecisionReason: `PAC high-impact preflight required.${suffix} Reason: ${reason}. Benefit: performs the requested effect. Worst case: data loss, interruption, or an unintended external change if the target is wrong. Rollback: verify the target and recorded backup/undo path. Safer alternative: use a read-only or narrower scoped operation.${authorization ? ` If the user authorizes this exact command, prefix the unchanged command with PAC_USER_AUTHORIZED_SHA256=${authorization}.` : ''} Any material change requires a new preflight.`,
     },
   };
 }
@@ -3161,6 +3161,305 @@ function balancedCriticalDelete(command, cwd) {
   return false;
 }
 
+function soleSignalZeroKill(args) {
+  let signalCount = 0;
+  let targetCount = 0;
+  let optionsEnded = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const token = String(args[index]);
+    if (!optionsEnded && token === '--') { optionsEnded = true; continue; }
+    if (!optionsEnded && token === '-0') { signalCount += 1; continue; }
+    if (!optionsEnded && ['-s', '-n', '--signal'].includes(token)) {
+      if (String(args[++index] || '') !== '0') return false;
+      signalCount += 1;
+      continue;
+    }
+    if (!optionsEnded && token.startsWith('--signal=')) {
+      if (token.slice('--signal='.length) !== '0') return false;
+      signalCount += 1;
+      continue;
+    }
+    if (!optionsEnded && token.startsWith('-')) return false;
+    targetCount += 1;
+  }
+  return signalCount === 1 && targetCount >= 1;
+}
+
+function readOnlyKill(args) {
+  if (soleSignalZeroKill(args)) return true;
+  const first = String(args[0] || '');
+  // Signal-name/table lookup never sends a signal, regardless of whether the
+  // optional lookup operand is a signal name or exit status.
+  return ['-l', '-L', '--list'].includes(first) || first.startsWith('--list=');
+}
+
+function soleSignalZeroPkill(args) {
+  let index = 0;
+  const first = String(args[index] || '');
+  if (first === '-0' || first === '--signal=0') index += 1;
+  else if (first === '--signal' && String(args[index + 1] || '') === '0') index += 2;
+  else return false;
+  if (args[index] === '--') index += 1;
+  return index === args.length - 1 && !String(args[index] || '').startsWith('-');
+}
+
+function sshRemoteCommand(tokens, commandIndex) {
+  const optionsWithSeparateValue = new Set([
+    '-B', '-b', '-c', '-D', '-E', '-e', '-F', '-I', '-i', '-J', '-L', '-l',
+    '-m', '-O', '-o', '-P', '-p', '-Q', '-R', '-S', '-W', '-w',
+  ]);
+  let index = commandIndex + 1;
+  while (index < tokens.length) {
+    const token = String(tokens[index]);
+    if (token === '--') { index += 1; break; }
+    if (!token.startsWith('-') || token === '-') break;
+    if (optionsWithSeparateValue.has(token)) index += 2;
+    else index += 1;
+  }
+  if (index >= tokens.length) return null;
+  index += 1; // destination
+  return index < tokens.length ? tokens.slice(index).join(' ') : null;
+}
+
+function processWrapperInner(tokens, commandIndex, executable) {
+  const args = tokens.slice(commandIndex + 1);
+  let index = 0;
+  if (executable === 'builtin') {
+    if (args[index] === '--') index += 1;
+    else if (String(args[index] || '').startsWith('-')) return { tokens: [], opaque: true };
+    return { tokens: args.slice(index), opaque: false };
+  }
+  if (executable === 'command') {
+    while (index < args.length) {
+      const token = String(args[index]);
+      if (token === '--') { index += 1; break; }
+      if (/^-p+$/u.test(token)) { index += 1; continue; }
+      if (/^-[p]*[vV][pvV]*$/u.test(token)) return { tokens: [], opaque: false };
+      if (token.startsWith('-')) return { tokens: [], opaque: true };
+      break;
+    }
+    return { tokens: args.slice(index), opaque: false };
+  }
+  if (executable === 'exec') {
+    while (index < args.length) {
+      const token = String(args[index]);
+      if (token === '--') { index += 1; break; }
+      if (token === '-a') {
+        if (index + 1 >= args.length) return { tokens: [], opaque: true };
+        index += 2; continue;
+      }
+      if (/^-[cl]+$/u.test(token)) { index += 1; continue; }
+      if (token.startsWith('-')) return { tokens: [], opaque: true };
+      break;
+    }
+    return { tokens: args.slice(index), opaque: false };
+  }
+  if (executable === 'env') {
+    while (index < args.length) {
+      const token = String(args[index]);
+      if (token === '--') { index += 1; break; }
+      if (['--help', '--version'].includes(token)) return { tokens: [], opaque: false };
+      if (leadingAssignment(token)) { index += 1; continue; }
+      if (['-i', '--ignore-environment', '-0', '--null', '-v', '--debug'].includes(token)) {
+        index += 1; continue;
+      }
+      if (['-u', '--unset', '-C', '--chdir', '-a', '--argv0'].includes(token)) {
+        if (index + 1 >= args.length) return { tokens: [], opaque: true };
+        index += 2; continue;
+      }
+      if (/^-[uCa].+/u.test(token)) { index += 1; continue; }
+      if (/^--(?:unset|chdir|argv0)=/u.test(token)) { index += 1; continue; }
+      // split-string reparses a value as argv and is intentionally opaque.
+      if (['-S', '--split-string'].includes(token) || token.startsWith('--split-string=')) {
+        return { tokens: [], opaque: true };
+      }
+      if (token.startsWith('-')) return { tokens: [], opaque: true };
+      break;
+    }
+    return { tokens: args.slice(index), opaque: false };
+  }
+  if (executable === 'nice') {
+    while (index < args.length) {
+      const token = String(args[index]);
+      if (token === '--') { index += 1; break; }
+      if (['-h', '--help', '--version'].includes(token)) return { tokens: [], opaque: false };
+      if (['-n', '--adjustment'].includes(token)) {
+        if (index + 1 >= args.length) return { tokens: [], opaque: true };
+        index += 2; continue;
+      }
+      if (/^--adjustment=/u.test(token) || /^-[0-9]+$/u.test(token) || /^-n[+-]?[0-9]+$/u.test(token)) {
+        index += 1; continue;
+      }
+      if (token.startsWith('-')) return { tokens: [], opaque: true };
+      break;
+    }
+    return { tokens: args.slice(index), opaque: false };
+  }
+  if (executable === 'ionice') {
+    while (index < args.length) {
+      const token = String(args[index]);
+      if (token === '--') { index += 1; break; }
+      if (['-h', '--help', '-V', '--version'].includes(token)) return { tokens: [], opaque: false };
+      if (['-t', '--ignore'].includes(token)) { index += 1; continue; }
+      if (['-c', '--class', '-n', '--classdata'].includes(token)) {
+        if (index + 1 >= args.length) return { tokens: [], opaque: true };
+        index += 2; continue;
+      }
+      if (/^-[cn].+/u.test(token)) { index += 1; continue; }
+      if (/^--(?:class|classdata)=/u.test(token)) { index += 1; continue; }
+      // Targeting an existing PID/PGID/UID changes another process directly.
+      if (['-p', '--pid', '-P', '--pgid', '-u', '--uid'].includes(token) ||
+          /^--(?:pid|pgid|uid)=/u.test(token)) return { tokens: [], opaque: true };
+      if (/^-[^-]+/u.test(token)) {
+        const cluster = token.slice(1);
+        let consumesNext = false;
+        let valid = true;
+        for (let offset = 0; offset < cluster.length; offset += 1) {
+          const option = cluster[offset];
+          if (option === 't') continue;
+          if (option === 'c' || option === 'n') {
+            consumesNext = offset === cluster.length - 1;
+            offset = cluster.length;
+            continue;
+          }
+          valid = false; break;
+        }
+        if (!valid || (consumesNext && index + 1 >= args.length)) return { tokens: [], opaque: true };
+        index += consumesNext ? 2 : 1;
+        continue;
+      }
+      if (token.startsWith('-')) return { tokens: [], opaque: true };
+      break;
+    }
+    return { tokens: args.slice(index), opaque: false };
+  }
+  if (executable === 'timeout') {
+    while (index < args.length) {
+      const token = String(args[index]);
+      if (token === '--') { index += 1; break; }
+      if (['--foreground', '--preserve-status', '--verbose'].includes(token)) {
+        index += 1; continue;
+      }
+      if (['-k', '--kill-after', '-s', '--signal'].includes(token)) {
+        if (index + 1 >= args.length) return { tokens: [], opaque: true };
+        index += 2; continue;
+      }
+      if (/^-[ks].+/u.test(token)) { index += 1; continue; }
+      if (/^--(?:kill-after|signal)=/u.test(token)) { index += 1; continue; }
+      if (/^-[^-]+/u.test(token)) {
+        const cluster = token.slice(1);
+        let consumesNext = false;
+        let valid = true;
+        for (let offset = 0; offset < cluster.length; offset += 1) {
+          const option = cluster[offset];
+          if (option === 'v') continue;
+          if (option === 'k' || option === 's') {
+            consumesNext = offset === cluster.length - 1;
+            offset = cluster.length;
+            continue;
+          }
+          valid = false; break;
+        }
+        if (!valid || (consumesNext && index + 1 >= args.length)) return { tokens: [], opaque: true };
+        index += consumesNext ? 2 : 1;
+        continue;
+      }
+      if (['--help', '--version'].includes(token)) return { tokens: [], opaque: false };
+      if (token.startsWith('-')) return { tokens: [], opaque: true };
+      break;
+    }
+    if (index >= args.length) return { tokens: [], opaque: true };
+    index += 1; // duration
+    return { tokens: args.slice(index), opaque: false };
+  }
+  while (index < args.length) {
+    const token = String(args[index]);
+    if (token === '--') { index += 1; break; }
+    if (['-h', '--help', '-V', '--version'].includes(token)) return { tokens: [], opaque: false };
+    if (executable === 'nohup') {
+      if (token.startsWith('-')) return { tokens: [], opaque: true };
+      break;
+    }
+    if (executable === 'setsid') {
+      if (/^-[cfw]+$/u.test(token) || ['--ctty', '--fork', '--wait'].includes(token)) {
+        index += 1; continue;
+      }
+      if (token.startsWith('-')) return { tokens: [], opaque: true };
+      break;
+    }
+    if (executable === 'time') {
+      if (['--append', '--portability', '--quiet', '--verbose'].includes(token)) {
+        index += 1; continue;
+      }
+      if (['--format', '--output'].includes(token)) {
+        if (index + 1 >= args.length) return { tokens: [], opaque: true };
+        index += 2; continue;
+      }
+      if (/^--(?:format|output)=/u.test(token)) { index += 1; continue; }
+      if (/^-[^-]+/u.test(token)) {
+        const cluster = token.slice(1);
+        let consumesNext = false;
+        for (let offset = 0; offset < cluster.length; offset += 1) {
+          const option = cluster[offset];
+          if ('apqv'.includes(option)) continue;
+          if ('fo'.includes(option)) {
+            if (offset === cluster.length - 1) consumesNext = true;
+            offset = cluster.length;
+            continue;
+          }
+          return { tokens: [], opaque: true };
+        }
+        if (consumesNext) {
+          if (index + 1 >= args.length) return { tokens: [], opaque: true };
+          index += 2;
+        } else index += 1;
+        continue;
+      }
+      if (token.startsWith('-')) return { tokens: [], opaque: true };
+    }
+    break;
+  }
+  return { tokens: args.slice(index), opaque: false };
+}
+
+function balancedProcessCommand(tokens) {
+  let commandTokens = [...tokens];
+  while (true) {
+    while (['!', '{', 'while', 'until', 'if', 'elif', 'then', 'do', 'else'].includes(commandName(commandTokens[0]))) {
+      commandTokens.shift();
+    }
+    let index = 0;
+    while (index < commandTokens.length && leadingAssignment(commandTokens[index])) index += 1;
+    const executable = commandName(commandTokens[index]);
+    if (![...WRAPPERS, 'builtin', 'nohup', 'setsid', 'time'].includes(executable)) {
+      return { commandTokens, index, executable };
+    }
+    const inner = processWrapperInner(commandTokens, index, executable);
+    if (inner.opaque) return { commandTokens: [], index: 0, executable: '', opaque: true };
+    commandTokens = inner.tokens;
+    if (!commandTokens.length) return { commandTokens, index: 0, executable: '', opaque: false };
+  }
+}
+
+function balancedProcessChange(command, depth = 0) {
+  if (depth > 3) return true;
+  const lexical = tokenize(String(command));
+  for (const segment of commandSegments(lexical.tokens)) {
+    const { commandTokens, index, executable, opaque = false } = balancedProcessCommand(segment.tokens);
+    if (opaque) return true;
+    if (executable === 'killall') return true;
+    if (executable === 'pkill' && !soleSignalZeroPkill(commandTokens.slice(index + 1))) return true;
+    if (executable === 'kill' && !readOnlyKill(commandTokens.slice(index + 1))) return true;
+    const inner = shellInner(commandTokens, index);
+    if (inner?.script && balancedProcessChange(inner.script, depth + 1)) return true;
+    if (executable === 'ssh') {
+      const remote = sshRemoteCommand(commandTokens, index);
+      if (remote && balancedProcessChange(remote, depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
 function balancedSensitiveFinding(tool, input, cwd) {
   const name = String(tool || '');
   if (NATIVE_WRITE_TOOLS.has(name) || NATIVE_EDIT_TOOLS.has(name) || NATIVE_NOTEBOOK_EDIT_TOOLS.has(name)) {
@@ -3190,7 +3489,7 @@ function balancedSensitiveFinding(tool, input, cwd) {
     if (BALANCED_IRREVERSIBLE_RE.test(effect) || balancedCriticalDelete(effect, cwd)) reason = 'irreversible or broad deletion/storage command';
     else if (BALANCED_SERVICE_CHANGE_RE.test(effect)) reason = 'service, container, infrastructure, or cluster mutation';
     else if (BALANCED_EXTERNAL_WRITE_RE.test(effect) || BALANCED_DESTRUCTIVE_GIT_RE.test(effect)) reason = 'external publication or destructive source-control operation';
-    else if (BALANCED_PRIVILEGE_RE.test(effect) || BALANCED_PROCESS_KILL_RE.test(effect) || BALANCED_SYSTEM_PACKAGE_REMOVE_RE.test(effect)) reason = 'privilege, process, or system-package change';
+    else if (BALANCED_PRIVILEGE_RE.test(effect) || balancedProcessChange(text) || BALANCED_SYSTEM_PACKAGE_REMOVE_RE.test(effect)) reason = 'privilege, process, or system-package change';
     else if (BALANCED_SYSTEM_MUTATION_RE.test(effect)) reason = 'system/security configuration or privileged redirection';
     else if (BALANCED_WIDE_SCAN_RE.test(effect)) reason = 'filesystem-wide scan can materially affect machine responsiveness';
     else if (BALANCED_EXTREME_PARALLEL_RE.test(effect)) reason = 'extreme parallelism can materially affect CPU, memory, or disk I/O';
@@ -3207,7 +3506,7 @@ export function hookDecision(payload, options = {}) {
     const sensitive = balancedSensitiveFinding(tool, input, cwd);
     return sensitive
       ? { blocked: true, approval: true, executable: tool || 'tool', reason: sensitive.reason,
-        response: approvalResponse(sensitive.reason, sensitive.target) }
+        response: approvalResponse(sensitive.reason, sensitive.target, options.host) }
       : null;
   }
   const knownShellTool = KNOWN_SHELL_TOOL_RE.test(tool);
@@ -3398,7 +3697,7 @@ async function runHookCli() {
     writeHookFailure(`invalid hook payload: ${error.message}`);
     return;
   }
-  const finding = hookDecision(payload, options);
+  const finding = hookDecision(payload, { ...options, host });
   if (finding) process.stdout.write(`${JSON.stringify(finding.response)}\n`);
 }
 
