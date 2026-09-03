@@ -41,7 +41,9 @@ function quote(value) {
 async function fixture(t, { codexHooks = true, codexTrust = 'trusted' } = {}) {
   // The policy rejects world-writable ancestors such as /tmp. Keep the
   // synthetic HOME under the same private local runtime tree as production.
-  const base = await fs.realpath(await fs.mkdtemp(path.join('/root/.agent-work', 'pac-scan-guard-')));
+  const agentWork = path.join(homedir(), '.agent-work');
+  await fs.mkdir(agentWork, { recursive: true, mode: 0o700 });
+  const base = await fs.realpath(await fs.mkdtemp(path.join(agentWork, 'pac-scan-guard-')));
   const home = path.join(base, 'home');
   const project = path.join(base, 'project');
   const registry = path.join(home, '.config/personal-agent-control/search-roots.json');
