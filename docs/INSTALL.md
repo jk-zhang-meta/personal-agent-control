@@ -78,12 +78,14 @@ session, then run
 `pac doctor` and the documented deny canary. Do not copy a stale trusted hash or
 edit trust state based only on a path/name match.
 
-For that canary, start a fresh Codex session in a disposable WSL-local Git
-repository and request the exact raw command `find . -maxdepth 3 -type f`. The
-expected result is a scan-guard denial that routes discovery to
-`workspace-locator` or the bounded guard, not filesystem output. Do not run the
-canary in OneDrive and do not use a hook-trust bypass flag as proof of durable
-activation.
+For that canary, start a fresh Codex session in a disposable host-local Git
+repository and request the exact harmless command
+`find / -maxdepth 0 -print`. The expected result is a high-impact preflight
+denial rather than filesystem output; this proves that the balanced hook is
+active without risking a recursive walk if it is not. Then verify that
+`rg -n TODO src`, a bounded status command, and a normal project test pass
+without PAC intervention. Do not use a hook-trust bypass flag as proof of
+durable activation.
 
 ## Review before apply
 

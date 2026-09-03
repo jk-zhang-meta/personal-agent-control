@@ -1155,6 +1155,59 @@ outer-isolate CPU/RAM and provider response bytes are unobservable here. A host
 upgrade that changes canonical tool names or payload schemas requires the
 native compatibility canaries before PAC can claim the new surface is covered.
 
+## ADR-024: Make host enforcement impact-based and authorization-continuous
+
+Decision date: 2026-09-03. Supersedes ADR-021's host-facing deny posture while
+retaining its strict parser as an internal broker and regression-test boundary.
+
+### Context
+
+The fail-closed scan policy prevented costly traversal, but it also denied
+ordinary SSH diagnostics, shell scripts, context-mode processing, metadata
+queries, and normal development commands. That interrupted the user's work and
+caused agents to hand safe commands back to the user. Codex 0.152 accepts the
+`ask` wire value in its schema but intentionally fails that decision open, so a
+hook cannot truthfully claim to display a native approval prompt.
+
+### Decision
+
+Generated host hooks run the policy in `balanced` mode. They classify effects
+rather than unfamiliar command names:
+
+1. normal reads, bounded SSH/network diagnosis, project edits, package
+   installation, tests, local Git commits, context-mode calls, and ordinary
+   scoped searches pass without PAC intervention;
+2. irreversible disk operations, broad/critical recursive deletion,
+   destructive Git history changes or remote publication, service/container/
+   infrastructure mutation, privilege/security changes, filesystem-wide
+   scans, and extreme parallelism require a pre-execution review;
+3. the Profile requires agents to identify those steps before beginning work,
+   present exact target, rationale, benefit, worst case, rollback, and a
+   narrower alternative, and batch related high-impact steps into one bounded
+   request where practical; and
+4. if an agent misses that planning gate, PreToolUse denies the high-impact
+   shell command once. After explicit user authorization it may retry with the
+   returned `PAC_USER_AUTHORIZED_SHA256` prefix. The hash covers the exact
+   unchanged command, so a changed command or target requires a new review.
+
+The authorization prefix is a cooperative workflow assertion, not cryptographic
+proof that a chat participant approved it: the host does not expose such a
+signed assertion to hooks. Stable agent instructions prohibit minting or using
+it without explicit task-scoped user authorization. Native file-edit tools stay
+frictionless and rely on the same proactive authority contract plus the host
+sandbox, because they have no shell-command prefix surface.
+
+### Consequences
+
+PAC no longer turns routine work into a broker migration or approval ceremony.
+The strict parser and resource guard remain available for explicitly bounded
+heavy work and for internal provider routes, but they do not gate every command.
+The last-resort denial is now rare and actionable: once the exact command is
+authorized, execution continues without repeated PAC prompts. Novel side
+effects that lexical classification cannot recognize remain governed by the
+Profile and host sandbox; the balanced hook is not represented as a complete OS
+security boundary.
+
 ## ADR-022: Advance the reviewed CodeGraph provider pin to 1.6.0
 
 Decision date: 2026-09-03. Extends ADR-019 and the file-search/resource-budget

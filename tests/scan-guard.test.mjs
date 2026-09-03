@@ -339,6 +339,56 @@ test('scan policy blocks raw discovery and accepts only parser-approved broker f
   assert.ok(inspectCommand(resourceCommand(fixtureValue, ['foo', '-c', 'find /'], ['--allow-expensive'], 'expensive'), project, options));
 });
 
+test('balanced host mode lets ordinary work run and asks only for sensitive effects', () => {
+  const project = '/root/.agent-work/runtime/pac-balanced-fixture';
+  const balanced = { mode: 'balanced', home: '/root' };
+  for (const [tool_name, tool_input] of [
+    ['Bash', { command: 'mise exec -- pac status' }],
+    ['Bash', { command: 'rg -n TODO src' }],
+    ['Bash', { command: 'sed -n 1,40p src/main.rs' }],
+    ['Bash', { command: "ssh root@68.77.201.6 'systemctl is-active xboard-node.service'" }],
+    ['Bash', { command: "ssh root@68.77.201.6 'journalctl -u xboard-node.service -n 50 --no-pager'" }],
+    ['Bash', { command: 'ping -4 -c 3 -W 2 106.55.13.231' }],
+    ['Bash', { command: 'curl -fsS https://example.com/health' }],
+    ['Bash', { command: 'npm install' }],
+    ['Bash', { command: 'make -j16 test' }],
+    ['Bash', { command: 'git commit -am "checkpoint"' }],
+    ['Bash', { command: 'echo x > .cache/test-output.txt' }],
+    ['Write', { file_path: '/root/.agent-work/runtime/project/src/main.rs', content: 'fn main() {}' }],
+    ['Write', { file_path: '/etc/pac-test', content: 'x' }],
+    ['mcp__context_mode__ctx_execute', { language: 'javascript', code: 'console.log(1)' }],
+    ['mcp__context_mode__ctx_search', { queries: ['recent decision'], sort: 'timeline' }],
+  ]) {
+    assert.equal(hookDecision({ tool_name, cwd: project, tool_input }, balanced), null,
+      `${tool_name} ${JSON.stringify(tool_input)}`);
+  }
+  for (const [tool_name, command] of [
+    ['Bash', 'rm -rf /root/.agent-work/runtime/pac-balanced-fixture'],
+    ['Bash', 'find / -name pac-test'],
+    ['Bash', "ssh root@68.77.201.6 'systemctl restart xboard-node.service'"],
+    ['Bash', 'git push origin main'],
+    ['Bash', 'git reset --hard HEAD~1'],
+    ['Bash', 'sudo apt-get remove some-package'],
+    ['Bash', 'make -j1000 test'],
+    ['Bash', 'apt-get full-upgrade'],
+    ['Bash', 'echo x > /etc/pac-test'],
+  ]) {
+    const tool_input = typeof command === 'string' ? { command } : command;
+    const result = hookDecision({ tool_name, cwd: project, tool_input }, balanced);
+    assert.equal(result?.approval, true, JSON.stringify(command));
+    assert.equal(result?.blocked, true, JSON.stringify(command));
+    assert.equal(result?.response?.hookSpecificOutput?.permissionDecision, 'deny', JSON.stringify(command));
+    const token = result.response.hookSpecificOutput.permissionDecisionReason.match(/PAC_USER_AUTHORIZED_SHA256=([0-9a-f]{64})/u)?.[1];
+    assert.ok(token, JSON.stringify(command));
+    assert.equal(hookDecision({ tool_name, cwd: project,
+      tool_input: { command: `PAC_USER_AUTHORIZED_SHA256=${token} ${command}` } }, balanced), null,
+    `authorized: ${JSON.stringify(command)}`);
+    assert.equal(hookDecision({ tool_name, cwd: project,
+      tool_input: { command: `PAC_USER_AUTHORIZED_SHA256=${token} ${command} --changed` } }, balanced)?.blocked, true,
+    `changed authorization: ${JSON.stringify(command)}`);
+  }
+});
+
 test('context execution/index tools and unknown command-shaped tools fail closed', async (t) => {
   const { home, project, options } = await fixture(t);
   const blocked = [
@@ -621,6 +671,25 @@ test('PAC stages a local hook and the real stdin path denies raw scans', async (
     const response = JSON.parse(result.stdout);
     assert.equal(response.hookSpecificOutput.permissionDecision, 'deny');
     assert.equal(response.hookSpecificOutput.hookEventName, 'PreToolUse');
+    const authorization = response.hookSpecificOutput.permissionDecisionReason
+      .match(/PAC_USER_AUTHORIZED_SHA256=([0-9a-f]{64})/u)?.[1];
+    assert.ok(authorization);
+    const authorized = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
+      cwd: project,
+      input: JSON.stringify({ tool_name: 'Bash', cwd: project,
+        tool_input: { command: `PAC_USER_AUTHORIZED_SHA256=${authorization} find /` } }),
+      encoding: 'utf8',
+    });
+    assert.equal(authorized.status, 0, authorized.stderr || authorized.stdout);
+    assert.equal(authorized.stdout, '');
+    const ordinaryRemoteRead = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
+      cwd: project,
+      input: JSON.stringify({ tool_name: 'Bash', cwd: project,
+        tool_input: { command: "ssh example 'journalctl -u app -n 20 --no-pager'" } }),
+      encoding: 'utf8',
+    });
+    assert.equal(ordinaryRemoteRead.status, 0, ordinaryRemoteRead.stderr || ordinaryRemoteRead.stdout);
+    assert.equal(ordinaryRemoteRead.stdout, '');
     const allowed = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
       cwd: project,
       input: JSON.stringify({ tool_name: 'apply_patch', cwd: project, tool_input: { command: [

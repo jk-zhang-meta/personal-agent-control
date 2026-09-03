@@ -18,7 +18,8 @@ may be true only when every ordinary invariant passes and the sole remaining
 condition is an exact, structurally verified Codex hook whose host trust state
 is `untrusted` or `modified`. `ok` remains false, strict doctor remains red, and
 deployment is incomplete until the exact current hook hash is trusted and a
-real host deny canary proves enforcement.
+real host high-impact canary proves enforcement while ordinary-work canaries
+pass without PAC intervention.
 
 ## State-layer invariants
 

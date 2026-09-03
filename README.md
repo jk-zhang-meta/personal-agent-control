@@ -200,13 +200,17 @@ trees, and no catalogued copies are created under `~/.codex/skills`. PAC
 declares native Plugin desired state but leaves host manifests, MCP servers,
 runtime data, and caches in their native locations. When the active Profile
 selects both `resource-guard` and `workspace-locator`, the one deliberate
-exception is a marked `PreToolUse` scan-guard fragment in each enabled host
+exception is a marked `PreToolUse` impact-guard fragment in each enabled host
 config. Selecting neither leaves the seam inactive; selecting only one fails
 closed. PAC owns only that fragment, preserves all other host fields, snapshots
 it before mutation, and fails closed on removal or drift. Host-specific matchers
-cover the high-I/O/execution surfaces without launching the hook for harmless
-control/UI calls; native patch/read/write/image/Web inputs use bounded schemas,
-while the host sandbox remains the filesystem-authority boundary. Authentication,
+cover command and high-I/O surfaces without launching the hook for harmless
+control/UI calls. The deployed `balanced` mode lets normal diagnosis, search,
+tests, installs, project edits, local commits, and bounded network reads run;
+only materially high-impact deletion, service/security/infrastructure changes,
+external publication, filesystem-wide scans, or extreme parallelism require
+preflight. Exact user authorization is bound to the unchanged shell command.
+The host sandbox remains the filesystem-authority boundary. Authentication,
 sessions, and history are never redirected into this repository.
 
 Codex keeps user-hook trust as a separate host-owned decision. An apply may

@@ -169,6 +169,16 @@ const KNOWN_SHELL_TOOL_RE = new RegExp(`^(?:Bash|Shell|local_shell|shell|shell_c
 const CONTEXT_INDEX_TOOL_RE = new RegExp(`^(?:ctx_index|ctx_fetch_and_index|${CONTEXT_TOOL_PREFIX}(?:index|fetch_and_index))$`, 'u');
 const CONTEXT_SEARCH_TOOL_RE = new RegExp(`^(?:ctx_search|${CONTEXT_TOOL_PREFIX}search)$`, 'u');
 const CONTEXT_EXECUTE_TOOL_RE = new RegExp(`^(?:ctx_execute|ctx_execute_file|ctx_batch_execute|${CONTEXT_TOOL_PREFIX}(?:execute|execute_file|batch_execute))$`, 'u');
+const BALANCED_IRREVERSIBLE_RE = /(?:^|[;&|]\s*|\s)(?:shred|wipefs|mkfs(?:\.[A-Za-z0-9_-]+)?|fdisk|parted|format|reboot|shutdown|poweroff|halt)(?:\s|$)|(?:^|\s)diskutil\s+(?:erase|partition)|(?:^|\s)dd\b[^\n]*\bof=\/dev\//iu;
+const BALANCED_SERVICE_CHANGE_RE = /(?:^|\s)(?:systemctl\s+(?:start|stop|restart|reload|try-restart|enable|disable|mask|unmask|daemon-reload)|service\s+\S+\s+(?:start|stop|restart|reload)|launchctl\s+(?:load|unload|bootstrap|bootout|kickstart)|(?:docker|podman)\s+(?:rm|stop|restart|kill|prune)|kubectl\s+(?:apply|create|delete|edit|patch|replace|scale|rollout|set)|(?:terraform|tofu)\s+(?:apply|destroy|import)|ansible-playbook\b)(?:\s|$)/iu;
+const BALANCED_EXTERNAL_WRITE_RE = /(?:^|\s)(?:git\s+push\b|rsync\b[^\n]*\s--delete(?:\s|$)|curl\b[^\n]*(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|\s--request\s+(?:POST|PUT|PATCH|DELETE)\b|\s(?:-d|--data(?:-raw|-binary|-urlencode)?|--upload-file|-T)(?:\s|=))|wget\b[^\n]*(?:\s--post-(?:data|file)(?:\s|=)|\s--method(?:\s|=)(?:POST|PUT|PATCH|DELETE)\b))/iu;
+const BALANCED_DESTRUCTIVE_GIT_RE = /(?:^|\s)git\s+(?:reset\b[^\n]*\s--hard\b|clean\b|checkout\b[^\n]*\s--\s|restore\b[^\n]*(?:--worktree|--staged\s+--worktree)|branch\s+-D\b|push\b[^\n]*(?:--force(?:-with-lease)?|-f)\b)/iu;
+const BALANCED_PRIVILEGE_RE = /(?:^|[;&|]\s*|\s)(?:sudo|doas)\s+/iu;
+const BALANCED_PROCESS_KILL_RE = /(?:^|[;&|]\s*|\s)(?:kill|killall|pkill)(?:\s|$)/iu;
+const BALANCED_SYSTEM_MUTATION_RE = /(?:^|\s)(?:chown|chgrp)\b|(?:^|\s)chmod\b[^\n]*(?:\s-R\b|\s--recursive\b)|(?:>|>>|\btee\b)\s*(?:\/etc|\/usr|\/var|\/opt|\/sys|\/proc|\/dev|~\/\.ssh|~\/\.config)/iu;
+const BALANCED_SYSTEM_PACKAGE_REMOVE_RE = /(?:^|\s)(?:apt(?:-get)?|dnf|yum|pacman|brew)\s+(?:remove|uninstall|autoremove|purge|dist-upgrade|full-upgrade|system-upgrade)\b/iu;
+const BALANCED_WIDE_SCAN_RE = /(?:^|[;&|]\s*|\s)(?:find|du|tree)\s+\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)|(?:^|[;&|]\s*|\s)(?:rg|grep)\b[^\n]*\s\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)/iu;
+const BALANCED_EXTREME_PARALLEL_RE = /(?:^|\s)(?:make|ninja|gradle|mvn|cargo|go|pytest|tox|jest|vitest)\b[^\n]*(?:-j(?:=|\s*)?(?:0|[1-9]\d{2,})\b|-j\s*(?:$|[;&|])|--(?:jobs|max-workers|parallel|workers)(?:=|\s+)(?:0|[1-9]\d{2,})\b|-n(?:=|\s*)[1-9]\d{2,}\b)/iu;
 // CodeGraph is the only non-context MCP provider declared by PAC Core today.
 // Keep the default to its single, documented read-only tool. A provider
 // prefix is deliberately not enough: re-enabling `codegraph_node` or a future
@@ -3103,10 +3113,103 @@ function denyResponse(reason) {
   };
 }
 
+function approvalResponse(reason, target = null) {
+  const suffix = target ? ` Target: ${target}.` : '';
+  const authorization = target ? digest(String(target)) : null;
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      // Codex 0.152 parses `ask` but intentionally fails it open. A high-impact
+      // fallback therefore denies once and supplies an exact-command token.
+      // Cooperative agents may use that token only after explicit user
+      // authorization; the hash prevents accidental command/target widening.
+      permissionDecision: 'deny',
+      permissionDecisionReason: `PAC high-impact preflight required.${suffix} Why: this may modify, delete, interrupt, or publish a major resource. Benefit: it performs the requested change. Downside/worst case: data loss, service interruption, or an external side effect if the target is wrong. Rollback: verify the exact target and use the recorded backup/undo path before retrying. Narrower alternative: use a read-only/status command or a scoped project-local operation.${authorization ? ` After the user explicitly authorizes this exact command, rerun it unchanged as PAC_USER_AUTHORIZED_SHA256=${authorization} ${target}.` : ''} A changed target or materially changed command requires a new preflight. (${reason})`,
+    },
+  };
+}
+
+function balancedAuthorization(command) {
+  const match = /^\s*PAC_USER_AUTHORIZED_SHA256=([0-9a-f]{64})\s+([\s\S]+)$/iu.exec(String(command));
+  if (!match) return { command: String(command).trim(), present: false, valid: false };
+  const exact = match[2].trim();
+  return { command: exact, present: true, valid: digest(exact) === match[1].toLowerCase() };
+}
+
+function balancedCriticalDelete(command, cwd) {
+  const lexical = tokenize(command);
+  for (const segment of commandSegments(lexical.tokens)) {
+    const { index } = unwrap(segment.tokens);
+    const executable = commandName(segment.tokens[index]);
+    if (!['rm', 'remove-item'].includes(executable)) continue;
+    const args = segment.tokens.slice(index + 1);
+    const recursive = args.some((arg) => arg === '--recursive' || arg === '-Recurse' || /^-[A-Za-z]*[rR][A-Za-z]*$/u.test(arg));
+    if (!recursive) continue;
+    const targets = args.filter((arg) => !arg.startsWith('-'));
+    for (const raw of targets) {
+      const normalized = String(raw).replaceAll('\\', '/').replace(/\/+$/u, '') || '/';
+      const resolved = !/[*$?{}]/u.test(normalized) && !normalized.startsWith('$') && normalized !== '~'
+        ? path.resolve(cwd || process.cwd(), normalized) : null;
+      const projectRoot = path.resolve(cwd || process.cwd());
+      if (['/', '.', '..', '*', './*', '~', '$HOME'].includes(normalized) ||
+          resolved === projectRoot || resolved === path.dirname(projectRoot) ||
+          /(?:^|\/)\.git(?:\/|$)/iu.test(normalized) || isSyncedStorage(normalized) ||
+          /^\/(?:etc|usr|var|opt|sys|proc|dev)(?:\/|$)/u.test(normalized) ||
+          /^\/(?:root|home\/[^/]+|mnt\/[a-z])$/iu.test(normalized)) return true;
+    }
+  }
+  return false;
+}
+
+function balancedSensitiveFinding(tool, input, cwd) {
+  const name = String(tool || '');
+  if (NATIVE_WRITE_TOOLS.has(name) || NATIVE_EDIT_TOOLS.has(name) || NATIVE_NOTEBOOK_EDIT_TOOLS.has(name)) {
+    // Native project edits are kept frictionless. Stable Profile instructions
+    // require proactive user review for major system/security mutations; the
+    // hook cannot attach an exact-command authorization token to a native edit.
+    return null;
+  }
+  if (CONTEXT_EXECUTE_TOOL_RE.test(name) || CONTEXT_INDEX_TOOL_RE.test(name)) return null;
+  if (!/^mcp__/iu.test(name) && !KNOWN_SHELL_TOOL_RE.test(name)) return null;
+  const parsed = toolCommands(input);
+  const commands = parsed.commands || [];
+  for (const command of commands) {
+    const authorization = balancedAuthorization(command);
+    if (authorization.present && !authorization.valid) {
+      return { reason: 'authorization token does not match the exact command', target: authorization.command };
+    }
+    const text = authorization.command;
+    // Remote commands commonly arrive as one quoted SSH argument. Normalize
+    // only quote characters for impact classification while keeping the exact
+    // original command in the approval message.
+    const effect = text.replace(/["']/gu, ' ');
+    // A bounded read or diagnosis remains automatic, including remote SSH
+    // reads. The high-impact checks below deliberately target effects, not
+    // command names: `ssh host uptime` and `curl URL` are ordinary work.
+    let reason = null;
+    if (BALANCED_IRREVERSIBLE_RE.test(effect) || balancedCriticalDelete(effect, cwd)) reason = 'irreversible or broad deletion/storage command';
+    else if (BALANCED_SERVICE_CHANGE_RE.test(effect)) reason = 'service, container, infrastructure, or cluster mutation';
+    else if (BALANCED_EXTERNAL_WRITE_RE.test(effect) || BALANCED_DESTRUCTIVE_GIT_RE.test(effect)) reason = 'external publication or destructive source-control operation';
+    else if (BALANCED_PRIVILEGE_RE.test(effect) || BALANCED_PROCESS_KILL_RE.test(effect) || BALANCED_SYSTEM_PACKAGE_REMOVE_RE.test(effect)) reason = 'privilege, process, or system-package change';
+    else if (BALANCED_SYSTEM_MUTATION_RE.test(effect)) reason = 'system/security configuration or privileged redirection';
+    else if (BALANCED_WIDE_SCAN_RE.test(effect)) reason = 'filesystem-wide scan can materially affect machine responsiveness';
+    else if (BALANCED_EXTREME_PARALLEL_RE.test(effect)) reason = 'extreme parallelism can materially affect CPU, memory, or disk I/O';
+    if (reason && !authorization.valid) return { reason, target: text };
+  }
+  return null;
+}
+
 export function hookDecision(payload, options = {}) {
   const tool = String(payload?.tool_name || payload?.tool || payload?.name || '');
   const cwd = payload?.cwd || payload?.projectDir || process.cwd();
   const input = payload?.tool_input || payload?.input || payload;
+  if (options.mode === 'balanced') {
+    const sensitive = balancedSensitiveFinding(tool, input, cwd);
+    return sensitive
+      ? { blocked: true, approval: true, executable: tool || 'tool', reason: sensitive.reason,
+        response: approvalResponse(sensitive.reason, sensitive.target) }
+      : null;
+  }
   const knownShellTool = KNOWN_SHELL_TOOL_RE.test(tool);
   const contextIndexTool = CONTEXT_INDEX_TOOL_RE.test(tool);
   const contextSearchTool = CONTEXT_SEARCH_TOOL_RE.test(tool);
@@ -3193,7 +3296,7 @@ function cliOptions(argv) {
     home: process.env.HOME, registryPath: undefined, registrySha256: undefined, runtimePath: undefined,
     trustedExecutables: [], trustedDigests: {}, trustedLauncher: undefined,
     trustedLauncherDigest: undefined, approvedNodeDigests: [], expectedPolicyDigest: undefined,
-    approvedMcpTools: [],
+    approvedMcpTools: [], mode: 'strict',
   };
   let host = null;
   const requireValue = (token, index) => {
@@ -3204,6 +3307,11 @@ function cliOptions(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (token === '--host') { host = requireValue(token, index); index += 1; }
+    else if (token === '--mode') {
+      const value = requireValue(token, index);
+      if (!['strict', 'balanced'].includes(value)) throw new Error('scan-guard mode must be strict or balanced');
+      options.mode = value; index += 1;
+    }
     else if (token === '--home') { options.home = requireValue(token, index); index += 1; }
     else if (token === '--registry') { options.registryPath = requireValue(token, index); index += 1; }
     else if (token === '--registry-sha256') { options.registrySha256 = requireValue(token, index); index += 1; }

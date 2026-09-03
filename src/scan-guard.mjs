@@ -14,11 +14,12 @@ import { atomicWriteFile } from './atomic-file.mjs';
 import { PacError } from './errors.mjs';
 import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mjs';
 
-// PAC owns a small, native PreToolUse gate. The gate is not a replacement for
-// the host sandbox or resource-guard: it prevents an unbounded raw discovery
-// command from reaching the shell and routes the agent to an observable,
-// capped provider. The policy copy executed by the host is staged under the
-// local agent-work runtime, never read from a live OneDrive checkout.
+// PAC owns a small, native PreToolUse impact gate. The host-facing policy is
+// deliberately balanced: ordinary work passes, while only high-impact effects
+// require a proactive review and exact-command authorization. It is not a
+// replacement for the host sandbox or resource-guard. The policy copy executed
+// by the host is staged under local agent-work runtime, never read from a live
+// OneDrive checkout.
 export { SCAN_GUARD_MARKER, SCAN_GUARD_POLICY_VERSION, inspectCommand, hookDecision };
 export const SCAN_GUARD_SCHEMA = 3;
 
@@ -514,7 +515,7 @@ function hookCommand(context, host, hookRuntime, registryInfo = null, profile = 
     // policy. The hook needs only a deterministic HOME/PATH/locale.
     ...(process.platform === 'win32' ? [] : [quotePosix('/usr/bin/env'), '-i',
       quotePosix(`HOME=${context.home}`), quotePosix('PATH=/usr/bin:/bin'), quotePosix('LANG=C'), quotePosix('LC_ALL=C')]),
-    quotePosix(launcher), quotePosix(hookRuntime), '--hook', '--host', host,
+    quotePosix(launcher), quotePosix(hookRuntime), '--hook', '--host', host, '--mode', 'balanced',
     '--home', quotePosix(context.home), '--runtime', quotePosix(path.dirname(hookRuntime)),
     '--registry', quotePosix(context.searchRegistryPath ||
       path.join(context.home, '.config/personal-agent-control/search-roots.json')),
