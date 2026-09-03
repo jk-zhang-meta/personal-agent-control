@@ -253,7 +253,8 @@ test('scan policy blocks raw discovery and accepts only parser-approved broker f
   assert.equal(inspectCommand('export FOO=bar', project, options), null);
   assert.equal(inspectCommand('which node', project, options), null);
   assert.equal(inspectCommand('type npm', project, options), null);
-  assert.equal(inspectCommand('ping -4 -c 3 -W 2 106.55.13.231', project, options), null,
+  const pingWait = process.platform === 'darwin' ? '2000' : '2';
+  assert.equal(inspectCommand(`ping -4 -c 3 -W ${pingWait} 106.55.13.231`, project, options), null,
     'a single bounded ping probe is low impact and should run without a broker prompt');
   assert.equal(inspectCommand("ssh root@68.77.201.6 'systemctl is-active xboard-node.service; systemctl --failed --type=service --no-legend'", project, options), null,
     'a bounded remote service-status query is read-only and should run automatically');
