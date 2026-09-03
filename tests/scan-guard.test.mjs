@@ -251,6 +251,19 @@ test('scan policy blocks raw discovery and accepts only parser-approved broker f
   assert.equal(inspectCommand('export FOO=bar', project, options), null);
   assert.equal(inspectCommand('which node', project, options), null);
   assert.equal(inspectCommand('type npm', project, options), null);
+  assert.equal(inspectCommand('ping -4 -c 3 -W 2 106.55.13.231', project, options), null,
+    'a single bounded ping probe is low impact and should run without a broker prompt');
+  assert.equal(inspectCommand("ssh root@68.77.201.6 'systemctl is-active xboard-node.service; systemctl --failed --type=service --no-legend'", project, options), null,
+    'a bounded remote service-status query is read-only and should run automatically');
+  assert.equal(inspectCommand("ssh root@68.77.201.6 'ss -lntup | grep -E \"1443|19445|55742|65530\"'", project, options), null,
+    'a bounded remote listener query may use one output-only grep');
+  for (const command of [
+    'ping -f 106.55.13.231',
+    'ping -c 100000 106.55.13.231',
+    "ssh root@68.77.201.6 'systemctl restart xboard-node.service'",
+    "ssh root@68.77.201.6 'cat /etc/shadow'",
+    "ssh root@68.77.201.6 'ss -lntup | sh'",
+  ]) assert.ok(inspectCommand(command, project, options), `high-impact remote action must still stop: ${command}`);
   assert.ok(inspectCommand('git commit -m "find"', project, options));
   assert.ok(inspectCommand('git commit -m "fix grep parser"', project, options));
   assert.ok(inspectCommand('git tag -m tree v1', project, options));
@@ -266,6 +279,20 @@ test('scan policy blocks raw discovery and accepts only parser-approved broker f
 
   const broker = resourceCommand(fixtureValue);
   assert.equal(inspectCommand(broker, project, options), null);
+  const codegraph = path.join(home,
+    '.local/share/mise/installs/npm-colbymchenry-codegraph/1.6.0/node_modules/.bin/codegraph');
+  await fs.mkdir(path.dirname(codegraph), { recursive: true, mode: 0o700 });
+  await fs.writeFile(codegraph, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+  assert.equal(inspectCommand(resourceCommand(fixtureValue,
+    [codegraph, 'status', '--json', project], [], 'cheap'), project, options), null);
+  assert.equal(inspectCommand(resourceCommand(fixtureValue,
+    [codegraph, 'index', '--quiet', project], ['--allow-expensive'], 'build'), project, options), null);
+  for (const inner of [
+    [codegraph, 'index', '--force', project],
+    [codegraph, 'index', '--quiet', home],
+    [codegraph, 'status', '--json', project, home],
+  ]) assert.ok(inspectCommand(resourceCommand(fixtureValue, inner,
+    ['--allow-expensive'], 'build'), project, options), inner.join(' '));
   assert.ok(inspectCommand(resourceCommand(fixtureValue, ['find', 'src', '-maxdepth', '2', '-type', 'f'], ['--no-systemd']), project, options));
   assert.ok(inspectCommand(resourceCommand(fixtureValue, ['node', '-e', "require('fs').readdirSync('/')"]), project, options));
   assert.ok(inspectCommand(resourceCommand(fixtureValue, ['cat', 'src/main.rs']), project, options));

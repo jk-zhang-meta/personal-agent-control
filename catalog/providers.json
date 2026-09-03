@@ -5,7 +5,7 @@
       "name": "codegraph",
       "kind": "mcp-server",
       "versionPolicy": "pinned",
-      "version": "1.5.0",
+      "version": "1.6.0",
       "command": "mise",
       "args": ["--cd", "{{PAC_ROOT}}", "exec", "--", "codegraph", "serve", "--mcp", "--no-watch"],
       "hosts": {

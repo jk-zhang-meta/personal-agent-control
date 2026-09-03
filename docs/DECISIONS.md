@@ -1154,3 +1154,78 @@ of cwd, and broker commands carry an authenticated cwd/root explicitly, but
 outer-isolate CPU/RAM and provider response bytes are unobservable here. A host
 upgrade that changes canonical tool names or payload schemas requires the
 native compatibility canaries before PAC can claim the new surface is covered.
+
+## ADR-022: Advance the reviewed CodeGraph provider pin to 1.6.0
+
+Decision date: 2026-09-03. Extends ADR-019 and the file-search/resource-budget
+contracts.
+
+### Context
+
+The installed provider was pinned to 1.5.0 while upstream 1.6.0 was available
+for both PAC platforms. The release fixes long-lived graph drift, force-kill
+WAL growth, stale-file slices, and name-lookup cost, but existing project
+indexes need one explicit rebuild to receive those fixes. Floating the provider
+at agent install time would break PAC reproducibility and hide that rebuild
+boundary.
+
+### Decision
+
+Pin `@colbymchenry/codegraph` 1.6.0 in the Core provider catalog, tool catalog,
+`mise.toml`, and cross-platform `mise.lock`. Keep the existing PAC-owned MCP
+adapter (`serve --mcp --no-watch`) and require a status check plus one bounded
+index refresh per registered machine-local project mirror after an upgrade.
+The canonical OneDrive source remains clean; `.codegraph` indexes and refresh
+receipts stay in the local runtime/mirror. Retain the previous mise install
+until both hosts pass provider/version and MCP smoke checks so rollback is a
+pin restore followed by a normal PAC apply.
+
+### Consequences
+
+New PAC deployments resolve the same reviewed provider on Linux and macOS, and
+the semantic search path gains the upstream 1.6.0 correctness and disk-safety
+fixes. A project that has not been refreshed can still be queried, but its
+status is an explicit stale/rebuild condition rather than an implicit claim of
+freshness. Release notes and the exact upstream commit are recorded at
+<https://github.com/colbymchenry/codegraph/releases/tag/v1.6.0>.
+
+## ADR-023: Gate commands by material impact, not novelty
+
+Decision date: 2026-09-03. Refines ADR-021 after routine remote diagnostics
+were blocked during an active incident.
+
+### Context
+
+The fail-closed shell grammar treated every SSH command as an opaque remote
+launcher and every `-c` option as possible inline code. Consequently a capped
+`ping -c` and read-only `systemctl`/`ss` checks were rejected even though their
+resource use and side effects were narrow and observable. That false-positive
+rate interrupted the user's work and caused agents to hand executable checks
+back to the user.
+
+### Decision
+
+Use impact classes. Low-impact, read-only, statically bounded diagnostics run
+without confirmation. The first network forms are one ping target with at most
+five requests and a short wait, plus one SSH destination whose remote grammar
+is limited to service activity/failed-unit queries, listener inspection, and
+one output-only `grep`. Remote restart/write commands, shell substitution,
+redirection, arbitrary pipelines, credential reads, flood/count widening, and
+multiple targets remain outside that route. Moderate local work runs through
+the applicable resource profile without asking. Materially destructive,
+external-write, service-interrupting, scope-expanding, or heavy work requires
+an informed user confirmation describing target, reason, benefit, downside,
+rollback, and narrower alternative.
+
+CodeGraph receives a separate exact route: the pinned mise 1.6.0 executable,
+one registered host-local cwd, `status --json` under `cheap`, or
+`init --yes`/`index --quiet`/`sync --quiet` under `build`. It cannot use
+`--force`, cross a project boundary, or index OneDrive.
+
+### Consequences
+
+Routine incident diagnosis is autonomous again while the commands that can
+make a machine lag or alter remote state remain visible. The low-impact grammar
+is intentionally small and regression-tested; new routine diagnostics are
+added from observed false positives, not by disabling the hook or granting an
+unknown binary a permanent wildcard.

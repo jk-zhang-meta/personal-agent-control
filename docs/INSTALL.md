@@ -177,6 +177,12 @@ any project working directory and avoids relying on a machine-specific
 `/usr/local` wrapper or an unrelated global installation. `--no-watch` is
 intentional: PAC cannot safely assume that a WSL `/mnt` watcher is cheap, and
 the MCP caller must provide an explicit project path for a semantic query.
+The reviewed CodeGraph pin is 1.6.0. After a pin advance, check each registered
+project with `codegraph status` and run one bounded `codegraph index` when the
+status reports that a rebuild is required; 1.6.0 includes graph-drift and WAL
+recovery fixes that are only present after re-indexing. Put the project copy and
+`.codegraph` data on the machine-local runtime/mirror, never in the canonical
+OneDrive checkout, and record the source commit used for the refresh.
 An inactive host is outside the active Plugin audit: PAC removes only Plugins
 it previously owned there and preserves unrelated native Plugins and their
 marketplaces. Re-enabling that host restores strict `UNMANAGED` checking.

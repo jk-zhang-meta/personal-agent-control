@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 // not walk a workspace while deciding whether a command may run.
 export const SCAN_GUARD_POLICY_VERSION = 2;
 export const SCAN_GUARD_MARKER = '--pac-scan-guard-v2';
+const CODEGRAPH_VERSION = '1.6.0';
 
 // Normalize the common native/Windows spellings and the small set of tools
 // that are functionally equivalent to rg/find.  The hook must not rely on the
@@ -827,6 +828,171 @@ function segmentInfo(tokens) {
   return { ...unwrapped, raw, executable: commandName(raw) };
 }
 
+function boundedPingQuery(tokens) {
+  const info = segmentInfo(tokens);
+  if (info.index !== 0 || info.wrapped || info.raw !== 'ping') return false;
+  const seen = new Set();
+  let count = null;
+  let wait = null;
+  const targets = [];
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = String(tokens[index]);
+    if (['-4', '-6', '-n', '-q'].includes(token)) {
+      if (seen.has(token) || (['-4', '-6'].includes(token) && (seen.has('-4') || seen.has('-6')))) return false;
+      seen.add(token);
+      continue;
+    }
+    if (token === '-c' || token === '-W') {
+      if (seen.has(token)) return false;
+      const value = String(tokens[++index] || '');
+      if (!/^\d+$/u.test(value)) return false;
+      seen.add(token);
+      if (token === '-c') count = Number(value);
+      else wait = Number(value);
+      continue;
+    }
+    if (token.startsWith('-')) return false;
+    targets.push(token);
+  }
+  const maxWait = process.platform === 'darwin' ? 5000 : 5;
+  const minWait = process.platform === 'darwin' ? 100 : 1;
+  if (!Number.isInteger(count) || count < 1 || count > 5 ||
+      !Number.isInteger(wait) || wait < minWait || wait > maxWait || targets.length !== 1) return false;
+  const target = targets[0];
+  if (target.length > 253 || target.includes('\0') || target.startsWith('-')) return false;
+  return target.split('.').every((label) => label.length >= 1 && label.length <= 63 &&
+    /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/u.test(label)) ||
+    /^[0-9A-Fa-f:]+$/u.test(target);
+}
+
+function safeRemoteService(value) {
+  return /^[A-Za-z0-9_.@:-]{1,128}\.(?:service|socket|timer|target)$/u.test(String(value));
+}
+
+function readOnlyRemoteSegment(segment, previous = null) {
+  const info = segmentInfo(segment.tokens);
+  if (info.index !== 0 || info.wrapped || info.raw !== info.executable) return false;
+  const args = segment.tokens.slice(1).map(String);
+  if (info.executable === 'systemctl') {
+    if (args.includes('--failed')) {
+      return args.length >= 1 && args.every((token) =>
+        ['--failed', '--type=service', '--no-legend', '--no-pager', '--plain'].includes(token));
+    }
+    const action = args[0];
+    if (!['is-active', 'is-failed'].includes(action)) return false;
+    const operands = args.slice(1).filter((token) => token !== '--quiet');
+    return operands.length >= 1 && operands.length <= 8 && operands.every(safeRemoteService) &&
+      args.filter((token) => token === '--quiet').length <= 1;
+  }
+  if (info.executable === 'ss') {
+    return args.length === 1 && /^-[lntup46H]+$/u.test(args[0]) &&
+      args[0].includes('l') && args[0].includes('n') && /[tu]/u.test(args[0]);
+  }
+  if (info.executable === 'grep') {
+    if (!previous || commandName(previous.tokens[0]) !== 'ss') return false;
+    return args.length === 2 && ['-E', '-F'].includes(args[0]) &&
+      args[1].length >= 1 && args[1].length <= 256 && !/[\0\r\n]/u.test(args[1]);
+  }
+  return ['uptime', 'date', 'whoami', 'hostname'].includes(info.executable) && args.length === 0;
+}
+
+function boundedSshReadQuery(tokens) {
+  const info = segmentInfo(tokens);
+  if (info.index !== 0 || info.wrapped || info.raw !== 'ssh') return false;
+  let index = 1;
+  const seen = new Set();
+  while (index < tokens.length && String(tokens[index]).startsWith('-')) {
+    const token = String(tokens[index]);
+    if (['-4', '-6', '-T', '-n'].includes(token)) {
+      if (seen.has(token) || (['-4', '-6'].includes(token) && (seen.has('-4') || seen.has('-6')))) return false;
+      seen.add(token); index += 1; continue;
+    }
+    if (token === '-p') {
+      if (seen.has(token) || !/^\d+$/u.test(String(tokens[index + 1] || '')) ||
+          Number(tokens[index + 1]) < 1 || Number(tokens[index + 1]) > 65535) return false;
+      seen.add(token); index += 2; continue;
+    }
+    if (token === '-o') {
+      const option = String(tokens[index + 1] || '');
+      if (!/^(?:BatchMode=(?:yes|no)|ConnectTimeout=(?:[1-9]|[12]\d|30)|ServerAliveInterval=(?:[1-9]|[1-5]\d|60))$/u.test(option) || seen.has(option)) return false;
+      seen.add(option); index += 2; continue;
+    }
+    return false;
+  }
+  const destination = String(tokens[index++] || '');
+  const remote = String(tokens[index++] || '');
+  if (index !== tokens.length || destination.length > 320 || remote.length > 2048 ||
+      !/^(?:[A-Za-z_][A-Za-z0-9_-]{0,31}@)?[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$/u.test(destination)) return false;
+  const lexical = tokenize(remote);
+  if (lexical.unsafeSyntax || lexical.unclosedQuote || SUBSTITUTION_RE.test(remote) ||
+      PARAM_EXPANSION_RE.test(remote) || lexical.tokens.some((token) =>
+        ['&&', '||', '&', '(', ')', '>', '>>', '<', '<<', '\n'].includes(token))) return false;
+  const segments = commandSegments(lexical.tokens);
+  if (!segments.length || segments.length > 4) return false;
+  let pipeCount = 0;
+  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
+    const segment = segments[segmentIndex];
+    if (segment.preceding === '|') pipeCount += 1;
+    else if (segmentIndex > 0 && segment.preceding !== ';') return false;
+    const previous = segment.preceding === '|' ? segments[segmentIndex - 1] : null;
+    if (!readOnlyRemoteSegment(segment, previous)) return false;
+  }
+  return pipeCount <= 1;
+}
+
+function lowImpactNetworkQuery(tokens) {
+  return boundedPingQuery(tokens) || boundedSshReadQuery(tokens);
+}
+
+function codeGraphResourceRoute(tokens, profile, cwdInfo, home) {
+  const info = segmentInfo(tokens);
+  if (info.executable !== 'codegraph') return null;
+  if (info.index !== 0 || info.wrapped || !path.isAbsolute(info.raw)) {
+    return routeBlock(`CodeGraph must use the pinned mise ${CODEGRAPH_VERSION} executable`);
+  }
+  const expected = path.join(path.resolve(home),
+    `.local/share/mise/installs/npm-colbymchenry-codegraph/${CODEGRAPH_VERSION}/node_modules/.bin/codegraph`);
+  if (path.resolve(info.raw) !== expected) {
+    return routeBlock(`CodeGraph must use the pinned mise ${CODEGRAPH_VERSION} executable`);
+  }
+  try {
+    if (fs.realpathSync(expected) !== expected) return routeBlock('CodeGraph executable may not traverse a symlink');
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+    let cursor = path.resolve(home);
+    for (const component of path.relative(cursor, expected).split(path.sep).filter(Boolean)) {
+      cursor = path.join(cursor, component);
+      const stat = fs.lstatSync(cursor);
+      if (stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+          (uid !== null && stat.uid !== uid && stat.uid !== 0)) {
+        return routeBlock('CodeGraph executable path is not owner-controlled');
+      }
+      if (cursor === expected && (!stat.isFile() || (stat.mode & 0o111) === 0)) {
+        return routeBlock('CodeGraph executable is not a regular executable file');
+      }
+    }
+  } catch {
+    return routeBlock('CodeGraph executable is unavailable');
+  }
+  if (!cwdInfo || cwdInfo.synced) return routeBlock('CodeGraph may index only a registered host-local project');
+  const action = String(tokens[1] || '');
+  const target = String(tokens.at(-1) || '');
+  if (!path.isAbsolute(target) || path.resolve(target) !== cwdInfo.absolute) {
+    return routeBlock('CodeGraph must name the exact current registered project path');
+  }
+  const expectedArgs = action === 'status' ? [info.raw, 'status', '--json', target]
+    : action === 'index' ? [info.raw, 'index', '--quiet', target]
+      : action === 'sync' ? [info.raw, 'sync', '--quiet', target]
+        : action === 'init' ? [info.raw, 'init', '--yes', target] : null;
+  if (!expectedArgs || expectedArgs.length !== tokens.length ||
+      expectedArgs.some((token, index) => token !== String(tokens[index]))) {
+    return routeBlock('CodeGraph permits only status --json, index/sync --quiet, or init --yes for the exact cwd');
+  }
+  if ((action === 'status' && profile !== 'cheap') || (action !== 'status' && profile !== 'build')) {
+    return routeBlock(`CodeGraph ${action} must use the ${action === 'status' ? 'cheap' : 'build'} profile`);
+  }
+  return routeAllow();
+}
+
 function codeTraversalMentioned(text) {
   const value = String(text || '');
   return /\bos\s*\.\s*(?:walk|listdir|scandir)|\bpathlib\s*\.\s*Path\s*\([^)]*\)\s*\.\s*(?:rglob|glob)|\b(?:fs|fss?)\s*\.\s*(?:readdir|readdirSync|opendir|opendirSync|glob|globSync)|\bDirectory\s*\.\s*(?:GetFiles|EnumerateFiles)|\b(?:Get-ChildItem|gci)\b/iu.test(value) ||
@@ -1640,6 +1806,10 @@ function parseResourceRoute(args, options, cwd) {
   const innerHasKnownScan = commandMentionsScan(innerSegment.tokens);
   const innerIsLocator = trustedHelperTarget(innerSegment.tokens, options, 'locator.mjs');
   const innerHasPotentialScan = potentialScanSegment(innerSegment.tokens);
+  const codeGraphRoute = codeGraphResourceRoute(innerSegment.tokens, profile,
+    wrapperCwdInfo, options.home || process.env.HOME);
+  if (codeGraphRoute?.blocked) return codeGraphRoute;
+  if (codeGraphRoute?.allow) return codeGraphRoute;
   if (rootEntry.synced && !innerIsLocator) {
     return routeBlock('OneDrive/Windows-backed roots may use only the bounded local locator index, not direct scans or workloads');
   }
@@ -2020,6 +2190,7 @@ function inspectSegment(segment, cwdInfo, options) {
   if (route?.blocked) return route;
   const { index, wrapped, raw, executable } = segmentInfo(tokens);
   if (!executable) return null;
+  if (lowImpactNetworkQuery(tokens)) return null;
   // A bare command name is resolved only after the host's trusted PATH is
   // established.  Absolute/relative executable paths on the shell surface
   // would let a project-provided `/tmp/echo`, interpreter, or wrapper bypass
@@ -2221,6 +2392,7 @@ export function inspectCommand(command, cwd = process.cwd(), options = {}) {
     const info = segmentInfo(tokens);
     const args = tokens.slice(info.index + 1);
     if (!info.executable) return null;
+    if (lowImpactNetworkQuery(tokens)) return null;
     if (['cd', 'test', '['].includes(info.executable) && args.some((token) => {
       const value = String(token);
       return path.isAbsolute(value) || value === '~' || value.startsWith('~/') ||
