@@ -167,6 +167,14 @@ An earlier split candidate passed `mise run check`, but that run predates the
 final editable-workspace, Profile APM, private-bootstrap, and context-routing
 refinements. It is supporting evidence, not final release acceptance.
 
+The native Plugin boundary regression was exercised on 2026-09-05 in the
+isolated installer fixture: Codex rows explicitly marked
+`INSTALLED_BY_DEFAULT` + remote + `openai-curated-remote` survive an empty PAC
+catalog; an unmarked row from that marketplace, a Claude row with the same
+marker, malformed inventory, and a catalog-managed vendor marketplace all fail
+closed. This exception preserves host-owned defaults and does not make them
+PAC-owned.
+
 ## Required final gate
 
 Before release or live installation of a new revision:

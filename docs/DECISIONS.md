@@ -1319,3 +1319,35 @@ status still validates only the currently owned revision, and a failed fresh
 apply removes its prospective file through rollback. Small immutable policy
 files may accumulate until a deliberate post-session cleanup; that storage
 cost is preferred to silently breaking a live fail-closed control path.
+
+## ADR-026: Preserve host-native default Plugins outside PAC ownership
+
+Decision date: 2026-09-05. Refines the Plugin inventory boundary used by
+`scripts/reconcile-plugins.sh`.
+
+### Context
+
+Recent Codex releases report vendor Plugins installed by the host itself under
+`openai-curated-remote`. They are enabled native capabilities, not entries in
+PAC's Git-pinned Plugin catalog. Treating every installed ID as PAC-owned made
+an otherwise valid Profile update fail with `PLUGIN_DRIFT`, while removing the
+rows would unnecessarily disable host functionality.
+
+### Decision
+
+The inventory check ignores only a Codex row that simultaneously has
+`installPolicy=INSTALLED_BY_DEFAULT`, a remote source, and the exact
+`openai-curated-remote` marketplace that is not managed by the current catalog
+or prior PAC ownership. All other unmanaged IDs, including manually installed
+Plugins from that marketplace, remain an error. If PAC later declares that
+marketplace, the exception is disabled and normal pinned source/version checks
+apply. Claude's inventory behavior is unchanged because it does not expose the
+same host policy marker.
+
+### Consequences
+
+Native defaults remain enabled and no longer block routine Profile
+reconciliation. The exception is deliberately narrow and based on the host's
+explicit installation policy; it does not grant a wildcard marketplace or
+allow arbitrary user Plugins. A future host schema change must add a targeted
+fixture before broadening the rule.

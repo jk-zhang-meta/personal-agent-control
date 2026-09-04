@@ -712,6 +712,139 @@ chmod 755 "$native_bin"/*
 empty_catalog="$tmp/empty-plugins.tsv"
 sed -n '1p' "$source/catalog/plugins.tsv" > "$empty_catalog"
 
+# Host-provided Codex Plugins marked INSTALLED_BY_DEFAULT are outside PAC's
+# ownership boundary. They must survive an empty PAC catalog without turning
+# every ordinary Profile update into Plugin drift, while an unmarked Plugin
+# from the same marketplace remains subject to the strict unmanaged check.
+native_default_home="$tmp/native-default-plugin-home"
+mkdir -p "$native_default_home/.test-native" \
+    "$native_default_home/.local/state/personal-agent-control"
+cat > "$native_default_home/.test-native/plugins.json" <<'JSON'
+[
+  {
+    "pluginId":"plugin-management@openai-curated-remote",
+    "marketplaceName":"openai-curated-remote",
+    "installPolicy":"INSTALLED_BY_DEFAULT",
+    "source":{"source":"remote"}
+  },
+  {
+    "pluginId":"openai-templates@openai-curated-remote",
+    "marketplaceName":"openai-curated-remote",
+    "installPolicy":"INSTALLED_BY_DEFAULT",
+    "source":{"source":"remote"}
+  },
+  {
+    "pluginId":"manual@openai-curated-remote",
+    "marketplaceName":"openai-curated-remote",
+    "source":{"source":"remote"}
+  }
+]
+JSON
+printf '[]\n' > "$native_default_home/.test-native/marketplaces.json"
+if PATH="$native_bin:$PATH" HOME="$native_default_home" \
+    "$source/scripts/reconcile-plugins.sh" preflight --home "$native_default_home" \
+    --agents codex --catalog "$empty_catalog" > "$tmp/native-default.out" 2>&1; then
+    echo "unmarked Plugin from the vendor marketplace was accepted" >&2
+    exit 1
+fi
+grep -q '^UNMANAGED: installed codex Plugin(s) are absent from catalog/plugins.tsv:' \
+    "$tmp/native-default.out"
+grep -q 'manual@openai-curated-remote' "$tmp/native-default.out"
+
+node - "$native_default_home/.test-native/plugins.json" <<'NODE'
+const fs = require('node:fs');
+const plugins = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+if (plugins.length !== 3) process.exit(1);
+NODE
+node - "$native_default_home/.test-native/plugins.json" <<'NODE'
+const fs = require('node:fs');
+const file = process.argv[2];
+const plugins = JSON.parse(fs.readFileSync(file, 'utf8'))
+  .filter((entry) => entry.pluginId !== 'manual@openai-curated-remote');
+fs.writeFileSync(file, `${JSON.stringify(plugins, null, 2)}\n`);
+NODE
+printf '# plugin\tmarketplace\ttargets\n' \
+    > "$native_default_home/.local/state/personal-agent-control/owned-plugins.tsv"
+PATH="$native_bin:$PATH" HOME="$native_default_home" \
+    "$source/scripts/reconcile-plugins.sh" preflight --home "$native_default_home" \
+    --agents codex --catalog "$empty_catalog" >/dev/null
+
+# Taking ownership of the vendor marketplace in a PAC catalog disables the
+# exception immediately; a default-looking row must then pass the normal
+# managed-marketplace inventory check.
+managed_default_home="$tmp/managed-default-plugin-home"
+managed_default_source="$managed_default_home/.local/share/agent-plugins/sources/openai-curated-remote"
+mkdir -p "$managed_default_home/.test-native" \
+    "$managed_default_home/.local/state/personal-agent-control" \
+    "$managed_default_source/.git" \
+    "$managed_default_source/plugins/managed-plugin/skills/fixture-skill"
+printf '%s\n' '---' 'name: fixture-skill' \
+    'description: managed vendor fixture.' '---' \
+    > "$managed_default_source/plugins/managed-plugin/skills/fixture-skill/SKILL.md"
+managed_default_catalog="$tmp/managed-default-plugins.tsv"
+sed -n '1p' "$source/catalog/plugins.tsv" > "$managed_default_catalog"
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    managed-plugin openai-curated-remote github-commit \
+    https://example.invalid/plugin.git - \
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb 1.0.0 codex fixture-skill MIT common \
+    >> "$managed_default_catalog"
+printf '%s\n' '[{"pluginId":"plugin-management@openai-curated-remote","marketplaceName":"openai-curated-remote","installPolicy":"INSTALLED_BY_DEFAULT","source":{"source":"remote"}}]' \
+    > "$managed_default_home/.test-native/plugins.json"
+printf '%s\n' "[{\"name\":\"openai-curated-remote\",\"marketplaceSource\":{\"sourceType\":\"local\",\"source\":\"$managed_default_source\"}}]" \
+    > "$managed_default_home/.test-native/marketplaces.json"
+printf '# plugin\tmarketplace\ttargets\n' \
+    > "$managed_default_home/.local/state/personal-agent-control/owned-plugins.tsv"
+if PATH="$native_bin:$PATH" HOME="$managed_default_home" \
+    PAC_TEST_NATIVE_PLUGIN_SOURCE=https://example.invalid/plugin.git \
+    PAC_TEST_NATIVE_PLUGIN_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    PAC_TEST_NATIVE_PLUGIN_TREE=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+    "$source/scripts/reconcile-plugins.sh" preflight --home "$managed_default_home" \
+    --agents codex --catalog "$managed_default_catalog" > "$tmp/managed-default.out" 2>&1; then
+    echo "default Plugin bypassed a PAC-managed marketplace" >&2
+    exit 1
+fi
+grep -q '^UNMANAGED: installed codex Plugin(s) are absent from catalog/plugins.tsv:' \
+    "$tmp/managed-default.out"
+
+# The host-native exception is Codex-specific. A Claude inventory row carrying
+# a similarly named marker remains unmanaged and therefore fails closed.
+claude_default_home="$tmp/claude-default-plugin-home"
+mkdir -p "$claude_default_home/.test-native-claude" \
+    "$claude_default_home/.local/state/personal-agent-control"
+printf '%s\n' '[{"id":"plugin-management@openai-curated-remote","installPolicy":"INSTALLED_BY_DEFAULT"}]' \
+    > "$claude_default_home/.test-native-claude/plugins.json"
+printf '[]\n' > "$claude_default_home/.test-native-claude/marketplaces.json"
+printf '# plugin\tmarketplace\ttargets\n' \
+    > "$claude_default_home/.local/state/personal-agent-control/owned-plugins.tsv"
+if PATH="$native_bin:$PATH" HOME="$claude_default_home" \
+    "$source/scripts/reconcile-plugins.sh" preflight --home "$claude_default_home" \
+    --agents claude --catalog "$empty_catalog" > "$tmp/claude-default.out" 2>&1; then
+    echo "Claude default-like Plugin was accepted" >&2
+    exit 1
+fi
+grep -q '^UNMANAGED: installed claude Plugin(s) are absent from catalog/plugins.tsv:' \
+    "$tmp/claude-default.out"
+
+# Malformed native inventory is never converted into an opaque "undefined"
+# Plugin ID; it fails closed with a useful diagnostic before ownership changes.
+invalid_inventory_home="$tmp/invalid-plugin-inventory-home"
+mkdir -p "$invalid_inventory_home/.test-native" \
+    "$invalid_inventory_home/.local/state/personal-agent-control"
+printf '%s\n' '[{"marketplaceName":"openai-curated-remote"}]' \
+    > "$invalid_inventory_home/.test-native/plugins.json"
+printf '[]\n' > "$invalid_inventory_home/.test-native/marketplaces.json"
+printf '# plugin\tmarketplace\ttargets\n' \
+    > "$invalid_inventory_home/.local/state/personal-agent-control/owned-plugins.tsv"
+if PATH="$native_bin:$PATH" HOME="$invalid_inventory_home" \
+    "$source/scripts/reconcile-plugins.sh" preflight --home "$invalid_inventory_home" \
+    --agents codex --catalog "$empty_catalog" > "$tmp/invalid-inventory.out" 2>&1; then
+    echo "malformed Plugin inventory was accepted" >&2
+    exit 1
+fi
+grep -q '^invalid codex Plugin inventory row: missing id$' \
+    "$tmp/invalid-inventory.out"
+
 # Ownership state is untrusted input: a forged marketplace path must be
 # rejected before it can escape the source directory and delete HOME data.
 forged_home="$tmp/forged-plugin-ownership"
