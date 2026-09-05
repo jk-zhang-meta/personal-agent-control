@@ -305,7 +305,7 @@ pac profile status
 pac profile publish OWNER/REPOSITORY
 ```
 
-`init` creates a valid Profile v3 Git workspace at
+`init` creates a valid Profile Git workspace at
 `~/.local/share/personal-agent-profile-workspaces/default` unless `PATH` is
 given. An existing path must already be a real Git worktree with a valid
 Profile. If a workspace is already configured, `init` reuses it rather than

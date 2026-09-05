@@ -224,7 +224,7 @@ risks rather than weakening a fail-closed check.
 
 ## Map
 
-See context/project-agent-md-v1.md for the project-contract protocol and
+See context/project-agent-md.md for the project-contract protocol and
 README.md for the Profile surface.
 `,
       { flag: 'wx', mode: 0o600 },

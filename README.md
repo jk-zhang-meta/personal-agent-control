@@ -5,7 +5,7 @@ layers:
 
 - the **public Core** contains the common policy, host adapters, public
   capabilities, provenance, and frozen dependency declarations;
-- one optional **private Profile v3** contains personal bootstrap text,
+- one optional **private Profile** contains personal bootstrap text,
   on-demand context, embedded or APM-managed Skills, Plugin overrides, and
   portable provider selections; and
 - the **derived Runtime** materializes the selected Core revision plus, when
@@ -53,7 +53,7 @@ It names no installed capability. Ordinary Skills route through
 concise native descriptions, while thin domain routes may compose leaves that
 repeated evaluation shows often apply together. Future specialist packs are
 enabled at project or Profile scope instead of expanding the always-on kernel.
-Profile v3 may declare one short `bootstrap.md`, portable providers, and
+The Profile may declare one short `bootstrap.md`, portable providers, and
 wildcard Skill targets; the Core kernel reads only its
 PAC-owned projection. A Profile cannot add top-level Hooks, scripts, or Rulesync
 rules, so it cannot replace the common operating contract.
@@ -116,7 +116,7 @@ sh -c "$(curl -fsLS https://get.chezmoi.io)" -- \
 ```
 
 No private repository is required beforehand. After installing Core, PAC can
-create a valid local Profile v3 workspace and publish it as a private GitHub
+create a valid local Profile workspace and publish it as a private GitHub
 repository (the second command requires an authenticated GitHub CLI):
 
 ```sh
@@ -307,7 +307,7 @@ pac profile publish YOUR_ACCOUNT/personal-agent-profile
 pac profile status
 ```
 
-`init` creates the bounded Profile v3 workspace and a local Git commit.
+`init` creates the bounded Profile workspace and a local Git commit.
 `publish` creates a **private** GitHub repository through the authenticated
 `gh` account, pushes the workspace, and activates its exact commit. It never
 changes Core or makes the Profile public.
@@ -513,10 +513,10 @@ scripts/, tests/       compiler, doctor, checks, and isolated acceptance test
 docs/                  architecture, decisions, hosts, research, and install
 ```
 
-Profile v3 is a separate repository with a deliberately bounded surface:
+The Profile is a separate repository with a deliberately bounded surface:
 
 ```text
-pac-profile.json                         # v3 manifest
+pac-profile.json                         # Profile manifest
 bootstrap.md                             # optional short always-on private text
 context/**/*.md                          # optional on-demand private context
 skills/<name>/SKILL.md                   # optional embedded, digest-locked Skills
