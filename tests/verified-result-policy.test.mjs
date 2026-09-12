@@ -7,11 +7,12 @@ import { fileURLToPath } from 'node:url';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const read = (relative) => readFileSync(join(root, relative), 'utf8');
 
-test('the global kernel keeps one critical path inline and completes on verified results', () => {
+test('the global kernel permits bounded delegation and completes on verified results', () => {
   const kernel = read('.rulesync/rules/00-kernel.md');
   const compact = kernel.replace(/\s+/gu, ' ');
 
-  assert.match(kernel, /Keep one critical path inline/u);
+  assert.match(kernel, /Proactively delegate bounded, verifiable work across all workflows/u);
+  assert.match(kernel, /including sequential work where supported/u);
   assert.match(kernel, /ordinary serial work does not require a graph/u);
   assert.doesNotMatch(kernel, /use the host's native graph for dependencies/u);
   assert.match(compact,

@@ -78,6 +78,9 @@ the adapter boundary; a Profile using `targets: ["*"]` and portable providers
 automatically follows that set. An untested target is never advertised as
 supported merely because a generator knows its filename.
 
+See [global delegation policy](docs/DELEGATION.md) for proactive subagent
+selection, Profile model preferences, and acceptance limits.
+
 ## Install
 
 Prerequisites are Git, curl, and tar. SSH or another Git credential mechanism is

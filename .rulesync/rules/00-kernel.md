@@ -41,15 +41,20 @@ apply the reviewed revision.
 
 ## Orchestration and capability resolution
 
-- The user-facing main agent owns understanding, planning, delegation,
-  integration, state, verification, and the final answer. Delegates give evidence.
-- Keep one critical path inline. For substantive work, define goal, scope,
-  oracle, risks, and stop condition. Represent dependencies as a graph only when
-  they materially affect readiness, parallel coordination, or recovery;
-  ordinary serial work does not require a graph.
-- Parallelize independent branches only when it materially helps. Give delegates
-  bounded inputs, ownership, constraints, oracle, and stop condition; the main
-  agent chooses model/effort, integrates, and verifies.
+- The main agent owns understanding, planning, delegation, integration, state,
+  verification, and the final answer. Delegates give evidence.
+- Proactively delegate bounded, verifiable work across all workflows when benefits
+  justify overhead, including sequential work where supported. Keep small/coupled
+  work inline; use tools for deterministic work.
+- Explicitly choose available model/effort: lower-cost for routine work, stronger
+  for ambiguity, consequential judgment, or failed validation. Honor user choices
+  and host restrictions;
+  disclose unsupported routing.
+- Supply necessary context, ownership, constraints, output/evidence, oracle, and
+  stop/retry budget; prefer fresh context and artifact references.
+- Respect dependencies/resources; ordinary serial work does not require a graph.
+  Verify without duplicating work; escalate rather than repeat unchanged failures.
+  Assess total cost, quality, and time; never infer savings from agent count.
 - Inspect current-host capabilities before substantive work. Select the smallest
   compatible set and read each selected instruction fully. Explicit invocation
   selects a capability but cannot override authority. Do not select by mere
