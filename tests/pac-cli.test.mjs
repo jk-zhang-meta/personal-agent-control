@@ -12,7 +12,9 @@ import { readLock, readManifestDependencies, renderManifest, verifyRuntimeConten
 import {
   atomicWrite, reconcileProjections, createBackup, augmentBackup,
 } from '../src/state.mjs';
-import { applyMaterializerExceptions, MATERIALIZER_EXCEPTIONS } from '../src/materializers.mjs';
+import {
+  applyMaterializerExceptions, MATERIALIZER_EXCEPTIONS, selectedMaterializerExceptions,
+} from '../src/materializers.mjs';
 import { reconcilePlugins } from '../src/plugins.mjs';
 import { hashDirectory, loadActiveProfile } from '../src/profile.mjs';
 import { hostAdapterStatus, reconcileHostAdapters } from '../src/host-adapters.mjs';
@@ -358,7 +360,7 @@ cp -R "$2"/. "$target"/
 
 async function makeProfileRepository({
   enabledPlugins = [], catalogPlugins = [], skillTargets = ['codex', 'claude'],
-  bootstrap = null, scanGuard = false,
+  bootstrap = null, scanGuard = false, materializer = null,
 } = {}) {
   const root = await temporary('pac-profile-repository-');
   const skill = path.join(root, 'skills/profile-fixture');
@@ -408,6 +410,7 @@ async function makeProfileRepository({
     delivery: 'vercel-skills-exception',
     visibility: 'private',
   }];
+  if (materializer) Object.assign(capabilities[1], materializer);
   for (const entry of scanSkills) {
     capabilities.push({
       id: `skill:${entry.name}`,
@@ -1106,6 +1109,33 @@ cp -R "$2"/. "$HOME/.agents/skills/ppt-master/"
   assert.doesNotMatch(invocation, /v4\.3\.0/u);
 });
 
+test('ppt-master materializer keeps the reviewed default unless the Profile supplies an explicit pin', async () => {
+  const home = await temporary('pac-materializer-profile-');
+  const profile = path.join(home, 'profile');
+  const capabilities = path.join(profile, 'catalog/capabilities.jsonl');
+  const base = {
+    id: 'skill:ppt-master',
+    memberships: ['kind.skill'],
+    targets: ['codex', 'claude'],
+    delivery: 'vercel-skills-exception',
+    visibility: 'common',
+  };
+  await fs.mkdir(path.dirname(capabilities), { recursive: true });
+  await fs.writeFile(capabilities, `${JSON.stringify(base)}\n`);
+  let selected = await selectedMaterializerExceptions({ catalog: { capabilities } });
+  assert.deepEqual(selected, MATERIALIZER_EXCEPTIONS);
+
+  const commit = '5e8746b08de2d625c371acfa413e17fd27a067f5';
+  const digest = 'a'.repeat(64);
+  await fs.writeFile(capabilities, `${JSON.stringify({
+    ...base, source: 'hugohe3/ppt-master', ref: 'v6.3.2', commit, contentSha256: digest,
+  })}\n`);
+  selected = await selectedMaterializerExceptions({ catalog: { capabilities } });
+  assert.equal(selected[0].commit, commit);
+  assert.equal(selected[0].ref, 'v6.3.2');
+  assert.equal(selected[0].contentSha256, digest);
+});
+
 test('launcher help succeeds without Node or mise shims on PATH when PAC_NODE is explicit', () => {
   const emptyPath = path.join(os.tmpdir(), `pac-empty-path-${process.pid}`);
   const result = spawnSync(path.join(repo, 'bin/pac'), ['--help'], {
@@ -1174,6 +1204,38 @@ test('Profile set, cached replay, status, and remove converge through the PAC tr
   assert.equal(await exists(path.join(home, '.agents/skills/profile-fixture')), false);
   assert.equal(await exists(path.join(home, '.local/share/agent-skills/.agents/skills/profile-fixture')), false);
   assert.equal(await exists(path.join(home, '.config/personal-agent-control/profile.json')), false);
+});
+
+test('Profile ppt-master replaces only an unchanged prior explicit pin', { timeout: 120_000 }, async () => {
+  const { root, home, env } = await makeRealLifecycleFixture();
+  delete env.PAC_TEST_PPT_CONTENT_SHA256;
+  const source = env.PAC_TEST_PPT_SOURCE;
+  const target = path.join(home, '.local/share/agent-skills/.agents/skills/ppt-master/SKILL.md');
+  const version = async (label, commit) => {
+    await fs.writeFile(path.join(source, 'SKILL.md'), `---\nname: ppt-master\ndescription: Version ${label}.\n---\n`);
+    return await makeProfileRepository({ materializer: {
+      commit: commit.repeat(40), ref: label, contentSha256: await directoryDigest(source),
+    } });
+  };
+  const attach = (profile) => runJsonPac(root, home, [
+    'profile', 'set', profile.root, 'main', profile.commit,
+  ], env, 'codex');
+
+  const a = await version('A', 'a');
+  let result = attach(a);
+  assert.equal(result.status, 0, result.stdout || result.stderr);
+  assert.match(await fs.readFile(target, 'utf8'), /Version A/);
+
+  const b = await version('B', 'b');
+  result = attach(b);
+  assert.equal(result.status, 0, result.stdout || result.stderr);
+  assert.match(await fs.readFile(target, 'utf8'), /Version B/);
+
+  const c = await version('C', 'c');
+  await fs.appendFile(target, 'local edit\n');
+  result = attach(c);
+  assert.equal(result.json?.error?.code, 'MANAGED_DRIFT', result.stdout);
+  assert.match(await fs.readFile(target, 'utf8'), /local edit/);
 });
 
 test('Profile Skill targets filter native Codex and Claude projections', { timeout: 120_000 }, async () => {

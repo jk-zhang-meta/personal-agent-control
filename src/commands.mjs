@@ -333,7 +333,7 @@ async function preflightManagedDrift(
   }
   if (owned.size === 0) return { checked: false, reason: 'no-prior-ownership' };
 
-  const materializers = await materializerStatus(neutral, materializerEntries);
+  const materializers = await materializerStatus(neutral, options.previousMaterializerEntries ?? materializerEntries);
   const modifiedException = materializers.find(
     (entry) => owned.has(entry.name) && entry.installed && !entry.valid,
   );
@@ -397,6 +397,9 @@ async function applyUnlocked(context, options = {}) {
   const reconciliationScope = HOSTS.filter((host) => scopedEnabledHosts.includes(host) || provenCleanupHosts.includes(host));
   const canonicalLock = await readLock(context);
   const materializerEntries = await selectedMaterializerExceptions(profile);
+  const previousMaterializerEntries = profileResolution.descriptorAction === 'keep'
+    ? materializerEntries
+    : await selectedMaterializerExceptions(await loadActiveProfile(context));
   const provisional = assertUniqueSkills(provisionalSkills(canonicalLock, profile, materializerEntries));
   const knownPlugins = await pluginCatalog(context, profile);
   const effectivePlugins = effectivePluginNames(config, profile);
@@ -414,7 +417,10 @@ async function applyUnlocked(context, options = {}) {
     scopedEnabledHosts,
     profile,
     materializerEntries,
-    { allowProfileReplacement: profileResolution.descriptorAction !== 'keep' },
+    {
+      allowProfileReplacement: profileResolution.descriptorAction !== 'keep',
+      previousMaterializerEntries,
+    },
   );
   const backup = options.precreatedBackup
     || await createBackup(
@@ -444,7 +450,9 @@ async function applyUnlocked(context, options = {}) {
     const bootstrap = await reconcileProfileBootstrap(context, profile);
     const lock = await installFrozen(context, neutral);
     const [owned, priorOwnedMap] = await Promise.all([readOwnedSkills(context), readOwnedSkillMap(context)]);
-    const materializers = await applyMaterializerExceptions(context, neutral, owned, materializerEntries);
+    const materializers = await applyMaterializerExceptions(
+      context, neutral, owned, materializerEntries, previousMaterializerEntries,
+    );
     const profileApm = await installProfileApm(context, profile);
     const effectiveProfile = profile ? {
       ...profile,

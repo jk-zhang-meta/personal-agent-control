@@ -4,6 +4,9 @@ import crypto from 'node:crypto';
 import { run } from './exec.mjs';
 import { PacError } from './errors.mjs';
 
+const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu;
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/iu;
+
 export const MATERIALIZER_EXCEPTIONS = [{
   name: 'ppt-master',
   engine: 'skills',
@@ -17,10 +20,46 @@ export const MATERIALIZER_EXCEPTIONS = [{
   reason: 'APM 0.28.0 cannot safely reload the generated lock for this 12,230-file Skill.',
 }];
 
+function pinFromCapability(defaults, capability) {
+  const fail = (message) => {
+    throw new PacError(
+      'MATERIALIZER_PIN_INVALID',
+      `Profile ${defaults.name} ${message}`,
+    );
+  };
+  const hasOverride = ['source', 'ref', 'commit', 'contentSha256', 'skillPath']
+    .some((field) => capability[field] !== undefined);
+  if (!hasOverride) return defaults;
+  if (typeof capability.commit !== 'string' || !COMMIT_PATTERN.test(capability.commit)) {
+    fail('must pin a full git commit; live tags are not a version.');
+  }
+  if (typeof capability.contentSha256 !== 'string' || !DIGEST_PATTERN.test(capability.contentSha256)) {
+    fail('must pin contentSha256 for the selected commit.');
+  }
+  if (capability.source !== undefined && (typeof capability.source !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(capability.source))) {
+    fail('source must be an OWNER/REPOSITORY locator.');
+  }
+  if (capability.skillPath !== undefined && (typeof capability.skillPath !== 'string' || capability.skillPath.includes('..') || path.isAbsolute(capability.skillPath))) {
+    fail('skillPath must be a relative Skill directory.');
+  }
+  if (capability.ref !== undefined && (typeof capability.ref !== 'string' || !capability.ref || capability.ref.length > 256)) {
+    fail('ref must be a short version label when present.');
+  }
+  return {
+    ...defaults,
+    source: capability.source || defaults.source,
+    ref: capability.ref || capability.commit.toLowerCase(),
+    commit: capability.commit.toLowerCase(),
+    contentSha256: capability.contentSha256.toLowerCase(),
+    skillPath: capability.skillPath || defaults.skillPath,
+  };
+}
+
 export async function selectedMaterializerExceptions(profile) {
   const capabilitiesPath = profile?.catalog?.capabilities;
   if (!capabilitiesPath) return [];
-  const declared = new Set();
+  const selected = [];
+  const seen = new Set();
   const text = await fs.readFile(capabilitiesPath, 'utf8');
   for (const [index, line] of text.split(/\r?\n/u).entries()) {
     if (!line.trim()) continue;
@@ -32,14 +71,19 @@ export async function selectedMaterializerExceptions(profile) {
         `Invalid Profile capability JSON on line ${index + 1}.`,
       );
     }
-    for (const entry of MATERIALIZER_EXCEPTIONS) {
-      if (capability.id === `skill:${entry.name}`
-          && capability.delivery === entry.delivery) {
-        declared.add(entry.name);
+    for (const defaults of MATERIALIZER_EXCEPTIONS) {
+      if (capability.id !== `skill:${defaults.name}` || capability.delivery !== defaults.delivery) continue;
+      if (seen.has(defaults.name)) {
+        throw new PacError(
+          'PROFILE_CAPABILITY_INVALID',
+          `Duplicate materializer capability for ${defaults.name}.`,
+        );
       }
+      seen.add(defaults.name);
+      selected.push(pinFromCapability(defaults, capability));
     }
   }
-  return MATERIALIZER_EXCEPTIONS.filter((entry) => declared.has(entry.name));
+  return selected;
 }
 
 function expectedContentDigest(entry) {
@@ -92,24 +136,12 @@ export async function materializerStatus(neutralStore, entries = MATERIALIZER_EX
   }));
 }
 
-async function verifyTag(context, entry) {
-  const { stdout } = await run('git', [
-    'ls-remote', `https://github.com/${entry.source}.git`,
-    `refs/tags/${entry.ref}`, `refs/tags/${entry.ref}^{}`,
-  ], { cwd: context.root, errorCode: 'MATERIALIZER_SOURCE_FAILED' });
-  const rows = stdout.trim().split(/\r?\n/u).filter(Boolean).map((line) => line.split(/\s+/u));
-  const peeled = rows.find(([, ref]) => ref?.endsWith('^{}'))?.[0];
-  const direct = rows.find(([, ref]) => !ref?.endsWith('^{}'))?.[0];
-  if ((peeled || direct) !== entry.commit) {
-    throw new PacError('MATERIALIZER_PIN_MISMATCH', `${entry.source}@${entry.ref} no longer resolves to the reviewed commit.`);
-  }
-}
-
 export async function applyMaterializerExceptions(
   context,
   neutralStore,
   ownedNames = new Set(),
   entries = MATERIALIZER_EXCEPTIONS,
+  previousEntries = [],
 ) {
   await fs.mkdir(neutralStore, { recursive: true, mode: 0o700 });
   const results = [];
@@ -121,14 +153,23 @@ export async function applyMaterializerExceptions(
     }
     const target = path.join(neutralStore, '.agents/skills', entry.name);
     try {
-      await fs.lstat(target);
-      const code = ownedNames.has(entry.name) ? 'MANAGED_DRIFT' : 'SKILL_COLLISION';
-      throw new PacError(code, `${ownedNames.has(entry.name) ? 'Modified managed' : 'Unmanaged'} Skill blocks ${entry.name}: ${target}`);
+      const stat = await fs.lstat(target);
+      const previous = previousEntries.find((item) => item.name === entry.name);
+      const verified = ownedNames.has(entry.name) && previous && stat.isDirectory()
+        && (await materializerStatus(neutralStore, [previous]))[0].valid;
+      if (!verified) {
+        const code = ownedNames.has(entry.name) ? 'MANAGED_DRIFT' : 'SKILL_COLLISION';
+        throw new PacError(code, `${ownedNames.has(entry.name) ? 'Modified managed' : 'Unmanaged'} Skill blocks ${entry.name}: ${target}`);
+      }
+      // The caller's transaction has backed up this unchanged, previously pinned version.
+      await fs.rm(target, { recursive: true });
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
     const testSource = process.env.NODE_ENV === 'test' ? process.env.PAC_TEST_PPT_SOURCE : undefined;
-    if (!testSource) await verifyTag(context, entry);
+    if (!entry.commit || !COMMIT_PATTERN.test(entry.commit)) {
+      throw new PacError('MATERIALIZER_PIN_INVALID', `${entry.name} must pin a full git commit.`);
+    }
     await fs.mkdir(context.stateDir, { recursive: true, mode: 0o700 });
     const checkout = testSource
       ? null
