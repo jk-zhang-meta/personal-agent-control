@@ -237,7 +237,16 @@ async function codexHookTrustStatus(context, descriptor, expected) {
       const listed = listedRoots[0];
       const warnings = Array.isArray(listed.warnings) ? listed.warnings : [];
       const errors = Array.isArray(listed.errors) ? listed.errors : [];
-      if (warnings.length > 0 || errors.length > 0) {
+      // Codex permits user hooks in both representations. This warning is
+      // informational; exact entry identity, enabled state and trust are still
+      // checked below. Unknown warnings and all loading errors fail closed.
+      const configFile = path.join(context.home, '.codex/config.toml');
+      const coexistenceWarnings = new Set([
+        `loading hooks from both ${descriptor.file} and ${configFile}; prefer a single representation for this layer`,
+        `loading hooks from both ${configFile} and ${descriptor.file}; prefer a single representation for this layer`,
+      ]);
+      const blockingWarnings = warnings.filter((warning) => !coexistenceWarnings.has(warning));
+      if (blockingWarnings.length > 0 || errors.length > 0) {
         finish({ observable: true, active: false, trustStatus: 'unknown',
           reason: `Codex hooks/list reported ${warnings.length} warning(s) and ${errors.length} error(s).` });
         return;
@@ -269,6 +278,7 @@ async function codexHookTrustStatus(context, descriptor, expected) {
         trustStatus,
         key: typeof entry.key === 'string' ? entry.key : null,
         currentHash: typeof entry.currentHash === 'string' ? entry.currentHash : null,
+        warnings,
       });
     };
     child.stdout.setEncoding('utf8');

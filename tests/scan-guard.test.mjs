@@ -1046,6 +1046,21 @@ process.stdin.on('data', (chunk) => {
     assert.equal(status.hookTrust, 'trusted');
     assert.equal(status.valid, true);
 
+    response.data[0].warnings.push(`loading hooks from both ${hookFile} and ${path.join(value.home, '.codex/config.toml')}; prefer a single representation for this layer`);
+    await writeFakeCodex(response);
+    const coexist = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
+    assert.equal(coexist.valid, true);
+    assert.deepEqual(coexist.hookTrustProbe.warnings, response.data[0].warnings);
+    response.data[0].hooks[0].trustStatus = 'untrusted';
+    await writeFakeCodex(response);
+    const untrusted = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
+    assert.equal(untrusted.valid, false);
+    assert.equal(untrusted.pendingTrust, true);
+    response.data[0].hooks[0].trustStatus = 'trusted';
+    response.data[0].errors.push('synthetic loading error');
+    await writeFakeCodex(response);
+    assert.equal((await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0].valid, false);
+    response.data[0].errors = [];
     response.data[0].warnings.push('synthetic discovery warning');
     await writeFakeCodex(response);
     const warned = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
