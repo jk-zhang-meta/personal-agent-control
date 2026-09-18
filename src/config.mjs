@@ -48,6 +48,9 @@ export function resolveContext(options = {}) {
     throw new PacError('SOURCE_INVALID', `PAC source must be a directory: ${root}`);
   }
   const stateDir = path.join(home, '.local/state/personal-agent-control');
+  const mise = process.env.PAC_MISE || path.join(
+    home, '.local/bin', process.platform === 'win32' ? 'mise.exe' : 'mise',
+  );
   const miseDataDir = process.platform === 'win32'
     ? path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData/Local'), 'mise')
     : path.join(home, '.local/share/mise');
@@ -77,6 +80,7 @@ export function resolveContext(options = {}) {
     // The scan gate reads this small machine-local registry on each hook call;
     // it is never copied into the synchronized Profile/source tree.
     searchRegistryPath: path.join(home, '.config/personal-agent-control/search-roots.json'),
+    mise,
     apm: process.env.PAC_APM || apmCandidates.find((candidate) => fsSync.existsSync(candidate)) || 'apm',
   };
 }

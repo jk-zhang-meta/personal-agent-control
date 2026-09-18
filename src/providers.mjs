@@ -210,7 +210,7 @@ async function providerVersion(context, provider) {
   if (process.env.PAC_PROVIDER_NO_VERSION_CHECK === '1') {
     return { expected: provider.version || provider.versionPolicy, actual: null, matches: true, skipped: true };
   }
-  const result = await run('mise', ['exec', '--', 'codegraph', '--version'], {
+  const result = await run(context.mise || 'mise', ['exec', '--', 'codegraph', '--version'], {
     cwd: context.root,
     errorCode: 'PROVIDER_VERSION_INVALID',
   });

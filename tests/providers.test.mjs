@@ -47,6 +47,37 @@ test('CodeGraph provider is projected to Codex and Claude and preserves surround
   }
 });
 
+test('CodeGraph version check uses the PAC mise launcher even when mise is absent from PATH', {
+  skip: process.platform === 'win32',
+}, async () => {
+  const home = await temp('pac-provider-mise-home-');
+  const root = process.cwd();
+  const stateDir = path.join(home, '.local/state/personal-agent-control');
+  const mise = path.join(home, '.local/bin/mise');
+  await fs.mkdir(path.dirname(mise), { recursive: true });
+  await fs.mkdir(path.join(home, '.codex'), { recursive: true });
+  await fs.writeFile(mise, '#!/bin/sh\nprintf "1.6.0\\n"\n', { mode: 0o700 });
+  await fs.writeFile(path.join(home, '.codex/config.toml'), '');
+  await fs.writeFile(path.join(home, '.claude.json'), '{}\n');
+  const context = { root, home, stateDir, mise };
+  const profile = { manifest: { providers: { enabled: ['codegraph'] } } };
+  const previousUpgrade = process.env.PAC_PROVIDER_NO_UPGRADE;
+  const previousPath = process.env.PATH;
+  process.env.PAC_PROVIDER_NO_UPGRADE = '1';
+  process.env.PATH = '/usr/bin:/bin';
+  try {
+    const applied = await reconcileProviders(context, profile, ['codex', 'claude'], ['codex', 'claude']);
+    assert.equal(applied.valid, true);
+    assert.equal(applied.providers.every((entry) => entry.version.matches), true);
+  } finally {
+    if (previousUpgrade === undefined) delete process.env.PAC_PROVIDER_NO_UPGRADE;
+    else process.env.PAC_PROVIDER_NO_UPGRADE = previousUpgrade;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
 test('CodeGraph provider retirement removes only the PAC-owned entries', async () => {
   const home = await temp('pac-provider-retire-');
   const root = process.cwd();
