@@ -135,3 +135,30 @@ test('policy delivery accepts a compatibility Skill root that aliases the exact 
   assert.equal(await fs.realpath(alias), before);
   assert.match(await fs.readFile(path.join(alias, 'personal-environment/SKILL.md'), 'utf8'), /Version 1/);
 });
+
+test('policy delivery drops full-install ownership while retaining compatibility ownership', async (t) => {
+  const f = await fixture(t);
+  const first = await f.commit(1);
+  const options = { repository: f.repository, baseline: first, commit: first };
+  await synchronizePolicy(f.context, options);
+
+  const hostOwned = path.join(f.home, '.codex/skills/host-owned/SKILL.md');
+  await fs.mkdir(path.dirname(hostOwned), { recursive: true });
+  await fs.writeFile(hostOwned, 'Host owned\n');
+  await fs.mkdir(f.context.stateDir, { recursive: true });
+  await fs.writeFile(path.join(f.context.stateDir, 'owned-skill-map.json'), JSON.stringify({
+    schemaVersion: 1,
+    skills: [{ id: 'personal-environment', physicalName: 'personal-environment', engine: 'apm' }],
+  }));
+  await fs.rm(path.join(f.home, '.codex/skills/personal-environment'), { recursive: true, force: true });
+
+  await synchronizePolicy(f.context, options);
+  const status = await policyStatus(f.context);
+  assert.equal(status.ok, true);
+  assert.equal(status.entries.some((entry) => entry.relativePath.startsWith('.agents/skills/')), false);
+  assert.equal(status.entries.some((entry) => entry.relativePath.startsWith('.codex/')), false);
+  assert.equal(status.entries.some((entry) => entry.relativePath.startsWith('.claude/')), false);
+  assert.equal(status.entries.some((entry) => entry.relativePath.startsWith('.grok/')), true);
+  assert.equal(status.entries.some((entry) => entry.relativePath.startsWith('.gemini/')), true);
+  assert.equal(await fs.readFile(hostOwned, 'utf8'), 'Host owned\n');
+});

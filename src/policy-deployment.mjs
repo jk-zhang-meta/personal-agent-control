@@ -189,7 +189,7 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
       for (const item of planned) {
         if ((await identity(context.home, path.join(context.home, item.relativePath)))?.sha256 !== item.sha256) throw new PacError('POLICY_VERIFY_FAILED', `Policy verification failed: ${item.relativePath}`);
       }
-      const entries = new Map(state.entries.map((e) => [e.relativePath, e]));
+      const entries = new Map(fullInstallation ? [] : state.entries.map((e) => [e.relativePath, e]));
       for (const item of planned) entries.set(item.relativePath, { relativePath: item.relativePath, sha256: item.sha256 });
       const result = { schemaVersion: 1, mode: 'policy-only', profileCommit: commit, profileRoot: current.root,
         agents: [...new Set([...(state.agents || []), ...agents])], backup, entries: [...entries.values()] };
