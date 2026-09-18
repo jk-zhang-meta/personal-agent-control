@@ -1067,6 +1067,54 @@ test('legacy stable runtime remains executable during content-addressed migratio
   assert.equal(status.runtime.path, migrated.runtime.path);
 });
 
+test('current Codex ownership retires a stale PAC-only legacy hooks.json', async (t) => {
+  const value = await fixture(t);
+  const applied = await reconcileScanGuard(
+    value.context, ['codex'], ['codex'], value.activeProfile,
+  );
+  const { entry } = await codexPacEntry(value.home);
+  const hookFile = path.join(value.home, '.codex/hooks.json');
+  const stateFile = path.join(value.home, '.local/state/personal-agent-control/scan-guard.json');
+  const staleEntry = structuredClone(entry);
+  const staleRuntime = path.join(
+    value.home, '.agent-work/runtime/pac', `scan-guard-hook-${'a'.repeat(64)}.mjs`,
+  );
+  staleEntry.hooks[0].command = staleEntry.hooks[0].command.replace(applied.runtime.path, staleRuntime);
+  await fs.writeFile(
+    hookFile,
+    `${JSON.stringify({ hooks: { PreToolUse: [staleEntry] } }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+
+  const ownership = JSON.parse(await fs.readFile(stateFile, 'utf8'));
+  assert.equal(ownership.hosts.codex.targetRelative, '.codex/config.toml');
+
+  const reconciled = await reconcileScanGuard(
+    value.context, ['codex'], ['codex'], value.activeProfile,
+  );
+  assert.equal(reconciled.hosts[0].action, 'migrated');
+  assert.equal(existsSync(hookFile), false);
+});
+
+test('stale legacy Codex cleanup preserves host-owned hooks.json content', async (t) => {
+  const value = await fixture(t);
+  await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
+  const { entry } = await codexPacEntry(value.home);
+  const hookFile = path.join(value.home, '.codex/hooks.json');
+  const hostEntry = {
+    matcher: '^HostOwned$',
+    hooks: [{ type: 'command', command: 'host-owned-hook' }],
+  };
+  const original = `${JSON.stringify({ hooks: { PreToolUse: [entry, hostEntry] } }, null, 2)}\n`;
+  await fs.writeFile(hookFile, original, { mode: 0o600 });
+
+  const reconciled = await reconcileScanGuard(
+    value.context, ['codex'], ['codex'], value.activeProfile,
+  );
+  assert.equal(reconciled.hosts[0].action, 'unchanged');
+  assert.equal(await fs.readFile(hookFile, 'utf8'), original);
+});
+
 test('legacy Codex hook migration preserves exact trusted identity in config.toml', async (t) => {
   const value = await fixture(t);
   await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);

@@ -976,6 +976,19 @@ async function retireLegacyCodexConfig(file, config, originalRaw) {
   return Boolean(current);
 }
 
+async function retireStaleLegacyCodexConfig(descriptor) {
+  if (!descriptor.legacyFile) return false;
+  const loaded = readJsonFile(descriptor.legacyFile);
+  if (!loaded.raw) return false;
+  const config = loaded.value;
+  assertConfigObject(config, descriptor.legacyFile);
+  const actual = currentConfigEntry(config, 'codex');
+  if (!actual) return false;
+  config.hooks.PreToolUse = config.hooks.PreToolUse.filter((entry) => entry !== actual);
+  if (!emptyLegacyHookConfig(config)) return false;
+  return await retireLegacyCodexConfig(descriptor.legacyFile, config, loaded.raw);
+}
+
 function runtimeStatus(context, ownership) {
   const file = runtimePath(context, ownership.runtimeRelative);
   try {
@@ -1229,8 +1242,15 @@ export async function reconcileScanGuard(context, enabledHosts, scopeHosts, prof
           changed = await writeJsonConfigIfChanged(descriptor.file, config, loaded.raw);
         }
       }
+      const retiredLegacy = host === 'codex'
+        ? await retireStaleLegacyCodexConfig(currentDescriptor)
+        : false;
       ownership.hosts[host] = { targetRelative: descriptor.relative, entrySha256: jsonDigest(expected) };
-      results.push({ host, action: changed ? (actual ? 'updated' : 'installed') : 'unchanged', target: descriptor.file });
+      results.push({
+        host,
+        action: retiredLegacy ? 'migrated' : (changed ? (actual ? 'updated' : 'installed') : 'unchanged'),
+        target: descriptor.file,
+      });
       continue;
     }
 
