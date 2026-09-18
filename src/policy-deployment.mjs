@@ -43,6 +43,24 @@ async function identity(home, file) {
   return { kind: stat.isSymbolicLink() ? 'link' : 'file', sha256: sha(await fs.readFile(real)), link: stat.isSymbolicLink() ? await fs.readlink(file) : null };
 }
 
+async function compatibilityRootIsNeutral(home, relativeRoot, neutral) {
+  const target = path.join(home, relativeRoot);
+  const stat = await statOrNull(target);
+  if (!stat?.isSymbolicLink()) return false;
+  // A host may already expose the PAC neutral Skill store as one directory
+  // alias (Antigravity commonly does this).  Permit only that exact alias;
+  // arbitrary symlink ancestors still fail later through identity().
+  await assertSafeManagedObject(home, path.dirname(target), 'policy compatibility root', 'directory');
+  try {
+    const [actual, expected] = await Promise.all([
+      fs.realpath(target), fs.realpath(path.join(home, neutral)),
+    ]);
+    return actual === expected;
+  } catch {
+    return false;
+  }
+}
+
 async function readState(context) {
   const file = path.join(context.home, STATE);
   await assertSafeManagedObject(context.home, file, 'policy ownership', 'file');
@@ -98,6 +116,7 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
       } else planned.push({ relativePath: `${neutral}/${skill.name}`, kind: 'directory', ...skill });
       const selected = fullInstallation ? agents.filter((a) => a !== 'codex' && a !== 'claude') : agents;
       for (const root of [...new Set(selected.flatMap((a) => SKILL_ROOTS[a]))]) {
+        if (await compatibilityRootIsNeutral(context.home, root, neutral)) continue;
         planned.push({ relativePath: `${root}/${skill.name}`, kind: 'link', link: path.join(context.home, neutral, skill.name), ...skill });
       }
     }

@@ -119,3 +119,19 @@ test('policy delivery refuses a destination with a symlinked ancestor', async (t
   assert.deepEqual(await fs.readdir(outside), []);
   await assert.rejects(fs.access(path.join(f.home, '.config/personal-agent-control/profile-bootstrap.md')));
 });
+
+test('policy delivery accepts a compatibility Skill root that aliases the exact neutral store', async (t) => {
+  const f = await fixture(t);
+  const first = await f.commit(1);
+  const neutral = path.join(f.home, '.local/share/agent-skills/.agents/skills');
+  const alias = path.join(f.home, '.gemini/config/skills');
+  await fs.mkdir(neutral, { recursive: true });
+  await fs.mkdir(path.dirname(alias), { recursive: true });
+  await fs.symlink(neutral, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const before = await fs.realpath(alias);
+  const installed = await synchronizePolicy(f.context, { repository: f.repository,
+    baseline: first, commit: first });
+  assert.equal(installed.ok, true);
+  assert.equal(await fs.realpath(alias), before);
+  assert.match(await fs.readFile(path.join(alias, 'personal-environment/SKILL.md'), 'utf8'), /Version 1/);
+});
