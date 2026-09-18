@@ -54,7 +54,18 @@ pac_assert_real_directory "$backup/home" "backup home"
     exit 1
 }
 backup_source=$(sed -n 's/^source=//p' "$backup/metadata.txt")
-[ -n "$backup_source" ] && [ "$backup_source" = "$repo" ] || {
+backup_source_normalized=$backup_source
+case "$backup_source" in
+    [A-Za-z]:\\*|[A-Za-z]:/*)
+        if command -v cygpath >/dev/null 2>&1; then
+            backup_source_normalized=$(cygpath -u "$backup_source")
+        fi
+        ;;
+esac
+if [ -n "$backup_source_normalized" ] && [ -d "$backup_source_normalized" ]; then
+    backup_source_normalized=$(unset CDPATH; cd -- "$backup_source_normalized" && pwd -P)
+fi
+[ -n "$backup_source" ] && [ "$backup_source_normalized" = "$repo" ] || {
     echo "backup belongs to a different PAC source: ${backup_source:-unknown}" >&2
     exit 1
 }
@@ -67,8 +78,10 @@ validate_path() {
     rel=$1
     kind='file'
     case "$rel" in
-        .local/bin/pac|.local/bin/mise)
+        .local/bin/pac|.local/bin/mise|.local/bin/mise.exe)
             kind='any'
+            ;;
+        .local/bin/pac.cmd|.local/bin/pac.ps1)
             ;;
         .local/share/agent-skills|.local/state/personal-agent-control)
             kind='directory'
@@ -84,6 +97,7 @@ validate_path() {
         .config/personal-agent-control/machine.json|\
         .config/personal-agent-control/profile.json|\
         .config/personal-agent-control/profile-bootstrap.md|\
+        .config/personal-agent-control/search-roots.json|\
         .config/personal-agent-control/state.boltdb|\
         .local/share/agent-skills/apm.lock.yaml|\
         .local/state/personal-agent-control/last-backup|\

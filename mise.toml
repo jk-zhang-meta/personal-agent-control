@@ -4,7 +4,7 @@ min_version = "2026.8.2"
 lockfile = true
 locked = true
 locked_verify_provenance = true
-lockfile_platforms = ["linux-x64", "macos-arm64"]
+lockfile_platforms = ["linux-x64", "macos-arm64", "windows-x64"]
 
 [settings.npm]
 package_manager = "aube"

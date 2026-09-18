@@ -15,6 +15,11 @@ set -eu
 home={{ .chezmoi.destDir | quote }}
 source_dir={{ .chezmoi.sourceDir | quote }}
 chezmoi={{ .chezmoi.executable | quote }}
+{{- if eq .chezmoi.os "windows" }}
+home=$(cygpath -u "$home")
+source_dir=$(cygpath -u "$source_dir")
+chezmoi=$(cygpath -u "$chezmoi")
+{{- end }}
 agents={{ $selection.agents | quote }}
 codex={{ $selection.codex | quote }}
 claude={{ $selection.claude | quote }}
@@ -96,10 +101,17 @@ preflight_target() {
 # This list mirrors restore-backup.sh.  State is intentionally explicit:
 # pac.lock and receipts are live coordination/derived data, never snapshots.
 add_path .local/bin/pac any
+{{- if eq .chezmoi.os "windows" }}
+add_path .local/bin/pac.cmd file
+add_path .local/bin/pac.ps1 file
+add_path .local/bin/mise.exe any
+{{- else }}
 add_path .local/bin/mise any
+{{- end }}
 add_path .config/personal-agent-control/machine.json file
 add_path .config/personal-agent-control/profile.json file
 add_path .config/personal-agent-control/profile-bootstrap.md file
+add_path .config/personal-agent-control/search-roots.json file
 add_path .config/personal-agent-control/state.boltdb file
 add_path .local/share/agent-skills directory
 add_path .local/state/personal-agent-control/last-backup file

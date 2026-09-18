@@ -5,6 +5,14 @@ set -eu
 home={{ .chezmoi.destDir | quote }}
 codex={{ $selection.codex | quote }}
 
+{{- if eq .chezmoi.os "windows" }}
+command -v cygpath >/dev/null 2>&1 || {
+    echo "Personal Agent Control: Git for Windows cygpath is required" >&2
+    exit 1
+}
+home=$(cygpath -u "$home")
+{{- end }}
+
 for command_name in git curl tar; do
     command -v "$command_name" >/dev/null 2>&1 || {
         echo "Personal Agent Control: bootstrap prerequisite is missing: $command_name" >&2

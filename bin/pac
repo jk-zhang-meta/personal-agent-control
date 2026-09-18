@@ -25,6 +25,9 @@ if [ -n "${PAC_NODE:-}" ]; then
     exec "$PAC_NODE" "$root/src/entry.mjs" "$@"
 fi
 mise=${PAC_MISE:-${HOME:?HOME is required}/.local/bin/mise}
+if [ ! -x "$mise" ] && [ -x "$mise.exe" ]; then
+    mise="$mise.exe"
+fi
 if [ -x "$mise" ]; then
     exec "$mise" --cd "$root" exec -- node "$root/src/entry.mjs" "$@"
 fi

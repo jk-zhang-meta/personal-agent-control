@@ -29,6 +29,10 @@ case "$profile" in ''|/*) ;; *) echo "profile must be absolute: $profile" >&2; e
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/pac-doctor.XXXXXX")
 trap 'rm -rf -- "$tmp"' EXIT HUP INT TERM
 failures=0
+windows_host=0
+case "$(uname -s 2>/dev/null || true)" in
+    MINGW*|MSYS*|CYGWIN*) windows_host=1 ;;
+esac
 
 has_agent() { case ",$agents," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 drift() { echo "DRIFT: $1" >&2; failures=$((failures + 1)); }
@@ -43,7 +47,21 @@ check_file() {
 pac_source="$repo/bin/pac"
 pac="$home/.local/bin/pac"
 [ -x "$pac_source" ] || drift "PAC executable is missing: $pac_source"
-if [ -L "$home/.local/bin/pac" ]; then
+if [ "$windows_host" -eq 1 ] && [ -f "$pac" ] && [ ! -L "$pac" ]; then
+    grep -Fq "$repo/src/entry.mjs" "$pac" && \
+        grep -Fq "$home/.local/bin/mise.exe" "$pac" || \
+        drift "installed PAC launcher does not target the active Core source"
+    pac_entry=$(cygpath -m "$repo/src/entry.mjs" 2>/dev/null || true)
+    pac_mise=$(cygpath -m "$home/.local/bin/mise.exe" 2>/dev/null || true)
+    for windows_launcher in "$home/.local/bin/pac.cmd" "$home/.local/bin/pac.ps1"; do
+        if [ ! -f "$windows_launcher" ] || [ -L "$windows_launcher" ] || \
+            [ -z "$pac_entry" ] || [ -z "$pac_mise" ] || \
+            ! grep -Fq "$pac_entry" "$windows_launcher" || \
+            ! grep -Fq "$pac_mise" "$windows_launcher"; then
+            drift "installed Windows PAC launcher differs from the active Core/mise binding: $windows_launcher"
+        fi
+    done
+elif [ -L "$home/.local/bin/pac" ]; then
     [ "$(readlink "$home/.local/bin/pac")" = "$pac_source" ] || drift "installed PAC launcher points elsewhere"
 elif [ -e "$home/.local/bin/pac" ]; then
     drift "installed PAC launcher is not a managed symlink"
@@ -84,6 +102,7 @@ if (!data?.ok) {
       guard?.host !== 'codex' || guard?.structuralValid !== true || guard?.pendingTrust !== true ||
       guard?.operational !== false || guard?.hookTrust !== action.trustStatus ||
       guard?.hookTrustProbe?.key !== action.key || guard?.hookTrustProbe?.currentHash !== action.currentHash) {
+    console.error(JSON.stringify({ activation: data?.activation, scanGuard: invalid }, null, 2));
     throw new Error('PAC status is not healthy');
   }
 }
@@ -134,6 +153,11 @@ if [ "$status_paths_valid" -eq 1 ] && has_agent claude; then
 fi
 
 apm_bin=${PAC_APM:-apm}
+if [ "$windows_host" -eq 1 ] && [ "$apm_bin" = apm ] && [ -n "${LOCALAPPDATA:-}" ]; then
+    local_app_data=$(cygpath -u "$LOCALAPPDATA" 2>/dev/null || true)
+    candidate="$local_app_data/mise/installs/apm/0.28.0/apm.exe"
+    [ ! -x "$candidate" ] || apm_bin=$candidate
+fi
 if command -v "$apm_bin" >/dev/null 2>&1 && \
     "$apm_bin" --version | grep -Eq '(^|[^0-9])0\.28\.0([^0-9]|$)'; then
     if ! (cd "$repo/packages/skills" && "$apm_bin" lock export --format cyclonedx >/dev/null); then
@@ -150,6 +174,9 @@ else
 fi
 
 mise="$home/.local/bin/mise"
+if [ "$windows_host" -eq 1 ] && [ ! -x "$mise" ] && [ -x "$mise.exe" ]; then
+    mise="$mise.exe"
+fi
 if [ ! -x "$mise" ]; then
     drift "pinned mise executable"
 elif missing=$(HOME="$home" "$mise" --cd "$repo" ls --current --missing --no-header 2>/dev/null); then

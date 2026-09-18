@@ -48,8 +48,16 @@ export function resolveContext(options = {}) {
     throw new PacError('SOURCE_INVALID', `PAC source must be a directory: ${root}`);
   }
   const stateDir = path.join(home, '.local/state/personal-agent-control');
-  const apmShim = path.join(home, '.local/share/mise/shims/apm');
-  const pinnedApm = path.join(home, '.local/share/mise/installs/apm/0.28.0/apm');
+  const miseDataDir = process.platform === 'win32'
+    ? path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData/Local'), 'mise')
+    : path.join(home, '.local/share/mise');
+  const apmCandidates = [
+    path.join(miseDataDir, 'installs/apm/0.28.0/apm.exe'),
+    path.join(miseDataDir, 'installs/apm/0.28.0/apm'),
+    path.join(miseDataDir, 'shims/apm.exe'),
+    path.join(miseDataDir, 'shims/apm.cmd'),
+    path.join(miseDataDir, 'shims/apm'),
+  ];
   return {
     root,
     home,
@@ -69,8 +77,7 @@ export function resolveContext(options = {}) {
     // The scan gate reads this small machine-local registry on each hook call;
     // it is never copied into the synchronized Profile/source tree.
     searchRegistryPath: path.join(home, '.config/personal-agent-control/search-roots.json'),
-    apm: process.env.PAC_APM
-      || (fsSync.existsSync(pinnedApm) ? pinnedApm : (fsSync.existsSync(apmShim) ? apmShim : 'apm')),
+    apm: process.env.PAC_APM || apmCandidates.find((candidate) => fsSync.existsSync(candidate)) || 'apm',
   };
 }
 

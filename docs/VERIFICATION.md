@@ -137,6 +137,33 @@ unmanaged Plugin data. Synchronization is not treated as backup.
 
 ## Current evidence
 
+Native Windows x86-64 checks run on 2026-09-18:
+
+- a full Codex/Profile apply completed against Profile commit
+  `14c47c69a40e34a44dfe26fdd1176d9c06157fde`; APM 0.28.0, the 13 Profile APM
+  dependencies, the `ppt-master` materializer, CodeGraph 1.6.0, native Plugins,
+  host adapters, and all 31 Codex Skill projections validated;
+- the Windows scan-guard path accepts NTFS metadata without interpreting its
+  synthetic POSIX mode bits, while retaining regular-file, path-boundary,
+  synchronized-storage, identity, and digest checks;
+- `node --test tests/windows-native.test.mjs tests/scan-guard.test.mjs` passed
+  21 tests with 0 failures, including Git-for-Windows shell/path translation,
+  native Codex `app-server` discovery, stable-default hooks, and hook/runtime
+  digest binding;
+- all three Chezmoi transaction templates rendered under native Windows and
+  passed `sh -n`; the Windows `.chezmoiexternal` render parsed as TOML and pins
+  mise 2026.8.2 by its published SHA-256; and
+- live PAC status is structurally valid and intentionally staged because the
+  exact Codex `PreToolUse` hook remains `untrusted`. That host-owned trust action
+  is the only remaining activation step and is not bypassed by PAC.
+
+The same working tree was regression-tested from `Ubuntu-24.04` as root using
+the WSL-local cached Profile at the same locked commit: `node --test
+tests/scan-guard.test.mjs` passed 19 tests with 0 failures. A Profile source on
+`/mnt/c` was deliberately not used for that oracle because DrvFS preserves the
+Windows-side UID projection and would invalidate the helper-owner security
+check rather than exercise native Linux ownership semantics.
+
 Targeted hook-staging checks run on Linux x86-64 on 2026-09-03:
 
 - the hot-update regression staged policy revision A, captured its generated
@@ -189,7 +216,8 @@ Before release or live installation of a new revision:
 5. attach a private Profile through authenticated Git and verify ordinary
    apply remains pinned while explicit sync/update advances it;
 6. run full-history secret/provenance/license checks on the public repository;
-7. verify both supported hosts on their native Linux/macOS environments; and
+7. verify selected hosts on the native Linux/macOS/Windows environments claimed
+   for that release; and
 8. report every skipped or unavailable oracle rather than claiming completion.
 
 No commit, push, publication, host replacement, or deletion is implied by a

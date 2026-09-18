@@ -7,7 +7,15 @@ source_dir={{ .chezmoi.sourceDir | quote }}
 agents={{ $selection.agents | quote }}
 codex={{ $selection.codex | quote }}
 claude={{ $selection.claude | quote }}
+{{- if eq .chezmoi.os "windows" }}
+home=$(cygpath -u "$home")
+source_dir=$(cygpath -u "$source_dir")
+windows_host=true
+mise="$home/.local/bin/mise.exe"
+{{- else }}
+windows_host=false
 mise="$home/.local/bin/mise"
+{{- end }}
 pac_source="$source_dir/bin/pac"
 pac_link="$home/.local/bin/pac"
 # shellcheck source=/dev/null
@@ -264,16 +272,53 @@ MISE_PARANOID=1 MISE_LOCKED=1 run_mise install --locked --yes
 pac_assert_safe_ancestors "$home" ".local/bin/pac" "PAC launcher"
 mkdir -p "$home/.local/bin"
 pac_assert_real_directory "$home/.local/bin" "user executable directory"
-if [ -L "$pac_link" ]; then
-    [ "$(readlink "$pac_link")" = "$pac_source" ] || {
-        echo "unmanaged PAC launcher link is preserved: $pac_link" >&2
-        exit 1
+if [ "$windows_host" = true ]; then
+    pac_assert_safe_ancestors "$home" ".local/bin/pac.cmd" "PAC CMD launcher"
+    pac_assert_safe_ancestors "$home" ".local/bin/pac.ps1" "PAC PowerShell launcher"
+    source_windows=$(cygpath -m "$source_dir")
+    mise_windows=$(cygpath -m "$mise")
+    pac_tmp=$(mktemp "$home/.local/bin/.pac.XXXXXX")
+    cmd_tmp=$(mktemp "$home/.local/bin/.pac.cmd.XXXXXX")
+    ps1_tmp=$(mktemp "$home/.local/bin/.pac.ps1.XXXXXX")
+    printf '#!/bin/sh\nexec "%s" --cd "%s" exec -- node "%s/src/entry.mjs" "$@"\n' \
+        "$mise" "$source_dir" "$source_dir" > "$pac_tmp"
+    printf '@echo off\r\n"%s" --cd "%s" exec -- node "%s/src/entry.mjs" %%*\r\n' \
+        "$mise_windows" "$source_windows" "$source_windows" > "$cmd_tmp"
+    source_ps=$(printf '%s' "$source_windows" | sed "s/'/''/g")
+    mise_ps=$(printf '%s' "$mise_windows" | sed "s/'/''/g")
+    printf '& ''%s'' --cd ''%s'' exec -- node ''%s/src/entry.mjs'' @args\r\nexit $LASTEXITCODE\r\n' \
+        "$mise_ps" "$source_ps" "$source_ps" > "$ps1_tmp"
+    install_launcher() {
+        target=$1
+        staged=$2
+        mode_bits=$3
+        if [ -e "$target" ] || [ -L "$target" ]; then
+            [ -f "$target" ] && [ ! -L "$target" ] && cmp -s "$staged" "$target" || {
+                rm -f -- "$staged"
+                echo "unmanaged PAC launcher is preserved: $target" >&2
+                exit 1
+            }
+            rm -f -- "$staged"
+        else
+            chmod "$mode_bits" "$staged"
+            mv -- "$staged" "$target"
+        fi
     }
-elif [ -e "$pac_link" ]; then
-    echo "unmanaged PAC launcher is preserved: $pac_link" >&2
-    exit 1
+    install_launcher "$pac_link" "$pac_tmp" 700
+    install_launcher "$home/.local/bin/pac.cmd" "$cmd_tmp" 600
+    install_launcher "$home/.local/bin/pac.ps1" "$ps1_tmp" 600
 else
-    ln -s "$pac_source" "$pac_link"
+    if [ -L "$pac_link" ]; then
+        [ "$(readlink "$pac_link")" = "$pac_source" ] || {
+            echo "unmanaged PAC launcher link is preserved: $pac_link" >&2
+            exit 1
+        }
+    elif [ -e "$pac_link" ]; then
+        echo "unmanaged PAC launcher is preserved: $pac_link" >&2
+        exit 1
+    else
+        ln -s "$pac_source" "$pac_link"
+    fi
 fi
 
 case "$agents" in

@@ -102,7 +102,11 @@ export async function withManifestStage(context, callback) {
   const stageRoot = path.join(stage, 'repo');
   const stageManifestDir = path.join(stageRoot, 'packages/skills');
   await fs.mkdir(stageManifestDir, { recursive: true });
-  await fs.symlink(path.join(context.root, 'payload'), path.join(stageRoot, 'payload'), 'dir');
+  await fs.symlink(
+    path.join(context.root, 'payload'),
+    path.join(stageRoot, 'payload'),
+    process.platform === 'win32' ? 'junction' : 'dir',
+  );
   await fs.copyFile(context.manifestPath, path.join(stageManifestDir, 'apm.yml'));
   await copyIfExists(context.lockPath, path.join(stageManifestDir, 'apm.lock.yaml'));
   try {

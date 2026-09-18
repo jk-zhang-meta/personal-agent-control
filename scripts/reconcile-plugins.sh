@@ -664,13 +664,13 @@ assert_all_installed_managed() {
         done < "$owned"
     fi
     LC_ALL=C sort -u "$tmp/$host_name-all-desired" -o "$tmp/$host_name-all-desired"
-    # Codex may expose a small set of vendor-installed remote Plugins (for
-    # example openai-curated-remote) that PAC cannot and should not own. Keep
-    # this inventory check fail-closed for user-installed and PAC-managed
-    # Plugins, but exempt only rows carrying the host's explicit
-    # INSTALLED_BY_DEFAULT policy, a remote source, and the known vendor
-    # marketplace. If PAC later manages that marketplace, the row is checked
-    # normally. Claude does not currently expose this inventory marker.
+    # Codex may expose vendor-owned Plugins from its remote catalog, bundled
+    # marketplace, or primary runtime. PAC must leave those host-native
+    # surfaces alone. Keep this inventory check fail-closed for user-installed
+    # and PAC-managed Plugins: the exemption below requires the exact known
+    # marketplace plus its native policy/source/path shape, and is disabled if
+    # PAC ever manages that marketplace. Claude does not currently expose
+    # equivalent host-native rows.
     : > "$tmp/$host_name-managed-marketplaces"
     awk -F '\t' '$0 !~ /^#/ && NF { print $2 }' "$catalog" \
         >> "$tmp/$host_name-managed-marketplaces"
@@ -689,6 +689,11 @@ const [host, file, managedFile] = process.argv.slice(2);
 const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
 const managed = new Set(fs.readFileSync(managedFile, 'utf8').split(/\r?\n/u).filter(Boolean));
 const rows = host === 'codex' ? parsed.installed : parsed;
+function localPath(value) {
+    let normalized = String(value || '').replaceAll('\\', '/');
+    if (normalized.startsWith('//?/')) normalized = normalized.slice(4);
+    return normalized.replace(/\/+$/u, '');
+}
 for (const row of rows) {
     const id = host === 'codex' ? row.pluginId : row.id;
     if (typeof id !== 'string' || id.length === 0) {
@@ -698,12 +703,26 @@ for (const row of rows) {
     const marketplace = host === 'codex'
         ? row.marketplaceName
         : (id.includes('@') ? id.slice(id.lastIndexOf('@') + 1) : '');
-    const nativeDefault = host === 'codex' &&
+    const marketplaceRoot = localPath(row.marketplaceSource?.source);
+    const pluginPath = localPath(row.source?.path);
+    const nativeRemoteDefault = host === 'codex' &&
         row.installPolicy === 'INSTALLED_BY_DEFAULT' &&
         row.source && row.source.source === 'remote' &&
         marketplace === 'openai-curated-remote' &&
         !managed.has(marketplace);
-    if (!nativeDefault) console.log(id);
+    const nativeLocalDefault = host === 'codex' &&
+        row.installPolicy === 'AVAILABLE' &&
+        row.source?.source === 'local' &&
+        row.marketplaceSource?.sourceType === 'local' &&
+        !managed.has(marketplace) && (
+            (marketplace === 'openai-bundled' &&
+                marketplaceRoot.endsWith('/.codex/.tmp/bundled-marketplaces/openai-bundled') &&
+                pluginPath.startsWith(`${marketplaceRoot}/plugins/`)) ||
+            (marketplace === 'openai-primary-runtime' &&
+                marketplaceRoot.endsWith('/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime') &&
+                pluginPath.startsWith(`${marketplaceRoot}/plugins/`))
+        );
+    if (!nativeRemoteDefault && !nativeLocalDefault) console.log(id);
 }
 NODE
     LC_ALL=C sort -u "$tmp/$host_name-all-actual-unsorted" \

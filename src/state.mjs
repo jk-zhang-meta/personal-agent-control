@@ -341,7 +341,11 @@ export async function reconcileProjections(context, config, neutralStore, desire
         } catch (error) {
           if (error.code !== 'ENOENT') throw error;
         }
-        await fs.symlink(path.relative(root, physical), link, 'dir');
+        await fs.symlink(
+          process.platform === 'win32' ? physical : path.relative(root, physical),
+          link,
+          process.platform === 'win32' ? 'junction' : 'dir',
+        );
       } else if (isManagedLink) {
         await fs.unlink(link);
       }
@@ -392,6 +396,7 @@ const BACKUP_REGULAR_FILES = new Set([
   '.config/personal-agent-control/machine.json',
   '.config/personal-agent-control/profile.json',
   '.config/personal-agent-control/profile-bootstrap.md',
+  '.config/personal-agent-control/search-roots.json',
   '.config/personal-agent-control/state.boltdb',
   '.local/state/personal-agent-control/owned-host-adapters.json',
   '.local/state/personal-agent-control/owned-providers.json',

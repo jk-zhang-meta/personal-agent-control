@@ -43,6 +43,7 @@ const HOST_CONFIGS = Object.freeze({
 const LEGACY_RUNTIME_RELATIVE = '.agent-work/runtime/pac/scan-guard-hook.mjs';
 const VERSIONED_RUNTIME_PATTERN = /^\.agent-work\/runtime\/pac\/scan-guard-hook-([0-9a-f]{64})\.mjs$/u;
 const STATE_RELATIVE = '.local/state/personal-agent-control/scan-guard.json';
+const SEARCH_REGISTRY_RELATIVE = '.config/personal-agent-control/search-roots.json';
 
 function digest(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -57,6 +58,10 @@ function syncedPath(value) {
   return lower.includes('/onedrive') || lower.includes('/cloudstorage')
     || lower.includes('/dropbox') || lower.includes('/google drive')
     || lower.includes('/mnt/c/') || lower.includes('/mnt/d/');
+}
+
+function hasUnsafePosixMode(stat, mask) {
+  return process.platform !== 'win32' && (stat.mode & mask) !== 0;
 }
 
 function statePath(context) {
@@ -117,7 +122,7 @@ function configuredHostPath(context, host) {
 }
 
 export function scanGuardManagedPaths(context, hosts = ['codex', 'claude']) {
-  const paths = new Set([STATE_RELATIVE, LEGACY_RUNTIME_RELATIVE]);
+  const paths = new Set([STATE_RELATIVE, LEGACY_RUNTIME_RELATIVE, SEARCH_REGISTRY_RELATIVE]);
   const ownership = readOwnership(context);
   if (ownership.sourceSha256) paths.add(ownership.runtimeRelative);
   const files = scanGuardSourceFiles(context);
@@ -151,7 +156,7 @@ function codexHookFeatures(context) {
   const file = path.join(context.home, '.codex/config.toml');
   let text;
   try { text = fs.readFileSync(file, 'utf8'); }
-  catch (error) { if (error.code === 'ENOENT') return { disabled: false, activation: 'unknown', trust: 'unknown', config: file, values: {} }; throw error; }
+  catch (error) { if (error.code === 'ENOENT') return { disabled: false, activation: 'enabled', trust: 'unknown', config: file, values: {} }; throw error; }
   let section = '';
   const values = {};
   for (const line of text.split(/\r?\n/u)) {
@@ -162,9 +167,10 @@ function codexHookFeatures(context) {
   }
   // PAC installs a user-level hooks.json entry. `plugin_hooks=false` only
   // disables bundled Plugin hooks and must not make this independent gate
-  // look inactive.
+  // look inactive. Hooks are a stable Codex feature, so absence of an explicit
+  // `hooks = true` keeps the host default rather than disabling PAC.
   const disabled = values.hooks === false || values.codex_hooks === false;
-  const activation = disabled ? 'disabled' : (values.hooks === true ? 'enabled' : 'unknown');
+  const activation = disabled ? 'disabled' : 'enabled';
   return { disabled, activation, trust: 'unknown', config: file, values };
 }
 
@@ -175,11 +181,42 @@ function hostHookState(context, host, config) {
   return codexHookFeatures(context);
 }
 
+function codexAppServerLauncher(context) {
+  const override = process.env.PAC_CODEX;
+  if (override) {
+    return process.platform === 'win32' && ['.js', '.cjs', '.mjs'].includes(path.extname(override).toLowerCase())
+      ? { executable: process.execPath, prefixArgs: [override] }
+      : { executable: override, prefixArgs: [] };
+  }
+  if (process.platform !== 'win32') return { executable: 'codex', prefixArgs: [] };
+
+  const localAppData = process.env.LOCALAPPDATA || path.join(context.home, 'AppData/Local');
+  const trustedRoot = path.resolve(localAppData, 'OpenAI/Codex/bin');
+  const candidates = [];
+  if (process.env.CODEX_CLI_PATH) candidates.push(process.env.CODEX_CLI_PATH);
+  try {
+    const text = fs.readFileSync(path.join(context.home, '.codex/config.toml'), 'utf8');
+    const match = text.match(/^\s*CODEX_CLI_PATH\s*=\s*'([^'\r\n]+)'\s*$/mu);
+    if (match) candidates.push(match[1]);
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  for (const candidate of candidates) {
+    try {
+      const resolved = path.resolve(candidate);
+      const relative = path.relative(trustedRoot, resolved);
+      if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+          || path.basename(resolved).toLowerCase() !== 'codex.exe') continue;
+      const stat = fs.lstatSync(resolved);
+      if (stat.isFile() && !stat.isSymbolicLink()) return { executable: resolved, prefixArgs: [] };
+    } catch { /* try the next host-owned candidate */ }
+  }
+  return { executable: 'codex', prefixArgs: [] };
+}
+
 async function codexHookTrustStatus(context, descriptor, expected) {
   if (typeof context.codexHookTrustProbe === 'function') {
     return await context.codexHookTrustProbe({ descriptor, expected });
   }
-  const executable = process.env.PAC_CODEX || 'codex';
+  const launcher = codexAppServerLauncher(context);
   const maxBytes = 2 * 1024 * 1024;
   const timeoutMs = 5000;
   return await new Promise((resolve) => {
@@ -187,7 +224,7 @@ async function codexHookTrustStatus(context, descriptor, expected) {
     let stdout = '';
     let stderrBytes = 0;
     let initialized = false;
-    const child = spawn(executable, ['app-server', '--stdio'], {
+    const child = spawn(launcher.executable, [...launcher.prefixArgs, 'app-server', '--stdio'], {
       cwd: context.root,
       env: {
         ...process.env,
@@ -431,11 +468,11 @@ function trustedExecutableCandidates(context, profile = null) {
   return candidates.filter((candidate) => {
     try {
       const stat = fs.lstatSync(candidate);
-      if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+      if (!stat.isFile() || stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o022) ||
           (typeof process.getuid === 'function' && stat.uid !== process.getuid()) || syncedPath(candidate)) return false;
       const home = path.resolve(context.home);
       const homeStat = fs.lstatSync(home);
-      if (!homeStat.isDirectory() || homeStat.isSymbolicLink() || (homeStat.mode & 0o022) !== 0 ||
+      if (!homeStat.isDirectory() || homeStat.isSymbolicLink() || hasUnsafePosixMode(homeStat, 0o022) ||
           (typeof process.getuid === 'function' && homeStat.uid !== process.getuid())) return false;
       const suffix = path.relative(home, path.resolve(candidate));
       if (suffix === '..' || suffix.startsWith(`..${path.sep}`) || path.isAbsolute(suffix)) return false;
@@ -443,7 +480,7 @@ function trustedExecutableCandidates(context, profile = null) {
       for (const component of suffix.split(path.sep).filter(Boolean)) {
         cursor = path.join(cursor, component);
         const item = fs.lstatSync(cursor);
-        if (item.isSymbolicLink() || (item.mode & 0o022) !== 0 ||
+        if (item.isSymbolicLink() || hasUnsafePosixMode(item, 0o022) ||
             (typeof process.getuid === 'function' && item.uid !== process.getuid())) return false;
       }
       const expected = expectations?.get(path.basename(candidate));
@@ -504,13 +541,31 @@ function approvedSystemNodeDigests(primaryLauncher) {
 }
 
 function registryPath(context) {
-  return context.searchRegistryPath || path.join(context.home, '.config/personal-agent-control/search-roots.json');
+  return context.searchRegistryPath || path.join(context.home, SEARCH_REGISTRY_RELATIVE);
+}
+
+async function ensureSearchRegistry(context) {
+  const file = registryPath(context);
+  await assertSafeManagedObject(context.home, file, 'PAC search registry', 'file');
+  try {
+    const stat = await fsp.lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new PacError('SCAN_GUARD_REGISTRY_UNSAFE', `Search registry must be a regular file: ${file}`);
+    }
+    return false;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+  await assertSafeManagedPath(context.home, path.dirname(file), 'PAC search registry directory');
+  await fsp.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  await atomicWriteFile(file, `${JSON.stringify({ schemaVersion: 1, roots: [] }, null, 2)}\n`, 0o600);
+  return true;
 }
 
 function registryDigest(context) {
   const file = registryPath(context);
   const stat = fs.lstatSync(file);
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+  if (!stat.isFile() || stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o022) ||
       (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
     throw new PacError('SCAN_GUARD_REGISTRY_UNSAFE', `Search registry must be a private regular file: ${file}`);
   }
@@ -525,7 +580,7 @@ function registryDigest(context) {
   for (const component of suffix.split(path.sep).filter(Boolean)) {
     cursor = path.join(cursor, component);
     const item = fs.lstatSync(cursor);
-    if (item.isSymbolicLink() || (item.mode & 0o022) !== 0 ||
+    if (item.isSymbolicLink() || hasUnsafePosixMode(item, 0o022) ||
         (typeof process.getuid === 'function' && item.uid !== process.getuid())) {
       throw new PacError('SCAN_GUARD_REGISTRY_UNSAFE', `Search registry path is not owner-controlled: ${cursor}`);
     }
@@ -545,8 +600,7 @@ function hookCommand(context, host, hookRuntime, registryInfo = null, profile = 
       quotePosix(`HOME=${context.home}`), quotePosix('PATH=/usr/bin:/bin'), quotePosix('LANG=C'), quotePosix('LC_ALL=C')]),
     quotePosix(launcher), quotePosix(hookRuntime), '--hook', '--host', host, '--mode', 'balanced',
     '--home', quotePosix(context.home), '--runtime', quotePosix(path.dirname(hookRuntime)),
-    '--registry', quotePosix(context.searchRegistryPath ||
-      path.join(context.home, '.config/personal-agent-control/search-roots.json')),
+    '--registry', quotePosix(context.searchRegistryPath || path.join(context.home, SEARCH_REGISTRY_RELATIVE)),
     '--registry-sha256', quotePosix(registry.sha256),
     '--launcher', quotePosix(launcher), '--launcher-sha256', quotePosix(fileDigest(launcher)),
     ...approvedNodes.flatMap((value) => ['--approved-node-sha256', quotePosix(value)]),
@@ -630,14 +684,14 @@ async function ensurePrivateDirectory(directory, label, home) {
   }
   let cursor = trustedHome;
   const homeStat = await fsp.lstat(cursor);
-  if (!homeStat.isDirectory() || homeStat.isSymbolicLink() || (homeStat.mode & 0o022) !== 0 ||
+  if (!homeStat.isDirectory() || homeStat.isSymbolicLink() || hasUnsafePosixMode(homeStat, 0o022) ||
       (typeof process.getuid === 'function' && homeStat.uid !== process.getuid())) {
     throw new PacError('SCAN_GUARD_RUNTIME_UNSAFE', `HOME is not a private directory: ${trustedHome}`);
   }
   for (const component of suffix.split(path.sep).filter(Boolean)) {
     cursor = path.join(cursor, component);
     const stat = await fsp.lstat(cursor);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+    if (!stat.isDirectory() || stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o022) ||
         (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
       throw new PacError('SCAN_GUARD_RUNTIME_UNSAFE', `${label} is not a private directory: ${cursor}`);
     }
@@ -669,7 +723,7 @@ async function stageRuntime(context) {
   if (!current) await atomicWriteFile(target, content, 0o500);
   await fsp.chmod(target, 0o500);
   const targetStat = await fsp.lstat(target);
-  if (targetStat.isSymbolicLink() || !targetStat.isFile() || (targetStat.mode & 0o077) !== 0 ||
+  if (targetStat.isSymbolicLink() || !targetStat.isFile() || hasUnsafePosixMode(targetStat, 0o077) ||
       (typeof process.getuid === 'function' && targetStat.uid !== process.getuid()) ||
       fileDigest(target) !== sourceSha256) {
     throw new PacError('SCAN_GUARD_RUNTIME_UNSAFE', `Scan-guard runtime is not a private regular file: ${target}`);
@@ -700,7 +754,7 @@ function runtimeStatus(context, ownership) {
   const file = runtimePath(context, ownership.runtimeRelative);
   try {
     const stat = fs.lstatSync(file);
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 ||
+    if (!stat.isFile() || stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o077) ||
         (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
       return { valid: false, state: 'unsafe', path: file };
     }
@@ -713,7 +767,7 @@ function runtimeStatus(context, ownership) {
     for (const component of suffix.split(path.sep).filter(Boolean)) {
       cursor = path.join(cursor, component);
       const parent = fs.lstatSync(cursor);
-      if (parent.isSymbolicLink() || (parent.mode & 0o022) !== 0 ||
+      if (parent.isSymbolicLink() || hasUnsafePosixMode(parent, 0o022) ||
           (typeof process.getuid === 'function' && parent.uid !== process.getuid())) {
         return { valid: false, state: 'unsafe', path: file };
       }
@@ -737,7 +791,7 @@ async function retireRuntimeIfOwned(context, ownership) {
     if (error.code === 'ENOENT') return { action: 'absent' };
     throw error;
   }
-  if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0 ||
+  if (!stat.isFile() || stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o077) ||
       (typeof process.getuid === 'function' && stat.uid !== process.getuid()) ||
       fileDigest(file) !== ownership.sourceSha256) {
     throw new PacError('SCAN_GUARD_RUNTIME_DRIFT',
@@ -866,6 +920,7 @@ export async function reconcileScanGuard(context, enabledHosts, scopeHosts, prof
     throw new PacError('SCAN_GUARD_HELPER_MISMATCH',
       'PAC scan-guard helpers are missing, unsafe, or differ from the active Profile source.', helperReadiness);
   }
+  if (enabled.size > 0) await ensureSearchRegistry(context);
   const runtime = enabled.size > 0 ? await stageRuntime(context) : null;
   const registry = enabled.size > 0 ? registryDigest(context) : null;
   if (runtime && registry) {
@@ -889,7 +944,7 @@ export async function reconcileScanGuard(context, enabledHosts, scopeHosts, prof
     const hostState = hostHookState(context, host, config);
     if (enabled.has(host)) {
       if (hostState.disabled || hostState.activation !== 'enabled') {
-        throw new PacError('SCAN_GUARD_HOST_DISABLED', `${host} hooks are disabled or not explicitly enabled by host configuration: ${descriptor.file}`);
+        throw new PacError('SCAN_GUARD_HOST_DISABLED', `${host} hooks are disabled by host configuration: ${descriptor.file}`);
       }
       const expected = expectedEntry(context, host, runtime.target, registry, profile);
       if (prior && (!actual || !owned)) {

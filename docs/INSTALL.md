@@ -2,7 +2,9 @@
 
 ## Preconditions
 
-- Linux x86-64 or macOS Apple Silicon. The exact acceptance evidence and any
+- Linux x86-64, macOS Apple Silicon, or native Windows x86-64. Native Windows
+  uses Git for Windows Git Bash for PAC's POSIX transaction scripts and needs
+  `cygpath` from that installation. The exact acceptance evidence and any
   unexecuted live-host combinations are recorded in
   [VERIFICATION.md](VERIFICATION.md), not inferred from platform support.
 - Git, curl, and tar available from the shell. SSH is required only for a
@@ -22,10 +24,11 @@ Master's Python, Chromium, or other task-specific prerequisites; the upstream
 Skill handles them on demand when that route is used.
 
 Git, curl, and tar are the Core bootstrap trust base: they must already exist
-because they acquire and start the installer. Git's configured credential
-helper or SSH agent authenticates optional private sources. Preflight verifies
-the required subset, and all post-bootstrap tools are installed by the single
-pinned mise graph.
+because they acquire and start the installer. On Windows, run the bootstrap
+from Git Bash so Git, `sh`, and `cygpath` share one path model. Git's configured
+credential helper or SSH agent authenticates optional private sources. Preflight
+verifies the required subset, and all post-bootstrap tools are installed by the
+single pinned mise graph.
 
 ## One-command install
 
@@ -38,6 +41,11 @@ PAC_AGENTS=codex,claude sh -c "$(curl -fsLS https://get.chezmoi.io)" -- \
   --config "$HOME/.config/personal-agent-control/chezmoi.toml" \
   init --apply https://github.com/jk-zhang-meta/personal-agent-control.git
 ```
+
+Use the same command from Git Bash on native Windows. Chezmoi installs the
+checksum-pinned Windows `mise.exe`; PAC then installs `pac`, `pac.cmd`, and
+`pac.ps1` launchers bound to that mise graph so Bash, cmd.exe, and PowerShell
+use the same pinned Node/runtime.
 
 The `-t` flag pins the Chezmoi bootstrap. The repository's
 `.chezmoiversion` rejects older binaries. Chezmoi verifies the checksum-pinned
@@ -132,6 +140,7 @@ Only selected host adapters are managed. Both-host mode creates or updates:
 ~/.config/personal-agent-control/profile.json        # only when a Profile is active
 ~/.config/personal-agent-control/profile-workspace.json # after init/personal mutation
 ~/.config/personal-agent-control/profile-bootstrap.md # only when declared
+~/.config/personal-agent-control/search-roots.json   # machine-local scan/index registry
 ~/.config/personal-agent-control/state.boltdb
 ~/.local/share/personal-agent-profiles/<repo-hash>/<commit>/
 ~/.local/share/personal-agent-profile-workspaces/default/ # default editable workspace
@@ -146,8 +155,12 @@ Only selected host adapters are managed. Both-host mode creates or updates:
 ~/.claude/plugins/cache/<managed-marketplace>/...
 ~/.local/state/personal-agent-control/owned-plugins.tsv
 ~/.local/bin/pac
-~/.local/bin/mise
-~/.local/share/mise/...
+~/.local/bin/pac.cmd                         # Windows only
+~/.local/bin/pac.ps1                         # Windows only
+~/.local/bin/mise                            # Linux/macOS
+~/.local/bin/mise.exe                        # Windows
+~/.local/share/mise/...                      # Linux/macOS
+%LOCALAPPDATA%/mise/...                      # Windows
 ```
 
 Unrelated user-level Skill entries are preserved for inspection but reported as

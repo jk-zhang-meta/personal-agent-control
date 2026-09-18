@@ -92,10 +92,16 @@ async function inspectEntry(context, host, entry) {
 }
 
 async function applyAdapter(context, host, entries) {
-  const chezmoi = process.env.PAC_CHEZMOI || path.join(context.home, '.local/bin/chezmoi');
-  try { await fs.access(chezmoi, fs.constants.X_OK); }
-  catch {
-    throw new PacError('HOST_ADAPTER_TOOL_MISSING', `Chezmoi is required to install the ${host} adapter: ${chezmoi}`);
+  const chezmoiCandidates = [
+    path.join(context.home, '.local/bin/chezmoi.exe'),
+    path.join(context.home, '.local/bin/chezmoi'),
+  ];
+  const chezmoi = process.env.PAC_CHEZMOI || await Promise.any(chezmoiCandidates.map(async (candidate) => {
+    await fs.access(candidate, fs.constants.X_OK);
+    return candidate;
+  })).catch(() => null);
+  if (!chezmoi) {
+    throw new PacError('HOST_ADAPTER_TOOL_MISSING', `Chezmoi is required to install the ${host} adapter: ${chezmoiCandidates.join(' or ')}`);
   }
   // Chezmoi remembers a previously written file even after an external
   // rollback or a user removes it. In that state --error-on-conflict treats a

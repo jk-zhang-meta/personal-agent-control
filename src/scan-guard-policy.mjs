@@ -83,6 +83,10 @@ const SCAN_TASK_RUNNERS = new Set([
   'dotnet', 'msbuild', 'terraform', 'tofu', 'ansible', 'ansible-playbook',
   'qjs', 'quickjs',
 ]);
+
+function hasUnsafePosixMode(stat, mask) {
+  return process.platform !== 'win32' && (stat.mode & mask) !== 0;
+}
 // These launchers can dispatch a script/remote command whose scan behavior is
 // not visible in the current argv (`sudo make`, `ssh host command`,
 // `busybox sh`, ...). They are intentionally unavailable on the shell path;
@@ -433,7 +437,7 @@ function registryRoots(options, home) {
       const file = options.registryPath || defaultRegistryPath(home);
       try {
         const stat = fs.lstatSync(file);
-        if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+        if (!stat.isFile() || stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o022) ||
             (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
           return { roots: [], error: 'search registry is not a private regular file' };
         }
@@ -500,7 +504,7 @@ function safeCwd(cwd, home) {
       // deliberate exception: its 0777 mode is a projection of Windows ACLs,
       // so the synchronized-storage decision above still forces index-only
       // handling while preserving usability of a clean OneDrive checkout.
-      if (!synced && ((item.mode & 0o022) !== 0 ||
+      if (!synced && (hasUnsafePosixMode(item, 0o022) ||
           (uid !== null && item.uid !== uid && item.uid !== 0))) return null;
     } catch { return null; }
   }
@@ -1005,11 +1009,12 @@ function codeGraphResourceRoute(tokens, profile, cwdInfo, home) {
     for (const component of path.relative(cursor, expected).split(path.sep).filter(Boolean)) {
       cursor = path.join(cursor, component);
       const stat = fs.lstatSync(cursor);
-      if (stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+      if (stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o022) ||
           (uid !== null && stat.uid !== uid && stat.uid !== 0)) {
         return routeBlock('CodeGraph executable path is not owner-controlled');
       }
-      if (cursor === expected && (!stat.isFile() || (stat.mode & 0o111) === 0)) {
+      if (cursor === expected && (!stat.isFile() ||
+          (process.platform !== 'win32' && (stat.mode & 0o111) === 0))) {
         return routeBlock('CodeGraph executable is not a regular executable file');
       }
     }
@@ -1386,7 +1391,7 @@ function trustedLauncherMatches(executable, options) {
       cursor = path.join(cursor, component);
       const stat = fs.lstatSync(cursor);
       const uid = typeof process.getuid === 'function' ? process.getuid() : null;
-      if (stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+      if (stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o022) ||
           (uid !== null && stat.uid !== 0 && stat.uid !== uid)) return false;
     }
     const stat = fs.lstatSync(resolved);
@@ -1413,7 +1418,7 @@ function trustedHelperTarget(tokens, options, expectedBase) {
       cursor = path.join(cursor, component);
       const stat = fs.lstatSync(cursor);
       const uid = typeof process.getuid === 'function' ? process.getuid() : null;
-      if (stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+      if (stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o022) ||
           (uid !== null && stat.uid !== 0 && stat.uid !== uid)) return false;
     }
     const stat = fs.lstatSync(resolved);
@@ -1712,7 +1717,7 @@ function safeBuildRouteOperand(value, cwdInfo) {
       if (cursor !== candidate) return null;
       break;
     }
-    if (stat.isSymbolicLink() || (stat.mode & 0o022) !== 0 ||
+    if (stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o022) ||
         (typeof process.getuid === 'function' && stat.uid !== 0 && stat.uid !== process.getuid())) return null;
     if (cursor !== candidate && !stat.isDirectory()) return null;
   }
@@ -1953,14 +1958,14 @@ function trustedRoute(tokens, options, cwd = process.cwd()) {
       cursor = path.join(cursor, component);
       const componentStat = fs.lstatSync(cursor);
       if (componentStat.isSymbolicLink()) return routeBlock('trusted helper path contains a symlink');
-      if ((componentStat.mode & 0o022) !== 0) return routeBlock('trusted helper path is group/world writable');
+      if (hasUnsafePosixMode(componentStat, 0o022)) return routeBlock('trusted helper path is group/world writable');
       const uid = typeof process.getuid === 'function' ? process.getuid() : null;
       if (uid !== null && componentStat.uid !== 0 && componentStat.uid !== uid) {
         return routeBlock('trusted helper path is not root/current-user controlled');
       }
     }
     const stat = fs.lstatSync(targetPath);
-    if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) !== 0) return routeBlock('trusted helper file is unsafe');
+    if (!stat.isFile() || stat.isSymbolicLink() || hasUnsafePosixMode(stat, 0o022)) return routeBlock('trusted helper file is unsafe');
     if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) return routeBlock('trusted helper owner is not the current user');
     if (isSyncedStorage(targetPath)) return routeBlock('trusted helper may not live on synchronized storage');
     const baseName = commandName(targetPath);
@@ -2095,7 +2100,7 @@ function gitConfigUnsafe(cwdInfo) {
       if (!stat) continue;
       const uid = typeof process.getuid === 'function' ? process.getuid() : null;
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024 ||
-          (stat.mode & 0o022) !== 0 || (uid !== null && stat.uid !== 0 && stat.uid !== uid)) {
+          hasUnsafePosixMode(stat, 0o022) || (uid !== null && stat.uid !== 0 && stat.uid !== uid)) {
         return 'Git config is not a small private owner-controlled regular file';
       }
       const raw = fs.readFileSync(config, 'utf8');

@@ -17,6 +17,12 @@ import {
 } from '../src/scan-guard.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const shellExecutable = process.platform === 'win32'
+  ? [
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git/bin/sh.exe'),
+    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs/Git/bin/sh.exe'),
+  ].filter(Boolean).find((candidate) => existsSync(candidate)) || 'sh.exe'
+  : '/bin/sh';
 const profileCandidates = [
   process.env.PAC_PROFILE_SOURCE,
   path.join(homedir(), '.agent-work/runtime/pac-profile-v11-src'),
@@ -60,7 +66,8 @@ async function fixture(t, { codexHooks = true, codexTrust = 'trusted' } = {}) {
   await fs.chmod(registry, 0o600);
   await fs.mkdir(path.join(home, '.codex'), { recursive: true, mode: 0o700 });
   await fs.writeFile(path.join(home, '.codex/config.toml'),
-    codexHooks ? '[features]\nhooks = true\n' : '[features]\n', { mode: 0o600 });
+    codexHooks === false ? '[features]\nhooks = false\n'
+      : codexHooks === true ? '[features]\nhooks = true\n' : '[features]\n', { mode: 0o600 });
 
   const helperRoot = path.join(home, '.local/share/agent-skills/.agents/skills');
   const guard = path.join(helperRoot, 'resource-guard/scripts/resource-guard.mjs');
@@ -638,7 +645,7 @@ test('host-native file, patch, image, and web tools use bounded schemas', async 
   assert.ok(hookDecision({ tool_name: 'apply_patch', cwd: project,
     tool_input: { command: `${patch}\n*** Begin Patch\n*** End Patch` } }, options)?.blocked);
   assert.ok(hookDecision({ tool_name: 'apply_patch', cwd: project,
-    tool_input: { command: '*** Begin Patch\n*** Update File: /dev/zero\n@@\n-x\n+y\n*** End Patch' } }, options)?.blocked);
+    tool_input: { command: '*** Begin Patch\n*** Update File: src\n@@\n-x\n+y\n*** End Patch' } }, options)?.blocked);
   const patchLargeA = path.join(project, 'large-a.bin');
   const patchLargeB = path.join(project, 'large-b.bin');
   await fs.writeFile(patchLargeA, 'x');
@@ -818,7 +825,7 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
   const applied = await reconcileScanGuard(context, ['codex', 'claude'], ['codex', 'claude'], activeProfile);
   assert.equal(applied.hosts.every((entry) => entry.action === 'installed'), true);
   const runtime = applied.runtime.path;
-  assert.equal((await fs.stat(runtime)).mode & 0o777, 0o500);
+  if (process.platform !== 'win32') assert.equal((await fs.stat(runtime)).mode & 0o777, 0o500);
   for (const host of ['codex', 'claude']) {
     const configFile = path.join(home, host === 'codex' ? '.codex/hooks.json' : '.claude/settings.json');
     const config = JSON.parse(await fs.readFile(configFile, 'utf8'));
@@ -838,7 +845,7 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
       assert.equal(entry.hooks[0].command.includes('--approved-node-sha256'), true);
     }
     assert.equal(entry.hooks[0].command.includes('--trusted-memory-ledger-sha256'), true);
-    const result = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
+    const result = spawnSync(shellExecutable, ['-c', entry.hooks[0].command], {
       cwd: project,
       input: JSON.stringify({ tool_name: 'Bash', cwd: project, tool_input: { command: 'find /' } }),
       encoding: 'utf8',
@@ -851,7 +858,7 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
       .match(/PAC_USER_AUTHORIZED_SHA256=([0-9a-f]{64})/u)?.[1];
     if (host === 'codex') {
       assert.ok(authorization);
-      const authorized = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
+      const authorized = spawnSync(shellExecutable, ['-c', entry.hooks[0].command], {
         cwd: project,
         input: JSON.stringify({ tool_name: 'Bash', cwd: project,
           tool_input: { command: `PAC_USER_AUTHORIZED_SHA256=${authorization} find /` } }),
@@ -862,7 +869,7 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
     } else {
       assert.equal(authorization, undefined);
     }
-    const ordinaryRemoteRead = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
+    const ordinaryRemoteRead = spawnSync(shellExecutable, ['-c', entry.hooks[0].command], {
       cwd: project,
       input: JSON.stringify({ tool_name: 'Bash', cwd: project,
         tool_input: { command: "ssh example 'journalctl -u app -n 20 --no-pager'" } }),
@@ -870,7 +877,7 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
     });
     assert.equal(ordinaryRemoteRead.status, 0, ordinaryRemoteRead.stderr || ordinaryRemoteRead.stdout);
     assert.equal(ordinaryRemoteRead.stdout, '');
-    const allowed = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
+    const allowed = spawnSync(shellExecutable, ['-c', entry.hooks[0].command], {
       cwd: project,
       input: JSON.stringify({ tool_name: 'apply_patch', cwd: project, tool_input: { command: [
         '*** Begin Patch', '*** Add File: src/new.rs', '+fn main() {}', '*** End Patch',
@@ -879,7 +886,7 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
     });
     assert.equal(allowed.status, 0, allowed.stderr || allowed.stdout);
     assert.equal(allowed.stdout, '');
-    const memoryAllowed = spawnSync('/bin/sh', ['-c', entry.hooks[0].command], {
+    const memoryAllowed = spawnSync(shellExecutable, ['-c', entry.hooks[0].command], {
       cwd: project,
       input: JSON.stringify({ tool_name: 'Bash', cwd: project, tool_input: { command: [
         await fs.realpath(process.execPath),
@@ -894,9 +901,10 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
   assert.deepEqual((await scanGuardStatus(context, ['codex', 'claude'], ['codex', 'claude'], activeProfile)).map((entry) => entry.valid), [true, true]);
   assert.equal(await hasPriorScanGuardState(context, 'codex'), true);
   assert.deepEqual(scanGuardManagedPaths(context, ['codex']), [
-    path.relative(home, runtime),
+    path.relative(home, runtime).split(path.sep).join('/'),
     '.agent-work/runtime/pac/scan-guard-hook.mjs',
     '.codex/hooks.json',
+    '.config/personal-agent-control/search-roots.json',
     '.local/state/personal-agent-control/scan-guard.json',
   ]);
 });
@@ -917,7 +925,7 @@ test('scan-guard policy revisions keep captured hook commands executable', async
     const config = JSON.parse(await fs.readFile(path.join(value.home, '.codex/hooks.json'), 'utf8'));
     return config.hooks.PreToolUse[0].hooks[0].command;
   };
-  const invoke = (hookCommand) => spawnSync('/bin/sh', ['-c', hookCommand], {
+  const invoke = (hookCommand) => spawnSync(shellExecutable, ['-c', hookCommand], {
     cwd: value.project,
     input: JSON.stringify({ tool_name: 'Bash', cwd: value.project,
       tool_input: { command: '/usr/bin/true' } }),
@@ -975,7 +983,7 @@ test('legacy stable runtime remains executable during content-addressed migratio
   assert.equal(migrated.hosts[0].action, 'updated');
   assert.notEqual(migrated.runtime.path, stableRuntime);
   assert.equal(await fs.readFile(stableRuntime, 'utf8'), await fs.readFile(migrated.runtime.path, 'utf8'));
-  const legacyResult = spawnSync('/bin/sh', ['-c', legacyCommand], {
+  const legacyResult = spawnSync(shellExecutable, ['-c', legacyCommand], {
     cwd: value.project,
     input: JSON.stringify({ tool_name: 'Bash', cwd: value.project,
       tool_input: { command: '/usr/bin/true' } }),
@@ -1029,12 +1037,18 @@ test('PAC hook failures use stderr so Codex treats them as blocking', async (t) 
   assert.match(result.stderr, /scan-guard trust digests are incomplete/u);
 });
 
-test('Codex hooks must be explicitly enabled and unmanaged markers are preserved', async (t) => {
+test('Codex hooks use the stable default, honor explicit disable, and preserve unmanaged markers', async (t) => {
   const disabled = await fixture(t, { codexHooks: false });
   await assert.rejects(
     reconcileScanGuard(disabled.context, ['codex'], ['codex'], disabled.activeProfile),
     (error) => error.code === 'SCAN_GUARD_HOST_DISABLED',
   );
+
+  const defaultEnabled = await fixture(t, { codexHooks: null });
+  const defaultResult = await reconcileScanGuard(
+    defaultEnabled.context, ['codex'], ['codex'], defaultEnabled.activeProfile,
+  );
+  assert.equal(defaultResult.hosts[0].action, 'installed');
 
   const value = await fixture(t);
   await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);

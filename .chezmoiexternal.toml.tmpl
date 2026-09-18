@@ -13,7 +13,13 @@
     path = "mise/bin/mise"
     executable = true
     checksum.sha256 = "2b551938d1c5eb7e20193340b657c78f1e3815d1c65efb8ebe3f1a3b5fb7e019"
+{{- else if and (eq .chezmoi.os "windows") (eq .chezmoi.arch "amd64") }}
+[".local/bin/mise.exe"]
+    type = "file"
+    url = "https://github.com/jdx/mise/releases/download/v2026.8.2/mise-v2026.8.2-windows-x64.exe"
+    executable = true
+    checksum.sha256 = "f1d183d107991250829292543ea1de966b9e7bf2aa57ec730533d306f44978f9"
 {{- else }}
-{{- fail "Personal Agent Control v1 supports linux-amd64 and darwin-arm64 only" }}
+{{- fail "Personal Agent Control v1 supports linux-amd64, darwin-arm64, and windows-amd64 only" }}
 {{- end }}
 {{- end }}

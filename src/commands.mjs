@@ -1269,10 +1269,15 @@ async function selfUpdate(context, options) {
     await run('git', ['-C', context.root, 'pull', '--ff-only'], { errorCode: 'SELF_UPDATE_FAILED' });
     const after = (await run('git', ['-C', context.root, 'rev-parse', 'HEAD'], { errorCode: 'SELF_UPDATE_FAILED' })).stdout.trim();
     try {
-      const localMise = path.join(context.home, '.local/bin/mise');
-      const mise = process.env.PAC_MISE || await fs.access(localMise, fs.constants.X_OK)
-        .then(() => localMise)
-        .catch(() => 'mise');
+      const localMiseCandidates = [
+        path.join(context.home, '.local/bin/mise.exe'),
+        path.join(context.home, '.local/bin/mise'),
+      ];
+      const localMise = await Promise.any(localMiseCandidates.map(async (candidate) => {
+        await fs.access(candidate, fs.constants.X_OK);
+        return candidate;
+      })).catch(() => null);
+      const mise = process.env.PAC_MISE || localMise || 'mise';
       await run(mise, ['trust', '--yes', path.join(context.root, 'mise.toml')], {
         cwd: context.root,
         errorCode: 'TOOL_UPDATE_FAILED',

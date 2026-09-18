@@ -17,6 +17,9 @@ export const MATERIALIZER_EXCEPTIONS = [{
   commit: 'f5410f968e0fadbbd1f9815539238a8dda34b4d2',
   skillPath: 'skills/ppt-master',
   contentSha256: '18facf0343aba4c9cabb356fdc370802c36913eaa8d52f45e62f09f84185294f',
+  platformContentSha256: {
+    win32: '5bf79890710cf55e201501f7e61b77eb530f4841b9804f5e992674cf2a61ad00',
+  },
   reason: 'APM 0.28.0 cannot safely reload the generated lock for this 12,230-file Skill.',
 }];
 
@@ -51,6 +54,7 @@ function pinFromCapability(defaults, capability) {
     ref: capability.ref || capability.commit.toLowerCase(),
     commit: capability.commit.toLowerCase(),
     contentSha256: capability.contentSha256.toLowerCase(),
+    platformContentSha256: {},
     skillPath: capability.skillPath || defaults.skillPath,
   };
 }
@@ -90,7 +94,7 @@ function expectedContentDigest(entry) {
   if (process.env.NODE_ENV === 'test' && process.env.PAC_TEST_PPT_CONTENT_SHA256) {
     return process.env.PAC_TEST_PPT_CONTENT_SHA256;
   }
-  return entry.contentSha256;
+  return entry.platformContentSha256?.[process.platform] || entry.contentSha256;
 }
 
 async function hashDirectory(root) {
@@ -197,6 +201,7 @@ export async function applyMaterializerExceptions(
       const skillArgs = ['add', source, '--global', '--skill', entry.name, '--yes', '--agent', 'universal'];
       const isolated = {
         HOME: neutralStore,
+        ...(process.platform === 'win32' ? { USERPROFILE: neutralStore } : {}),
         XDG_CONFIG_HOME: path.join(neutralStore, '.config'),
         XDG_DATA_HOME: path.join(neutralStore, '.local/share'),
         XDG_CACHE_HOME: path.join(neutralStore, '.cache'),
@@ -205,13 +210,36 @@ export async function applyMaterializerExceptions(
         DO_NOT_TRACK: '1',
       };
       const override = process.env.PAC_SKILLS;
-      const command = override || path.join(context.home, '.local/bin/mise');
+      const windowsMiseData = process.env.LOCALAPPDATA
+        || path.join(context.home, 'AppData/Local');
+      const windowsSkillsRoot = path.join(
+        windowsMiseData,
+        'mise/installs/npm-skills',
+        entry.engineVersion,
+        'node_modules',
+      );
+      const windowsSkillsCli = path.join(
+        windowsSkillsRoot,
+        '.mise',
+        `skills@${entry.engineVersion}`,
+        'node_modules/skills/bin/cli.mjs',
+      );
+      const command = override
+        || (process.platform === 'win32' ? process.execPath : path.join(context.home, '.local/bin/mise'));
       const args = override
         ? skillArgs
-        : ['--cd', context.root, 'exec', '--', 'env', ...Object.entries(isolated).map(([key, value]) => `${key}=${value}`), 'skills', ...skillArgs];
+        : (process.platform === 'win32'
+          ? [windowsSkillsCli, ...skillArgs]
+          : ['--cd', context.root, 'exec', '--', 'env', ...Object.entries(isolated).map(([key, value]) => `${key}=${value}`), 'skills', ...skillArgs]);
+      const windowsNodePath = [
+        windowsSkillsRoot,
+        path.join(windowsSkillsRoot, '.mise/node_modules'),
+      ].join(path.delimiter);
       await run(command, args, {
         cwd: override ? neutralStore : context.root,
-        env: override ? { ...process.env, ...isolated } : { ...process.env, HOME: context.home },
+        env: override || process.platform === 'win32'
+          ? { ...process.env, ...isolated, ...(process.platform === 'win32' ? { NODE_PATH: windowsNodePath } : {}) }
+          : { ...process.env, HOME: context.home },
         errorCode: 'MATERIALIZER_APPLY_FAILED',
       });
     } finally {

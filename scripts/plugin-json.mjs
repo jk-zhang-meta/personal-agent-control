@@ -28,7 +28,20 @@ if (!Array.isArray(plugins) &&
     (command.startsWith('plugin-') || command === 'plugins-for-marketplace')) usage();
 
 function samePath(left, right) {
-  return path.resolve(left) === path.resolve(right);
+  const nativePath = (value) => {
+    if (process.platform !== 'win32') return value;
+    const normalized = String(value).replaceAll('\\', '/').replace(/^\/\/?\?\//u, '');
+    const gitBashDrive = normalized.match(/^\/([A-Za-z])(?:\/(.*))?$/u);
+    if (gitBashDrive) {
+      const tail = gitBashDrive[2] ? gitBashDrive[2].replaceAll('/', '\\') : '';
+      return `${gitBashDrive[1].toUpperCase()}:\\${tail}`;
+    }
+    return normalized;
+  };
+  const resolved = (value) => path.resolve(nativePath(value));
+  const a = resolved(left);
+  const b = resolved(right);
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
 function marketplaceName(entry) {
@@ -55,8 +68,9 @@ switch (command) {
     const entry = marketplaces.find((candidate) => marketplaceName(candidate) === name);
     if (!entry) process.exit(1);
     const exact = host === 'codex'
-      ? entry.marketplaceSource?.sourceType === 'local' &&
-        samePath(entry.marketplaceSource.source, source)
+      ? ((typeof entry.root === 'string' && samePath(entry.root, source)) ||
+        (entry.marketplaceSource?.sourceType === 'local' &&
+          samePath(entry.marketplaceSource.source, source)))
       : entry.source === 'directory' && samePath(entry.path, source);
     process.exit(exact ? 0 : 1);
   }
