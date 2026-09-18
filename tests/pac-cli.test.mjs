@@ -10,7 +10,8 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { readLock, readManifestDependencies, renderManifest, verifyRuntimeContent } from '../src/apm.mjs';
 import {
-  atomicWrite, reconcileProjections, createBackup, augmentBackup,
+  atomicWrite, reconcileProjections, retireLegacyCodexSkillDuplicates, preflightProjectionCollisions,
+  createBackup, augmentBackup,
 } from '../src/state.mjs';
 import {
   applyMaterializerExceptions, MATERIALIZER_EXCEPTIONS, selectedMaterializerExceptions,
@@ -776,6 +777,55 @@ test('projection reconciliation blocks unmanaged collisions', async () => {
     reconcileProjections(ctx, config, neutral, [{ id: 'example', physicalName: 'example', engine: 'apm' }], ['codex']),
     (error) => error.code === 'SKILL_COLLISION',
   );
+});
+
+test('projection reconciliation repairs an owned real-directory copy of the neutral Skill', async () => {
+  const home = await temporary('pac-projection-repair-copy-');
+  const ctx = context(home);
+  const neutral = path.join(home, '.local/share/agent-skills');
+  const physical = path.join(neutral, '.agents/skills/example');
+  const projected = path.join(home, '.agents/skills/example');
+  await fs.mkdir(physical, { recursive: true });
+  await fs.writeFile(path.join(physical, 'SKILL.md'), '---\nname: example\ndescription: test\n---\n');
+  await reconcileProjections(ctx, config, neutral, [{ id: 'example', physicalName: 'example', engine: 'apm' }], ['codex']);
+  await fs.unlink(projected);
+  await fs.cp(physical, projected, { recursive: true });
+
+  await assert.doesNotReject(preflightProjectionCollisions(
+    ctx, config, neutral, [{ id: 'example', physicalName: 'example', engine: 'apm' }], ['codex'],
+  ));
+  await reconcileProjections(ctx, config, neutral, [{ id: 'example', physicalName: 'example', engine: 'apm' }], ['codex']);
+  assert.equal((await fs.lstat(projected)).isSymbolicLink(), true);
+  assert.equal(path.resolve(path.dirname(projected), await fs.readlink(projected)), physical);
+});
+
+test('legacy Codex Skill duplicates are retired only when they match the neutral store', async () => {
+  const home = await temporary('pac-legacy-codex-skills-');
+  const ctx = context(home);
+  const neutral = path.join(home, '.local/share/agent-skills');
+  const physicalRoot = path.join(neutral, '.agents/skills');
+  const legacyRoot = path.join(home, '.codex/skills');
+  const skills = [
+    { id: 'same', physicalName: 'same', engine: 'apm' },
+    { id: 'modified', physicalName: 'modified', engine: 'apm' },
+    { id: 'mapped-same', physicalName: 'physical-same', engine: 'apm' },
+  ];
+  for (const skill of skills) {
+    const physical = path.join(physicalRoot, skill.physicalName);
+    await fs.mkdir(physical, { recursive: true });
+    await fs.writeFile(path.join(physical, 'SKILL.md'), `---\nname: ${skill.id}\ndescription: test\n---\n`);
+    await fs.cp(physical, path.join(legacyRoot, skill.id), { recursive: true });
+  }
+  await fs.appendFile(path.join(legacyRoot, 'modified/SKILL.md'), 'user change\n');
+
+  const retired = await retireLegacyCodexSkillDuplicates(
+    ctx, neutral, skills, ['codex'], ['codex'],
+  );
+
+  assert.deepEqual(retired, ['mapped-same', 'same']);
+  assert.equal(await exists(path.join(legacyRoot, 'same')), false);
+  assert.equal(await exists(path.join(legacyRoot, 'physical-same')), false);
+  assert.equal(await exists(path.join(legacyRoot, 'modified')), true);
 });
 
 test('projection reconciliation removes a disabled host from an explicit cleanup scope', async () => {

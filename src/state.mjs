@@ -6,6 +6,7 @@ import { HOSTS, hostSkillDirectory } from './config.mjs';
 import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mjs';
 import { atomicWriteFile } from './atomic-file.mjs';
 import { hasPriorScanGuardState, scanGuardManagedPaths } from './scan-guard.mjs';
+import { hashDirectory } from './profile.mjs';
 
 function utcStamp() {
   return new Date().toISOString().replace(/[-:]/gu, '').replace(/\.\d{3}Z$/u, 'Z');
@@ -231,6 +232,14 @@ async function neutralLinkTarget(link, physicalRoot) {
   }
 }
 
+async function identicalRealDirectory(candidate, physical) {
+  let stat;
+  try { stat = await fs.lstat(candidate); }
+  catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return false;
+  return await hashDirectory(candidate) === await hashDirectory(physical);
+}
+
 function skillTargetsHost(skill, host) {
   if (skill.targets === undefined) return true;
   if (!Array.isArray(skill.targets) || skill.targets.length === 0
@@ -259,7 +268,9 @@ export async function preflightProjectionCollisions(context, config, neutralStor
         if (error.code === 'ENOENT') continue;
         throw error;
       }
-      if (owned.has(id) && await neutralLinkTarget(candidate, physicalRoot)) continue;
+      const physical = path.join(physicalRoot, entry.physicalName || id);
+      if (owned.has(id) && (await neutralLinkTarget(candidate, physicalRoot)
+          || await identicalRealDirectory(candidate, physical))) continue;
       throw new PacError('SKILL_COLLISION', `Unmanaged entry blocks PAC projection: ${candidate}`);
     }
   }
@@ -335,6 +346,8 @@ export async function reconcileProjections(context, config, neutralStore, desire
           await fs.lstat(link);
           if (ownedBefore.has(name) && await neutralLinkTarget(link, physicalRoot)) {
             await fs.unlink(link);
+          } else if (ownedBefore.has(name) && await identicalRealDirectory(link, physical)) {
+            await fs.rm(link, { recursive: true });
           } else {
             throw new PacError('SKILL_COLLISION', `Unmanaged entry blocks PAC projection: ${link}`);
           }
@@ -354,6 +367,44 @@ export async function reconcileProjections(context, config, neutralStore, desire
   await writeOwnedSkills(context, desired);
   await writeOwnedSkillMap(context, desiredMap.values());
   return { ownedBefore: [...ownedBefore].sort(), ownedAfter: [...desired].sort() };
+}
+
+export async function retireLegacyCodexSkillDuplicates(
+  context,
+  neutralStore,
+  desiredSkills,
+  selectedHosts,
+  scopedHosts = HOSTS,
+) {
+  if (!selectedHosts.includes('codex') || !scopedHosts.includes('codex')) return [];
+  const legacyRoot = path.join(context.home, '.codex/skills');
+  try { await assertSafeManagedObject(context.home, legacyRoot, 'legacy Codex Skill directory', 'directory'); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const physicalRoot = path.join(neutralStore, '.agents/skills');
+  const retired = [];
+  for (const skill of desiredSkills.filter((entry) => skillTargetsHost(entry, 'codex'))) {
+    assertSafeName(skill.id);
+    assertSafeName(skill.physicalName);
+    const physical = path.join(physicalRoot, skill.physicalName);
+    let removed = false;
+    for (const legacyName of new Set([skill.id, skill.physicalName])) {
+      const legacy = path.join(legacyRoot, legacyName);
+      let stat;
+      try { stat = await fs.lstat(legacy); }
+      catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+      if (await linkPointsTo(legacy, physical)) {
+        await fs.unlink(legacy);
+        removed = true;
+        continue;
+      }
+      if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
+      if (!await identicalRealDirectory(legacy, physical)) continue;
+      await fs.rm(legacy, { recursive: true });
+      removed = true;
+    }
+    if (removed) retired.push(skill.id);
+  }
+  return retired.sort();
 }
 
 export async function hasPriorHostState(context, config, neutralStore, host) {
@@ -430,6 +481,7 @@ function backupObjectType(relative) {
     ['.local/share/agent-plugins/sources/', 'directory'],
     ['.codex/plugins/cache/', 'directory'],
     ['.codex/.tmp/marketplaces/', 'directory'],
+    ['.codex/skills/', 'any'],
     ['.claude/plugins/cache/', 'directory'],
     ['.claude/plugins/marketplaces/', 'directory'],
     ['.agents/skills/', 'any'],
@@ -563,6 +615,8 @@ export async function createBackup(context, config, neutralStore, desiredSkills,
     const desiredEntry = desiredMap.get(name);
     if (activeHosts.has('codex') && (owned.has(name) || !desiredEntry || skillTargetsHost(desiredEntry, 'codex'))) {
       paths.add(`.agents/skills/${name}`);
+      paths.add(`.codex/skills/${name}`);
+      if (desiredEntry?.physicalName) paths.add(`.codex/skills/${desiredEntry.physicalName}`);
     }
     if (activeHosts.has('claude') && (owned.has(name) || !desiredEntry || skillTargetsHost(desiredEntry, 'claude'))) {
       paths.add(`.claude/skills/${name}`);
@@ -745,6 +799,8 @@ function desiredStateBackupPaths(desiredSkills, options = {}) {
     paths.add(`.local/share/agent-skills/.agents/skills/${skill.physicalName}`);
     if (activeHosts.has('codex') && skillTargetsHost(skill, 'codex')) {
       paths.add(`.agents/skills/${skill.id}`);
+      paths.add(`.codex/skills/${skill.id}`);
+      paths.add(`.codex/skills/${skill.physicalName}`);
     }
     if (activeHosts.has('claude') && skillTargetsHost(skill, 'claude')) {
       paths.add(`.claude/skills/${skill.id}`);

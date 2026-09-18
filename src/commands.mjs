@@ -11,6 +11,7 @@ import {
 import {
   withLock, createBackup, augmentBackup, readOwnedSkills, reconcileProjections, discoverApmSkills,
   readOwnedSkillMap, writeReceipt, sha256File, preflightProjectionCollisions, atomicWrite,
+  retireLegacyCodexSkillDuplicates,
   hasPriorHostState,
 } from './state.mjs';
 import {
@@ -474,6 +475,9 @@ async function applyUnlocked(context, options = {}) {
     const adapters = await reconcileHostAdapters(context, enabled, reconciliationScope);
     const providers = await reconcileProviders(context, effectiveProfile, enabled, reconciliationScope, 'apply');
     const projections = await reconcileProjections(context, effectiveConfig, neutral, desired, enabled, reconciliationScope);
+    const retiredLegacyCodexSkills = await retireLegacyCodexSkillDuplicates(
+      context, neutral, desired, enabled, reconciliationScope,
+    );
     const retiredProfileSkills = await retireProfileSkills(context, neutral, priorOwnedMap, desired);
     // Native Plugin reconciliation may refresh host hook files.  The PAC
     // fragment is still installed after all other work so the final state is
@@ -494,7 +498,7 @@ async function applyUnlocked(context, options = {}) {
     });
     return {
       backup, receipt, hosts: scopedEnabledHosts, neutralSkillStore: neutral, skills: desired,
-      materializers, profileSkills, retiredProfileSkills,
+      materializers, profileSkills, retiredProfileSkills, retiredLegacyCodexSkills,
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
       bootstrap, profileApm, adapters, scanGuard, providers, projections, plugins, resolver, verification, sourceIntegrity,
     };
