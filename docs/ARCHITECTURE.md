@@ -467,7 +467,8 @@ Authentication, sessions, history, permissions, Plugin runtime state, logs, and
 caches stay host-owned. PAC reconciles only the declared Plugin installation and
 marketplace source through each host's native CLI. When an active Profile
 selects both scan helpers, the one deliberate exception is a marker-tagged
-`PreToolUse` scan-guard fragment in each enabled host JSON; neither helper keeps
+`PreToolUse` scan-guard fragment in each enabled host user config (Codex
+`config.toml`, Claude `settings.json`); neither helper keeps
 the seam inactive and a partial pair fails closed. PAC owns only that fragment,
 preserves every other host field, snapshots it before mutation, and fails closed
 when it is removed or modified. Its per-host matcher

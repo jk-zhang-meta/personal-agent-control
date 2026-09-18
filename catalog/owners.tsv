@@ -21,7 +21,8 @@
 ~/.local/state/personal-agent-control/scan-guard.json	personal-agent-control	ownership/digest for the marked scan-guard fragment; drift fails closed
 ~/.agent-work/runtime/pac/scan-guard-hook.mjs	personal-agent-control	legacy backup/restore compatibility copy; new hooks never reference it
 ~/.agent-work/runtime/pac/scan-guard-hook-<sha256>.mjs	personal-agent-control	immutable content-addressed policy copy; retained while open sessions may reference it
-~/.codex/hooks.json	hook-fragment	preserve host content; PAC owns only its marked PreToolUse scan-guard entry
+~/.codex/config.toml	hook-fragment	preserve host content; PAC owns only its marked PreToolUse scan-guard entry alongside host-owned hooks and settings
+~/.codex/hooks.json	hook-fragment-migration	legacy PAC PreToolUse source; verify exact ownership, migrate to config.toml, then retire only the owned fragment
 ~/.claude/settings.json	hook-fragment	preserve host content; PAC owns only its marked PreToolUse scan-guard entry
 ~/.local/state/personal-agent-control/migrations/<plugin-marker>-<host>	personal-agent-control	one-time distribution migration proof
 ~/.local/state/personal-agent-control/migrations/independent-reviewer-codex-v1	chezmoi-migration	one-time Codex reviewer rename state

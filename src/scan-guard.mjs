@@ -32,11 +32,12 @@ const HOST_CONFIGS = Object.freeze({
   // context-mode tools remain covered by prefix so new recursive providers
   // still fail closed in the policy.
   codex: Object.freeze({
-    env: 'CODEX_HOME', directory: '.codex', file: 'hooks.json',
+    env: 'CODEX_HOME', directory: '.codex', file: 'config.toml', format: 'toml',
+    legacyFile: 'hooks.json',
     matcher: '^(?:Bash|Read|ReadFile|read_file|Write|WriteFile|write_file|Edit|MultiEdit|ApplyPatch|apply_patch|NotebookRead|NotebookEdit|view_image|WebSearch|WebFetch|Fetch|web__run|image_gen__imagegen|Glob|Grep|mcp__.*|ctx_.*)$',
   }),
   claude: Object.freeze({
-    env: 'CLAUDE_CONFIG_DIR', directory: '.claude', file: 'settings.json',
+    env: 'CLAUDE_CONFIG_DIR', directory: '.claude', file: 'settings.json', format: 'json',
     matcher: '^(?:Bash|Read|ReadFile|read_file|Write|WriteFile|write_file|Edit|MultiEdit|ApplyPatch|apply_patch|NotebookRead|NotebookEdit|view_image|WebSearch|WebFetch|Fetch|web__run|image_gen__imagegen|Glob|Grep|mcp__.*|ctx_.*)$',
   }),
 });
@@ -118,6 +119,10 @@ function configuredHostPath(context, host) {
     directory,
     file: path.join(directory, descriptor.file),
     relative: path.posix.join(descriptor.directory, descriptor.file),
+    format: descriptor.format,
+    legacyFile: descriptor.legacyFile ? path.join(directory, descriptor.legacyFile) : null,
+    legacyRelative: descriptor.legacyFile
+      ? path.posix.join(descriptor.directory, descriptor.legacyFile) : null,
   };
 }
 
@@ -130,9 +135,102 @@ export function scanGuardManagedPaths(context, hosts = ['codex', 'claude']) {
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   for (const host of hosts) {
     if (!HOSTS.has(host)) throw new PacError('HOST_SELECTION_INVALID', `Unknown scan-guard host: ${host}`);
-    paths.add(configuredHostPath(context, host).relative);
+    const configured = configuredHostPath(context, host);
+    paths.add(configured.relative);
+    if (configured.legacyRelative) paths.add(configured.legacyRelative);
   }
   return [...paths].sort();
+}
+
+function tomlBasicString(line, key) {
+  const match = line.match(new RegExp(`^\\s*${key}\\s*=\\s*("(?:[^"\\\\]|\\\\.)*")\\s*(?:#.*)?$`, 'u'));
+  if (!match) return null;
+  try { return JSON.parse(match[1]); } catch { return null; }
+}
+
+function codexPreToolUseBlocks(text) {
+  const lines = text.match(/.*(?:\r?\n|$)/gu)?.filter(Boolean) || [];
+  const offsets = [];
+  let offset = 0;
+  for (const line of lines) {
+    offsets.push(offset);
+    offset += line.length;
+  }
+  const starts = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (/^\s*\[\[hooks\.PreToolUse\]\]\s*(?:#.*)?(?:\r?\n)?$/u.test(lines[index])) starts.push(index);
+  }
+  return starts.map((startLine, position) => {
+    let endLine = lines.length;
+    for (let index = startLine + 1; index < lines.length; index += 1) {
+      const trimmed = lines[index].trim();
+      if (!trimmed.startsWith('[') || /^\[\[hooks\.PreToolUse\.hooks\]\](?:\s*#.*)?$/u.test(trimmed)) continue;
+      endLine = index;
+      break;
+    }
+    const nested = [];
+    for (let index = startLine + 1; index < endLine; index += 1) {
+      if (/^\s*\[\[hooks\.PreToolUse\.hooks\]\]\s*(?:#.*)?(?:\r?\n)?$/u.test(lines[index])) nested.push(index);
+    }
+    const firstNested = nested[0] ?? endLine;
+    const matcher = lines.slice(startLine + 1, firstNested)
+      .map((line) => tomlBasicString(line, 'matcher')).find((value) => value !== null) ?? null;
+    const hooks = nested.map((hookStart, hookIndex) => {
+      const hookEnd = nested[hookIndex + 1] ?? endLine;
+      const hookLines = lines.slice(hookStart + 1, hookEnd);
+      return {
+        type: hookLines.map((line) => tomlBasicString(line, 'type')).find((value) => value !== null) ?? null,
+        command: hookLines.map((line) => tomlBasicString(line, 'command')).find((value) => value !== null) ?? null,
+        commandWindows: hookLines.map((line) => tomlBasicString(line, 'command_windows')).find((value) => value !== null)
+          ?? hookLines.map((line) => tomlBasicString(line, 'commandWindows')).find((value) => value !== null)
+          ?? undefined,
+      };
+    });
+    const start = offsets[startLine];
+    const end = endLine < offsets.length ? offsets[endLine] : text.length;
+    const raw = text.slice(start, end);
+    return {
+      position,
+      start,
+      end,
+      raw,
+      marker: raw.includes(SCAN_GUARD_MARKER),
+      entry: { matcher, hooks },
+    };
+  });
+}
+
+function readCodexToml(file) {
+  try {
+    const stat = fs.lstatSync(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new PacError('SCAN_GUARD_CONFIG_UNSAFE', `Scan-guard host config must be a regular file: ${file}`);
+    }
+    const raw = fs.readFileSync(file);
+    const text = raw.toString('utf8');
+    return { value: { format: 'toml', text, blocks: codexPreToolUseBlocks(text) }, raw };
+  } catch (error) {
+    if (error.code === 'ENOENT') return { value: { format: 'toml', text: '', blocks: [] }, raw: null };
+    if (error instanceof PacError) throw error;
+    throw new PacError('SCAN_GUARD_CONFIG_INVALID', `Cannot parse ${file}: ${error.message}`);
+  }
+}
+
+function readHostConfig(descriptor) {
+  return descriptor.format === 'toml' ? readCodexToml(descriptor.file) : readJsonFile(descriptor.file);
+}
+
+function descriptorForPrior(context, host, prior) {
+  const current = configuredHostPath(context, host);
+  if (host === 'codex' && prior?.targetRelative === current.legacyRelative) {
+    return {
+      ...current,
+      file: current.legacyFile,
+      relative: current.legacyRelative,
+      format: 'json',
+    };
+  }
+  return current;
 }
 
 function readJsonFile(file) {
@@ -165,7 +263,7 @@ function codexHookFeatures(context) {
     const match = line.match(/^\s*(hooks|plugin_hooks|codex_hooks)\s*=\s*(true|false)\s*(?:#.*)?$/iu);
     if (match && section === 'features') values[match[1].toLowerCase()] = match[2].toLowerCase() === 'true';
   }
-  // PAC installs a user-level hooks.json entry. `plugin_hooks=false` only
+  // PAC installs a user-level Codex config.toml entry. `plugin_hooks=false` only
   // disables bundled Plugin hooks and must not make this independent gate
   // look inactive. Hooks are a stable Codex feature, so absence of an explicit
   // `hooks = true` keeps the host default rather than disabling PAC.
@@ -274,14 +372,16 @@ async function codexHookTrustStatus(context, descriptor, expected) {
       const listed = listedRoots[0];
       const warnings = Array.isArray(listed.warnings) ? listed.warnings : [];
       const errors = Array.isArray(listed.errors) ? listed.errors : [];
-      // Codex permits user hooks in both representations. This warning is
-      // informational; exact entry identity, enabled state and trust are still
-      // checked below. Unknown warnings and all loading errors fail closed.
       const configFile = path.join(context.home, '.codex/config.toml');
-      const coexistenceWarnings = new Set([
-        `loading hooks from both ${descriptor.file} and ${configFile}; prefer a single representation for this layer`,
-        `loading hooks from both ${configFile} and ${descriptor.file}; prefer a single representation for this layer`,
-      ]);
+      // During the one-time hooks.json -> config.toml migration, the host can
+      // observe both representations briefly. Once PAC targets config.toml,
+      // any warning is unexpected and fails closed.
+      const coexistenceWarnings = path.resolve(descriptor.file) === path.resolve(configFile)
+        ? new Set()
+        : new Set([
+          `loading hooks from both ${descriptor.file} and ${configFile}; prefer a single representation for this layer`,
+          `loading hooks from both ${configFile} and ${descriptor.file}; prefer a single representation for this layer`,
+        ]);
       const blockingWarnings = warnings.filter((warning) => !coexistenceWarnings.has(warning));
       if (blockingWarnings.length > 0 || errors.length > 0) {
         finish({ observable: true, active: false, trustStatus: 'unknown',
@@ -289,11 +389,14 @@ async function codexHookTrustStatus(context, descriptor, expected) {
         return;
       }
       const hooks = Array.isArray(listed.hooks) ? listed.hooks : [];
+      const expectedCommand = process.platform === 'win32' && expected.hooks[0].commandWindows
+        ? expected.hooks[0].commandWindows
+        : expected.hooks[0].command;
       const matches = hooks.filter((entry) => entry &&
         String(entry.eventName || '').replace(/[^a-z0-9]/giu, '').toLowerCase() === 'pretooluse' &&
         entry.handlerType === 'command' && entry.source === 'user' && entry.isManaged === false &&
         entry.matcher === expected.matcher &&
-        entry.command === expected.hooks[0].command &&
+        entry.command === expectedCommand &&
         path.resolve(String(entry.sourcePath || '')) === path.resolve(descriptor.file));
       if (matches.length !== 1) {
         finish({ observable: true, active: false, trustStatus: 'unknown',
@@ -362,15 +465,27 @@ function assertConfigObject(value, file) {
 
 function entryCommands(entry) {
   if (!entry || typeof entry !== 'object' || !Array.isArray(entry.hooks)) return [];
-  return entry.hooks.filter((hook) => hook && typeof hook.command === 'string').map((hook) => hook.command);
+  return entry.hooks.flatMap((hook) => [
+    typeof hook?.command === 'string' ? hook.command : null,
+    typeof hook?.commandWindows === 'string' ? hook.commandWindows : null,
+  ].filter(Boolean));
 }
 
 function hasMarker(entry) {
   return entryCommands(entry).some((command) => command.includes(SCAN_GUARD_MARKER));
 }
 
+function configEntries(config) {
+  return config?.format === 'toml'
+    ? config.blocks.map((block) => block.entry)
+    : config.hooks.PreToolUse;
+}
+
 function markerEntries(config) {
-  return config.hooks.PreToolUse.filter(hasMarker);
+  if (config?.format === 'toml') {
+    return config.blocks.filter((block) => block.marker).map((block) => block.entry);
+  }
+  return configEntries(config).filter(hasMarker);
 }
 
 function readOwnership(context) {
@@ -398,9 +513,11 @@ function readOwnership(context) {
       throw new PacError('SCAN_GUARD_OWNERSHIP_INVALID', 'Scan-guard registry digest is invalid.');
     }
     for (const [host, entry] of Object.entries(value.hosts)) {
+      const configured = configuredHostPath(context, host);
+      const allowedTargets = new Set([configured.relative, configured.legacyRelative].filter(Boolean));
       if (!HOSTS.has(host) || !entry || Array.isArray(entry)
           || Object.keys(entry).sort().join(',') !== 'entrySha256,targetRelative'
-          || entry.targetRelative !== configuredHostPath(context, host).relative
+          || !allowedTargets.has(entry.targetRelative)
           || typeof entry.entrySha256 !== 'string' || !/^[0-9a-f]{64}$/u.test(entry.entrySha256)) {
         throw new PacError('SCAN_GUARD_OWNERSHIP_INVALID', `Invalid scan-guard ownership entry: ${host}`);
       }
@@ -429,6 +546,15 @@ function readOwnership(context) {
 
 function quotePosix(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
+}
+
+function quoteWindows(value) {
+  const text = String(value);
+  if (/["\r\n]/u.test(text)) {
+    throw new PacError('SCAN_GUARD_WINDOWS_COMMAND_INVALID',
+      'Windows scan-guard command arguments cannot contain quotes or newlines.');
+  }
+  return `"${text}"`;
 }
 
 const TRUSTED_HELPERS = Object.freeze([
@@ -588,7 +714,7 @@ function registryDigest(context) {
   return { path: file, sha256: digest(raw), bytes: raw.length };
 }
 
-function hookCommand(context, host, hookRuntime, registryInfo = null, profile = null) {
+function hookCommand(context, host, hookRuntime, registryInfo = null, profile = null, quote = quotePosix) {
   const trusted = trustedExecutableCandidates(context, profile);
   const launcher = fs.realpathSync(process.execPath);
   const approvedNodes = approvedSystemNodeDigests(launcher);
@@ -596,30 +722,39 @@ function hookCommand(context, host, hookRuntime, registryInfo = null, profile = 
   const args = [
     // Strip user-controlled NODE_OPTIONS/LD_PRELOAD/etc. before Node loads the
     // policy. The hook needs only a deterministic HOME/PATH/locale.
-    ...(process.platform === 'win32' ? [] : [quotePosix('/usr/bin/env'), '-i',
-      quotePosix(`HOME=${context.home}`), quotePosix('PATH=/usr/bin:/bin'), quotePosix('LANG=C'), quotePosix('LC_ALL=C')]),
-    quotePosix(launcher), quotePosix(hookRuntime), '--hook', '--host', host, '--mode', 'balanced',
-    '--home', quotePosix(context.home), '--runtime', quotePosix(path.dirname(hookRuntime)),
-    '--registry', quotePosix(context.searchRegistryPath || path.join(context.home, SEARCH_REGISTRY_RELATIVE)),
-    '--registry-sha256', quotePosix(registry.sha256),
-    '--launcher', quotePosix(launcher), '--launcher-sha256', quotePosix(fileDigest(launcher)),
-    ...approvedNodes.flatMap((value) => ['--approved-node-sha256', quotePosix(value)]),
-    '--policy-sha256', quotePosix(fileDigest(hookRuntime)), '--marker', quotePosix(SCAN_GUARD_MARKER),
-    '--approved-mcp-tool', quotePosix('mcp__codegraph__codegraph_explore'),
-    '--approved-mcp-tool', quotePosix('mcp__plugin_codegraph_codegraph__codegraph_explore'),
-    '--approved-mcp-tool', quotePosix('mcp__plugin_codegraph__codegraph_explore'),
+    ...(process.platform === 'win32' ? [] : [quote('/usr/bin/env'), '-i',
+      quote(`HOME=${context.home}`), quote('PATH=/usr/bin:/bin'), quote('LANG=C'), quote('LC_ALL=C')]),
+    quote(launcher), quote(hookRuntime), '--hook', '--host', host, '--mode', 'balanced',
+    '--home', quote(context.home), '--runtime', quote(path.dirname(hookRuntime)),
+    '--registry', quote(context.searchRegistryPath || path.join(context.home, SEARCH_REGISTRY_RELATIVE)),
+    '--registry-sha256', quote(registry.sha256),
+    '--launcher', quote(launcher), '--launcher-sha256', quote(fileDigest(launcher)),
+    ...approvedNodes.flatMap((value) => ['--approved-node-sha256', quote(value)]),
+    '--policy-sha256', quote(fileDigest(hookRuntime)), '--marker', quote(SCAN_GUARD_MARKER),
+    '--approved-mcp-tool', quote('mcp__codegraph__codegraph_explore'),
+    '--approved-mcp-tool', quote('mcp__plugin_codegraph_codegraph__codegraph_explore'),
+    '--approved-mcp-tool', quote('mcp__plugin_codegraph__codegraph_explore'),
   ];
   for (const helper of TRUSTED_HELPERS) {
     const candidate = trusted.find((value) => path.basename(value) === helper.file);
-    if (candidate) args.push(helper.flag, quotePosix(candidate), `${helper.flag}-sha256`, quotePosix(fileDigest(candidate)));
+    if (candidate) args.push(helper.flag, quote(candidate), `${helper.flag}-sha256`, quote(fileDigest(candidate)));
   }
   return args.join(' ');
 }
 
 function expectedEntry(context, host, hookRuntime, registryInfo = null, profile = null) {
+  const handler = {
+    type: 'command',
+    command: hookCommand(context, host, hookRuntime, registryInfo, profile),
+  };
+  if (host === 'codex' && process.platform === 'win32') {
+    handler.commandWindows = hookCommand(
+      context, host, hookRuntime, registryInfo, profile, quoteWindows,
+    );
+  }
   return {
     matcher: HOST_CONFIGS[host].matcher,
-    hooks: [{ type: 'command', command: hookCommand(context, host, hookRuntime, registryInfo, profile) }],
+    hooks: [handler],
   };
 }
 
@@ -631,7 +766,7 @@ function currentConfigEntry(config, host) {
 
 function ownedConfigEntry(config, prior, host) {
   if (!prior) return null;
-  const matches = config.hooks.PreToolUse.filter((entry) => jsonDigest(entry) === prior.entrySha256);
+  const matches = configEntries(config).filter((entry) => jsonDigest(entry) === prior.entrySha256);
   if (matches.length > 1) {
     throw new PacError('SCAN_GUARD_DUPLICATE', `Multiple entries match PAC scan-guard ownership for ${host}.`);
   }
@@ -640,16 +775,76 @@ function ownedConfigEntry(config, prior, host) {
 
 function validatePrior(prior, context, host) {
   if (!prior) return;
-  if (prior.targetRelative !== configuredHostPath(context, host).relative
+  const configured = configuredHostPath(context, host);
+  const allowedTargets = new Set([configured.relative, configured.legacyRelative].filter(Boolean));
+  if (!allowedTargets.has(prior.targetRelative)
       || typeof prior.entrySha256 !== 'string' || !/^[0-9a-f]{64}$/u.test(prior.entrySha256)) {
     throw new PacError('SCAN_GUARD_OWNERSHIP_INVALID', `Invalid PAC scan-guard ownership for ${host}.`);
   }
 }
 
 function replaceEntry(config, priorEntry, nextEntry) {
+  if (config?.format === 'toml') {
+    throw new PacError('SCAN_GUARD_CONFIG_INVALID', 'TOML scan-guard entries must use the Codex text reconciler.');
+  }
   const index = priorEntry ? config.hooks.PreToolUse.indexOf(priorEntry) : -1;
   if (index >= 0) config.hooks.PreToolUse[index] = nextEntry;
   else config.hooks.PreToolUse.push(nextEntry);
+}
+
+function renderCodexEntry(entry) {
+  if (!entry || typeof entry.matcher !== 'string' || !Array.isArray(entry.hooks)
+      || entry.hooks.length !== 1 || entry.hooks[0]?.type !== 'command'
+      || typeof entry.hooks[0].command !== 'string') {
+    throw new PacError('SCAN_GUARD_CONFIG_INVALID', 'PAC Codex hook entry has an invalid shape.');
+  }
+  return [
+    '[[hooks.PreToolUse]]',
+    `matcher = ${JSON.stringify(entry.matcher)}`,
+    '',
+    '[[hooks.PreToolUse.hooks]]',
+    'type = "command"',
+    `command = ${JSON.stringify(entry.hooks[0].command)}`,
+    ...(typeof entry.hooks[0].commandWindows === 'string'
+      ? [`command_windows = ${JSON.stringify(entry.hooks[0].commandWindows)}`] : []),
+    '',
+  ].join('\n');
+}
+
+function codexBlockForEntry(config, entry) {
+  return config.blocks.find((block) => block.entry === entry) || null;
+}
+
+function codexTrustKey(file, index) {
+  return `${file}:pre_tool_use:${index}:0`;
+}
+
+function renderCodexConfig(config, priorEntry, nextEntry, trustedHash = null) {
+  let text = config.text;
+  let index = null;
+  if (priorEntry) {
+    const block = codexBlockForEntry(config, priorEntry);
+    if (!block) throw new PacError('SCAN_GUARD_CONFIG_INVALID', 'PAC Codex hook block could not be located.');
+    index = block.position;
+    text = `${text.slice(0, block.start)}${nextEntry ? renderCodexEntry(nextEntry) : ''}${text.slice(block.end)}`;
+  } else if (nextEntry) {
+    index = config.blocks.length;
+    const separator = text.length === 0 ? '' : text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
+    text = `${text}${separator}${renderCodexEntry(nextEntry)}`;
+  }
+  if (trustedHash && nextEntry && /^sha256:[0-9a-f]{64}$/u.test(trustedHash)) {
+    const key = codexTrustKey('__PAC_CODEX_CONFIG__', index);
+    return { text, trustTemplateKey: key, trustHash: trustedHash };
+  }
+  return { text, trustTemplateKey: null, trustHash: null };
+}
+
+function applyCodexTrust(text, file, templateKey, trustedHash) {
+  if (!templateKey || !trustedHash) return text;
+  const key = templateKey.replace('__PAC_CODEX_CONFIG__', file);
+  if (text.includes(key) || text.includes(JSON.stringify(key))) return text;
+  const separator = text.length === 0 ? '' : text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n';
+  return `${text}${separator}[hooks.state.${JSON.stringify(key)}]\ntrusted_hash = ${JSON.stringify(trustedHash)}\n`;
 }
 
 async function verifyPinnedPolicySource(context, source, content) {
@@ -731,8 +926,7 @@ async function stageRuntime(context) {
   return { target, runtimeRelative, sourceSha256 };
 }
 
-async function writeConfigIfChanged(context, host, file, config, originalRaw) {
-  const nextRaw = Buffer.from(`${JSON.stringify(config, null, 2)}\n`);
+async function writeRawIfChanged(file, nextRaw, originalRaw) {
   if (originalRaw && originalRaw.equals(nextRaw)) return false;
   // Compare-and-swap against an external writer. PAC's transaction lock
   // serializes PAC itself; this second read prevents silently clobbering a
@@ -748,6 +942,38 @@ async function writeConfigIfChanged(context, host, file, config, originalRaw) {
   await atomicWriteFile(file, nextRaw, mode || 0o600);
   try { await fsp.chmod(file, mode || 0o600); } catch { /* advisory on some mounts */ }
   return true;
+}
+
+async function writeJsonConfigIfChanged(file, config, originalRaw) {
+  return await writeRawIfChanged(file, Buffer.from(`${JSON.stringify(config, null, 2)}\n`), originalRaw);
+}
+
+async function writeCodexConfigIfChanged(file, config, priorEntry, nextEntry, originalRaw, trustedHash = null) {
+  const rendered = renderCodexConfig(config, priorEntry, nextEntry, trustedHash);
+  const text = applyCodexTrust(rendered.text, file, rendered.trustTemplateKey, rendered.trustHash);
+  return await writeRawIfChanged(file, Buffer.from(text), originalRaw);
+}
+
+function emptyLegacyHookConfig(config) {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return false;
+  const topKeys = Object.keys(config);
+  if (topKeys.some((key) => key !== 'hooks')) return false;
+  if (!config.hooks || typeof config.hooks !== 'object' || Array.isArray(config.hooks)) return false;
+  const hookKeys = Object.keys(config.hooks);
+  return hookKeys.every((key) => key === 'PreToolUse')
+    && (!config.hooks.PreToolUse || config.hooks.PreToolUse.length === 0);
+}
+
+async function retireLegacyCodexConfig(file, config, originalRaw) {
+  if (!emptyLegacyHookConfig(config)) return await writeJsonConfigIfChanged(file, config, originalRaw);
+  let current = null;
+  try { current = await fsp.readFile(file); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if ((originalRaw && !current?.equals(originalRaw)) || (!originalRaw && current)) {
+    throw new PacError('SCAN_GUARD_CONCURRENT_DRIFT', `Host config changed while PAC was reconciling it: ${file}`);
+  }
+  if (current) await fsp.unlink(file);
+  return Boolean(current);
 }
 
 function runtimeStatus(context, ownership) {
@@ -838,17 +1064,17 @@ export async function scanGuardStatus(context, enabledHosts, scopeHosts, profile
   const results = [];
   for (const host of HOSTS) {
     if (!scope.has(host)) continue;
+    const prior = ownership.hosts[host];
+    validatePrior(prior, context, host);
     let descriptor;
-    try { descriptor = configuredHostPath(context, host); }
+    try { descriptor = descriptorForPrior(context, host, prior); }
     catch (error) {
       results.push({ host, state: 'unsupported', expected: enabled.has(host) ? 'managed' : 'missing', valid: false, error: error.message });
       continue;
     }
-    const { value: config } = readJsonFile(descriptor.file);
-    assertConfigObject(config, descriptor.file);
+    const { value: config } = readHostConfig(descriptor);
+    if (descriptor.format === 'json') assertConfigObject(config, descriptor.file);
     const actual = currentConfigEntry(config, host);
-    const prior = ownership.hosts[host];
-    validatePrior(prior, context, host);
     const owned = ownedConfigEntry(config, prior, host);
     const hostState = hostHookState(context, host, config);
     const disabled = hostState.disabled;
@@ -932,14 +1158,15 @@ export async function reconcileScanGuard(context, enabledHosts, scopeHosts, prof
   const results = [];
   for (const host of HOSTS) {
     if (!scope.has(host)) continue;
-    const descriptor = configuredHostPath(context, host);
-    await assertSafeManagedObject(context.home, descriptor.file, `${host} scan-guard config`, 'file');
-    const loaded = readJsonFile(descriptor.file);
-    const config = loaded.value;
-    assertConfigObject(config, descriptor.file);
-    const actual = currentConfigEntry(config, host);
+    const currentDescriptor = configuredHostPath(context, host);
     const prior = ownership.hosts[host];
     validatePrior(prior, context, host);
+    const descriptor = descriptorForPrior(context, host, prior);
+    await assertSafeManagedObject(context.home, descriptor.file, `${host} scan-guard config`, 'file');
+    const loaded = readHostConfig(descriptor);
+    const config = loaded.value;
+    if (descriptor.format === 'json') assertConfigObject(config, descriptor.file);
+    const actual = currentConfigEntry(config, host);
     const owned = ownedConfigEntry(config, prior, host);
     const hostState = hostHookState(context, host, config);
     if (enabled.has(host)) {
@@ -956,9 +1183,52 @@ export async function reconcileScanGuard(context, enabledHosts, scopeHosts, prof
       if (actual && !prior && jsonDigest(actual) !== jsonDigest(expected)) {
         throw new PacError('SCAN_GUARD_COLLISION', `An unmanaged scan-guard entry occupies the PAC marker in ${descriptor.file}`);
       }
-      if (!actual) replaceEntry(config, null, expected);
-      else if (jsonDigest(actual) !== jsonDigest(expected)) replaceEntry(config, actual, expected);
-      const changed = await writeConfigIfChanged(context, host, descriptor.file, config, loaded.raw);
+      if (host === 'codex' && descriptor.relative !== currentDescriptor.relative) {
+        await assertSafeManagedObject(context.home, currentDescriptor.file, 'codex scan-guard config', 'file');
+        const targetLoaded = readHostConfig(currentDescriptor);
+        const targetConfig = targetLoaded.value;
+        const targetActual = currentConfigEntry(targetConfig, host);
+        if (targetActual && jsonDigest(targetActual) !== jsonDigest(expected)) {
+          throw new PacError('SCAN_GUARD_COLLISION',
+            `An unmanaged scan-guard entry occupies the PAC marker in ${currentDescriptor.file}`);
+        }
+        let trustedHash = null;
+        if (actual && jsonDigest(actual) === jsonDigest(expected)) {
+          const priorTrust = await codexHookTrustStatus(context, descriptor, expected);
+          if (priorTrust?.active && ['trusted', 'managed'].includes(priorTrust.trustStatus)
+              && /^sha256:[0-9a-f]{64}$/u.test(priorTrust.currentHash || '')) {
+            trustedHash = priorTrust.currentHash;
+          }
+        }
+        const changedTarget = targetActual
+          ? false
+          : await writeCodexConfigIfChanged(
+            currentDescriptor.file, targetConfig, null, expected, targetLoaded.raw, trustedHash,
+          );
+        config.hooks.PreToolUse = config.hooks.PreToolUse.filter((entry) => entry !== actual);
+        const changedLegacy = await retireLegacyCodexConfig(descriptor.file, config, loaded.raw);
+        ownership.hosts[host] = {
+          targetRelative: currentDescriptor.relative,
+          entrySha256: jsonDigest(expected),
+        };
+        results.push({
+          host,
+          action: changedTarget || changedLegacy ? 'migrated' : 'unchanged',
+          target: currentDescriptor.file,
+        });
+        continue;
+      }
+      let changed = false;
+      if (!actual || jsonDigest(actual) !== jsonDigest(expected)) {
+        if (descriptor.format === 'toml') {
+          changed = await writeCodexConfigIfChanged(
+            descriptor.file, config, actual, expected, loaded.raw,
+          );
+        } else {
+          replaceEntry(config, actual, expected);
+          changed = await writeJsonConfigIfChanged(descriptor.file, config, loaded.raw);
+        }
+      }
       ownership.hosts[host] = { targetRelative: descriptor.relative, entrySha256: jsonDigest(expected) };
       results.push({ host, action: changed ? (actual ? 'updated' : 'installed') : 'unchanged', target: descriptor.file });
       continue;
@@ -977,8 +1247,15 @@ export async function reconcileScanGuard(context, enabledHosts, scopeHosts, prof
       if (jsonDigest(actual) !== prior.entrySha256) {
         throw new PacError('SCAN_GUARD_DRIFT', `Refusing to retire a modified PAC scan-guard entry: ${descriptor.file}`);
       }
-      config.hooks.PreToolUse = config.hooks.PreToolUse.filter((entry) => entry !== actual);
-      const changed = await writeConfigIfChanged(context, host, descriptor.file, config, loaded.raw);
+      let changed;
+      if (descriptor.format === 'toml') {
+        changed = await writeCodexConfigIfChanged(descriptor.file, config, actual, null, loaded.raw);
+      } else {
+        config.hooks.PreToolUse = config.hooks.PreToolUse.filter((entry) => entry !== actual);
+        changed = host === 'codex'
+          ? await retireLegacyCodexConfig(descriptor.file, config, loaded.raw)
+          : await writeJsonConfigIfChanged(descriptor.file, config, loaded.raw);
+      }
       results.push({ host, action: changed ? 'retired' : 'already-retired', target: descriptor.file });
       delete ownership.hosts[host];
     } else {

@@ -1806,7 +1806,7 @@ test('a staged built-in doctor preserves the installation and propagates non-hea
 test('real apply path stages an untrusted Codex hook and converges after the same hook is trusted', { timeout: 120_000 }, async () => {
   const { root, home, env } = await makeRealLifecycleFixture();
   const profile = await makeProfileRepository({ scanGuard: true, skillTargets: ['codex'] });
-  const hookFile = path.join(home, '.codex/hooks.json');
+  const hookFile = path.join(home, '.codex/config.toml');
   const trustFile = path.join(home, 'fake-codex-trust-state');
   const fakeCodex = path.join(home, 'fake-codex.cjs');
   const registry = path.join(home, '.config/personal-agent-control/search-roots.json');
@@ -1853,15 +1853,29 @@ process.stdin.on('data', (chunk) => {
       continue;
     }
     if (message.id !== 2) continue;
-    const config = JSON.parse(fs.readFileSync(hookFile, 'utf8'));
-    const hook = config.hooks.PreToolUse.find((entry) =>
-      entry.hooks.some((handler) => handler.command.includes('--pac-scan-guard-v2')));
+    const config = fs.readFileSync(hookFile, 'utf8');
+    const lines = config.split(/\\r?\\n/);
+    const markerLine = lines.findIndex((line) => line.includes('--pac-scan-guard-v2'));
+    let hook = null;
+    if (markerLine >= 0) {
+      let start = markerLine;
+      while (start >= 0 && lines[start].trim() !== '[[hooks.PreToolUse]]') start -= 1;
+      const block = lines.slice(start, markerLine + 1);
+      const literal = (name) => {
+        const row = block.find((candidate) => candidate.trimStart().startsWith(name + ' ='));
+        return row ? JSON.parse(row.slice(row.indexOf('=') + 1).trim()) : null;
+      };
+      hook = {
+        matcher: literal('matcher'),
+        command: literal('command_windows') || literal('commandWindows') || literal('command'),
+      };
+    }
     const cwd = message.params.cwds[0];
     const result = { data: [{ cwd, hooks: hook ? [{
       key: hookFile + ':pre_tool_use:0:0',
       eventName: 'preToolUse',
       handlerType: 'command',
-      command: hook.hooks[0].command,
+      command: hook.command,
       matcher: hook.matcher,
       sourcePath: hookFile,
       source: 'user',

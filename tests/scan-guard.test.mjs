@@ -44,6 +44,45 @@ function quote(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 }
 
+async function codexPacEntry(home) {
+  const file = path.join(home, '.codex/config.toml');
+  const text = await fs.readFile(file, 'utf8');
+  const lines = text.split(/\r?\n/u);
+  const markerLine = lines.findIndex((line) => line.includes('--pac-scan-guard-v2'));
+  assert.notEqual(markerLine, -1, 'PAC Codex hook marker is present');
+  let start = markerLine;
+  while (start >= 0 && lines[start].trim() !== '[[hooks.PreToolUse]]') start -= 1;
+  assert.notEqual(start, -1, 'PAC Codex PreToolUse block is present');
+  let end = lines.length;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (!trimmed.startsWith('[') || trimmed === '[[hooks.PreToolUse.hooks]]') continue;
+    end = index;
+    break;
+  }
+  const block = lines.slice(start, end);
+  const literal = (name) => {
+    const line = block.find((candidate) => candidate.trimStart().startsWith(`${name} =`));
+    assert.ok(line, `${name} is present in PAC Codex hook`);
+    return JSON.parse(line.slice(line.indexOf('=') + 1).trim());
+  };
+  const optionalLiteral = (name) => {
+    const line = block.find((candidate) => candidate.trimStart().startsWith(`${name} =`));
+    return line ? JSON.parse(line.slice(line.indexOf('=') + 1).trim()) : undefined;
+  };
+  const handler = { type: literal('type'), command: literal('command') };
+  const commandWindows = optionalLiteral('command_windows') ?? optionalLiteral('commandWindows');
+  if (commandWindows !== undefined) handler.commandWindows = commandWindows;
+  return {
+    file,
+    text,
+    entry: {
+      matcher: literal('matcher'),
+      hooks: [handler],
+    },
+  };
+}
+
 async function fixture(t, { codexHooks = true, codexTrust = 'trusted' } = {}) {
   // The policy rejects world-writable ancestors such as /tmp. Keep the
   // synthetic HOME under the same private local runtime tree as production.
@@ -100,7 +139,7 @@ async function fixture(t, { codexHooks = true, codexTrust = 'trusted' } = {}) {
       active: codexTrust === 'trusted',
       enabled: true,
       trustStatus: codexTrust,
-      key: `${path.join(home, '.codex/hooks.json')}:pre_tool_use:0:0`,
+      key: `${path.join(home, '.codex/config.toml')}:pre_tool_use:0:0`,
       currentHash: 'sha256:fixture',
     }),
   };
@@ -827,9 +866,10 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
   const runtime = applied.runtime.path;
   if (process.platform !== 'win32') assert.equal((await fs.stat(runtime)).mode & 0o777, 0o500);
   for (const host of ['codex', 'claude']) {
-    const configFile = path.join(home, host === 'codex' ? '.codex/hooks.json' : '.claude/settings.json');
-    const config = JSON.parse(await fs.readFile(configFile, 'utf8'));
-    const entry = config.hooks.PreToolUse.find((candidate) => candidate.hooks?.some((hook) => hook.command?.includes('--pac-scan-guard-v2')));
+    const entry = host === 'codex'
+      ? (await codexPacEntry(home)).entry
+      : JSON.parse(await fs.readFile(path.join(home, '.claude/settings.json'), 'utf8'))
+        .hooks.PreToolUse.find((candidate) => candidate.hooks?.some((hook) => hook.command?.includes('--pac-scan-guard-v2')));
     assert.ok(entry);
     assert.notEqual(entry.matcher, '.*');
     assert.match(entry.matcher, /Bash/u);
@@ -839,6 +879,17 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
       'mcp__codegraph__codegraph_explore']) assert.equal(new RegExp(entry.matcher, 'u').test(highImpact), true, highImpact);
     if (host === 'codex') assert.match(entry.matcher, /apply_patch/u);
     if (host === 'claude') assert.match(entry.matcher, /Read/u);
+    if (host === 'codex' && process.platform === 'win32') {
+      assert.equal(typeof entry.hooks[0].commandWindows, 'string');
+      const native = spawnSync('cmd.exe', ['/C', `"${entry.hooks[0].commandWindows}"`], {
+        cwd: project,
+        input: JSON.stringify({ tool_name: 'Bash', cwd: project, tool_input: { command: 'Write-Output OK' } }),
+        encoding: 'utf8',
+        windowsVerbatimArguments: true,
+      });
+      assert.equal(native.status, 0, native.stderr || native.stdout);
+      assert.equal(native.stdout, '');
+    }
     assert.equal(entry.hooks[0].command.includes(path.join(repo, 'src')), false);
     assert.equal(entry.hooks[0].command.includes('--registry-sha256'), true);
     if (existsSync('/usr/bin/node') && await fs.realpath('/usr/bin/node') !== await fs.realpath(process.execPath)) {
@@ -903,6 +954,7 @@ test('PAC stages local hooks and routes high-impact calls per host', async (t) =
   assert.deepEqual(scanGuardManagedPaths(context, ['codex']), [
     path.relative(home, runtime).split(path.sep).join('/'),
     '.agent-work/runtime/pac/scan-guard-hook.mjs',
+    '.codex/config.toml',
     '.codex/hooks.json',
     '.config/personal-agent-control/search-roots.json',
     '.local/state/personal-agent-control/scan-guard.json',
@@ -922,8 +974,7 @@ test('scan-guard policy revisions keep captured hook commands executable', async
     await fs.writeFile(manifest, `${sha256(content)}  src/scan-guard-policy.mjs\n`, { mode: 0o600 });
   };
   const command = async () => {
-    const config = JSON.parse(await fs.readFile(path.join(value.home, '.codex/hooks.json'), 'utf8'));
-    return config.hooks.PreToolUse[0].hooks[0].command;
+    return (await codexPacEntry(value.home)).entry.hooks[0].command;
   };
   const invoke = (hookCommand) => spawnSync(shellExecutable, ['-c', hookCommand], {
     cwd: value.project,
@@ -961,18 +1012,29 @@ test('legacy stable runtime remains executable during content-addressed migratio
     value.context, ['codex'], ['codex'], value.activeProfile,
   );
   const hookFile = path.join(value.home, '.codex/hooks.json');
+  const configFile = path.join(value.home, '.codex/config.toml');
   const stateFile = path.join(value.home, '.local/state/personal-agent-control/scan-guard.json');
   const stableRuntime = path.join(value.home, '.agent-work/runtime/pac/scan-guard-hook.mjs');
   await fs.copyFile(applied.runtime.path, stableRuntime);
   await fs.chmod(stableRuntime, 0o500);
 
-  const config = JSON.parse(await fs.readFile(hookFile, 'utf8'));
-  const entry = config.hooks.PreToolUse[0];
+  const entry = (await codexPacEntry(value.home)).entry;
   entry.hooks[0].command = entry.hooks[0].command.replace(applied.runtime.path, stableRuntime);
-  await fs.writeFile(hookFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await fs.writeFile(hookFile, `${JSON.stringify({ hooks: { PreToolUse: [entry] } }, null, 2)}\n`, { mode: 0o600 });
+  await fs.writeFile(configFile, [
+    '[features]',
+    'hooks = true',
+    '',
+    '[[hooks.Interrupt]]',
+    '[[hooks.Interrupt.hooks]]',
+    'type = "command"',
+    'command = "existing interrupt"',
+    '',
+  ].join('\n'), { mode: 0o600 });
   const ownership = JSON.parse(await fs.readFile(stateFile, 'utf8'));
   ownership.schemaVersion = 3;
   ownership.runtimeRelative = '.agent-work/runtime/pac/scan-guard-hook.mjs';
+  ownership.hosts.codex.targetRelative = '.codex/hooks.json';
   ownership.hosts.codex.entrySha256 = sha256(JSON.stringify(entry));
   await fs.writeFile(stateFile, `${JSON.stringify(ownership, null, 2)}\n`, { mode: 0o600 });
   const legacyCommand = entry.hooks[0].command;
@@ -980,8 +1042,15 @@ test('legacy stable runtime remains executable during content-addressed migratio
   const migrated = await reconcileScanGuard(
     value.context, ['codex'], ['codex'], value.activeProfile,
   );
-  assert.equal(migrated.hosts[0].action, 'updated');
+  assert.equal(migrated.hosts[0].action, 'migrated');
   assert.notEqual(migrated.runtime.path, stableRuntime);
+  assert.equal(existsSync(hookFile), false);
+  const migratedConfig = await fs.readFile(configFile, 'utf8');
+  assert.match(migratedConfig, /\[\[hooks\.PreToolUse\]\]/u);
+  assert.match(migratedConfig, /\[\[hooks\.Interrupt\]\]/u);
+  assert.match(migratedConfig, /existing interrupt/u);
+  assert.doesNotMatch(migratedConfig, /hooks\.state.*pre_tool_use/iu,
+    'a logically changed legacy hook must not inherit trust');
   assert.equal(await fs.readFile(stableRuntime, 'utf8'), await fs.readFile(migrated.runtime.path, 'utf8'));
   const legacyResult = spawnSync(shellExecutable, ['-c', legacyCommand], {
     cwd: value.project,
@@ -996,6 +1065,53 @@ test('legacy stable runtime remains executable during content-addressed migratio
   ))[0];
   assert.equal(status.valid, true);
   assert.equal(status.runtime.path, migrated.runtime.path);
+});
+
+test('legacy Codex hook migration preserves exact trusted identity in config.toml', async (t) => {
+  const value = await fixture(t);
+  await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
+  const { entry } = await codexPacEntry(value.home);
+  const hookFile = path.join(value.home, '.codex/hooks.json');
+  const configFile = path.join(value.home, '.codex/config.toml');
+  const stateFile = path.join(value.home, '.local/state/personal-agent-control/scan-guard.json');
+  await fs.writeFile(hookFile, `${JSON.stringify({ hooks: { PreToolUse: [entry] } }, null, 2)}\n`, { mode: 0o600 });
+  await fs.writeFile(configFile, [
+    '[features]',
+    'hooks = true',
+    '',
+    '[[hooks.Interrupt]]',
+    '[[hooks.Interrupt.hooks]]',
+    'type = "command"',
+    'command = "existing interrupt"',
+    '',
+  ].join('\n'), { mode: 0o600 });
+  const ownership = JSON.parse(await fs.readFile(stateFile, 'utf8'));
+  ownership.hosts.codex.targetRelative = '.codex/hooks.json';
+  ownership.hosts.codex.entrySha256 = sha256(JSON.stringify(entry));
+  await fs.writeFile(stateFile, `${JSON.stringify(ownership, null, 2)}\n`, { mode: 0o600 });
+  const trustedHash = `sha256:${'c'.repeat(64)}`;
+  value.context.codexHookTrustProbe = async () => ({
+    observable: true,
+    active: true,
+    enabled: true,
+    trustStatus: 'trusted',
+    key: `${hookFile}:pre_tool_use:0:0`,
+    currentHash: trustedHash,
+    warnings: [],
+  });
+
+  const migrated = await reconcileScanGuard(
+    value.context, ['codex'], ['codex'], value.activeProfile,
+  );
+  assert.equal(migrated.hosts[0].action, 'migrated');
+  assert.equal(existsSync(hookFile), false);
+  const config = await fs.readFile(configFile, 'utf8');
+  assert.match(config, /\[\[hooks\.Interrupt\]\]/u);
+  assert.match(config, /existing interrupt/u);
+  assert.match(config, new RegExp(trustedHash, 'u'));
+  const saved = JSON.parse(await fs.readFile(stateFile, 'utf8'));
+  assert.equal(saved.hosts.codex.targetRelative, '.codex/config.toml');
+  assert.equal(saved.hosts.codex.entrySha256, sha256(JSON.stringify(entry)));
 });
 
 test('content-addressed runtime drift fails closed without overwriting bytes', async (t) => {
@@ -1052,10 +1168,16 @@ test('Codex hooks use the stable default, honor explicit disable, and preserve u
 
   const value = await fixture(t);
   await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
-  const file = path.join(value.home, '.codex/hooks.json');
-  const config = JSON.parse(await fs.readFile(file, 'utf8'));
-  config.hooks.PreToolUse.push({ matcher: '*', hooks: [{ type: 'command', command: '--pac-scan-guard-v2 independent' }] });
-  await fs.writeFile(file, `${JSON.stringify(config, null, 2)}\n`);
+  const file = path.join(value.home, '.codex/config.toml');
+  await fs.appendFile(file, [
+    '',
+    '[[hooks.PreToolUse]]',
+    'matcher = "*"',
+    '[[hooks.PreToolUse.hooks]]',
+    'type = "command"',
+    'command = "--pac-scan-guard-v2 independent"',
+    '',
+  ].join('\n'));
   await assert.rejects(
     reconcileScanGuard(value.context, [], ['codex'], value.activeProfile),
     (error) => ['SCAN_GUARD_DRIFT', 'SCAN_GUARD_DUPLICATE'].includes(error.code),
@@ -1077,8 +1199,7 @@ test('Codex status is unhealthy until the exact PAC hook is trusted by the host'
 test('Codex trust probe accepts the camelCase event name returned by hooks/list', async (t) => {
   const value = await fixture(t);
   await reconcileScanGuard(value.context, ['codex'], ['codex'], value.activeProfile);
-  const hookFile = path.join(value.home, '.codex/hooks.json');
-  const hook = JSON.parse(await fs.readFile(hookFile, 'utf8')).hooks.PreToolUse[0];
+  const { file: hookFile, entry: hook } = await codexPacEntry(value.home);
   const fakeCodex = path.join(value.base, 'fake-codex.cjs');
   const response = {
     data: [{
@@ -1087,7 +1208,7 @@ test('Codex trust probe accepts the camelCase event name returned by hooks/list'
         key: `${hookFile}:pre_tool_use:0:0`,
         eventName: 'preToolUse',
         handlerType: 'command',
-        command: hook.hooks[0].command,
+        command: hook.hooks[0].commandWindows || hook.hooks[0].command,
         matcher: hook.matcher,
         sourcePath: hookFile,
         source: 'user',
@@ -1126,11 +1247,13 @@ process.stdin.on('data', (chunk) => {
     assert.equal(status.hookTrust, 'trusted');
     assert.equal(status.valid, true);
 
-    response.data[0].warnings.push(`loading hooks from both ${hookFile} and ${path.join(value.home, '.codex/config.toml')}; prefer a single representation for this layer`);
+    response.data[0].warnings.push('synthetic discovery warning');
     await writeFakeCodex(response);
-    const coexist = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
-    assert.equal(coexist.valid, true);
-    assert.deepEqual(coexist.hookTrustProbe.warnings, response.data[0].warnings);
+    const warned = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
+    assert.equal(warned.valid, false);
+    assert.equal(warned.pendingTrust, false);
+    assert.match(warned.error || '', /warning/u);
+    response.data[0].warnings = [];
     response.data[0].hooks[0].trustStatus = 'untrusted';
     await writeFakeCodex(response);
     const untrusted = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
@@ -1141,12 +1264,6 @@ process.stdin.on('data', (chunk) => {
     await writeFakeCodex(response);
     assert.equal((await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0].valid, false);
     response.data[0].errors = [];
-    response.data[0].warnings.push('synthetic discovery warning');
-    await writeFakeCodex(response);
-    const warned = (await scanGuardStatus(value.context, ['codex'], ['codex'], value.activeProfile))[0];
-    assert.equal(warned.valid, false);
-    assert.equal(warned.pendingTrust, false);
-    assert.match(warned.error || '', /warning/u);
   } finally {
     if (priorCodex === undefined) delete process.env.PAC_CODEX;
     else process.env.PAC_CODEX = priorCodex;
