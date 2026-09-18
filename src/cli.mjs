@@ -21,6 +21,7 @@ Capabilities:
   plugin add|remove|update|list ...
   host enable|disable|list ...
   profile init|set|update|publish|sync|remove|status ...
+  policy status|sync ...        Deliver verified policy files without package/plugin installation
 `;
 
 function parse(argv) {
@@ -51,6 +52,7 @@ function parse(argv) {
 }
 
 function human(command, data) {
+  if (command === 'policy') return `PAC policy: ${data.ok ? 'verified' : 'needs attention'} (policy files only; native hooks and package managers unchanged).`;
   if (command === 'status') {
     const drift = data.projections.filter((entry) => !entry.valid).length;
     const scanGuard = !data.scanGuard?.length || data.scanGuard.every((entry) => entry.state === 'inactive')
@@ -110,7 +112,7 @@ export async function main(argv = process.argv.slice(2)) {
     const data = await executeCommand(context, parsed.command, parsed.args, parsed.options);
     if (parsed.options.json) process.stdout.write(`${JSON.stringify({ ok: true, command: parsed.command, data }, null, 2)}\n`);
     else process.stdout.write(`${human(parsed.command, data)}\n`);
-    return data?.ok === false && parsed.command === 'status' ? 1 : 0;
+    return data?.ok === false && ['status', 'policy'].includes(parsed.command) ? 1 : 0;
   } catch (error) {
     const failure = asPacError(error);
     if (parsed.options.json) {

@@ -169,15 +169,18 @@ const KNOWN_SHELL_TOOL_RE = new RegExp(`^(?:Bash|Shell|local_shell|shell|shell_c
 const CONTEXT_INDEX_TOOL_RE = new RegExp(`^(?:ctx_index|ctx_fetch_and_index|${CONTEXT_TOOL_PREFIX}(?:index|fetch_and_index))$`, 'u');
 const CONTEXT_SEARCH_TOOL_RE = new RegExp(`^(?:ctx_search|${CONTEXT_TOOL_PREFIX}search)$`, 'u');
 const CONTEXT_EXECUTE_TOOL_RE = new RegExp(`^(?:ctx_execute|ctx_execute_file|ctx_batch_execute|${CONTEXT_TOOL_PREFIX}(?:execute|execute_file|batch_execute))$`, 'u');
-const BALANCED_IRREVERSIBLE_RE = /(?:^|[;&|]\s*|\s)(?:shred|wipefs|mkfs(?:\.[A-Za-z0-9_-]+)?|fdisk|parted|format|reboot|shutdown|poweroff|halt)(?:\s|$)|(?:^|\s)diskutil\s+(?:erase|partition)|(?:^|\s)dd\b[^\n]*\bof=\/dev\//iu;
-const BALANCED_SERVICE_CHANGE_RE = /(?:^|\s)(?:systemctl\s+(?:start|stop|restart|reload|try-restart|enable|disable|mask|unmask|daemon-reload)|service\s+\S+\s+(?:start|stop|restart|reload)|launchctl\s+(?:load|unload|bootstrap|bootout|kickstart)|(?:docker|podman)\s+(?:rm|stop|restart|kill|prune)|kubectl\s+(?:apply|create|delete|edit|patch|replace|scale|rollout|set)|(?:terraform|tofu)\s+(?:apply|destroy|import)|ansible-playbook\b)(?:\s|$)/iu;
-const BALANCED_EXTERNAL_WRITE_RE = /(?:^|\s)(?:git\s+push\b|rsync\b[^\n]*\s--delete(?:\s|$)|curl\b[^\n]*(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|\s--request\s+(?:POST|PUT|PATCH|DELETE)\b|\s(?:-d|--data(?:-raw|-binary|-urlencode)?|--upload-file|-T)(?:\s|=))|wget\b[^\n]*(?:\s--post-(?:data|file)(?:\s|=)|\s--method(?:\s|=)(?:POST|PUT|PATCH|DELETE)\b))/iu;
-const BALANCED_DESTRUCTIVE_GIT_RE = /(?:^|\s)git\s+(?:reset\b[^\n]*\s--hard\b|clean\b|checkout\b[^\n]*\s--\s|restore\b[^\n]*(?:--worktree|--staged\s+--worktree)|branch\s+-D\b|push\b[^\n]*(?:--force(?:-with-lease)?|-f)\b)/iu;
-const BALANCED_PRIVILEGE_RE = /(?:^|[;&|]\s*|\s)(?:sudo|doas)\s+/iu;
-const BALANCED_SYSTEM_MUTATION_RE = /(?:^|\s)(?:chown|chgrp)\b|(?:^|\s)chmod\b[^;&|\n]*(?:\s-R\b|\s--recursive\b)|(?:>|>>|\btee\b)\s*(?:\/etc|\/usr|\/var|\/opt|\/sys|\/proc|\/dev(?!\/(?:null|stdin|stdout|stderr|fd\/[012])(?:\s|$|[;&|)]))|~\/\.ssh|~\/\.config)/iu;
-const BALANCED_SYSTEM_PACKAGE_REMOVE_RE = /(?:^|\s)(?:apt(?:-get)?|dnf|yum|pacman|brew)\s+(?:remove|uninstall|autoremove|purge|dist-upgrade|full-upgrade|system-upgrade)\b/iu;
-const BALANCED_WIDE_SCAN_RE = /(?:^|[;&|]\s*|\s)(?:find|du|tree)\s+\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)|(?:^|[;&|]\s*|\s)(?:rg|grep)\b[^\n]*\s\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)/iu;
-const BALANCED_EXTREME_PARALLEL_RE = /(?:^|\s)(?:make|ninja|gradle|mvn|cargo|go|pytest|tox|jest|vitest)\b[^\n]*(?:-j(?:=|\s*)?(?:0|[1-9]\d{2,})\b|-j\s*(?:$|[;&|])|--(?:jobs|max-workers|parallel|workers)(?:=|\s+)(?:0|[1-9]\d{2,})\b|-n(?:=|\s*)[1-9]\d{2,}\b)/iu;
+// These expressions receive one executable and boundary-preserving argv, never
+// raw shell text. Whitespace/operators inside an argument cannot become syntax.
+const BALANCED_IRREVERSIBLE_RE = /^(?:shred|wipefs|mkfs(?:\.[A-Za-z0-9_-]+)?|fdisk|parted|format|reboot|shutdown|poweroff|halt)(?:\s|$)|^diskutil\s+(?:erase|partition)|^dd\b[^\n]*\sof=\/dev\//iu;
+const BALANCED_SERVICE_CHANGE_RE = /^(?:systemctl\s+(?:start|stop|restart|reload|try-restart|enable|disable|mask|unmask|daemon-reload)|service\s+\S+\s+(?:start|stop|restart|reload)|launchctl\s+(?:load|unload|bootstrap|bootout|kickstart)|(?:docker|podman)\s+(?:rm|stop|restart|kill|prune)|kubectl\s+(?:apply|create|delete|edit|patch|replace|scale|rollout|set)|(?:terraform|tofu)\s+(?:apply|destroy|import)|ansible-playbook\b)(?:\s|$)/iu;
+const BALANCED_EXTERNAL_WRITE_RE = /^(?:git\s+push\b|rsync\b[^\n]*\s--delete(?:\s|$)|curl\b[^\n]*(?:\s-X\s*(?:POST|PUT|PATCH|DELETE)\b|\s--request\s+(?:POST|PUT|PATCH|DELETE)\b|\s(?:-d|--data(?:-raw|-binary|-urlencode)?|--upload-file|-T)(?:\s|=))|wget\b[^\n]*(?:\s--post-(?:data|file)(?:\s|=)|\s--method(?:\s|=)(?:POST|PUT|PATCH|DELETE)\b))/iu;
+const BALANCED_DESTRUCTIVE_GIT_RE = /^git\s+(?:reset\b[^\n]*\s--hard\b|clean\b|checkout\b[^\n]*\s--\s|restore\b[^\n]*(?:\s--worktree|\s--staged\s+--worktree)|branch\s+-D\b|push\b[^\n]*(?:--force(?:-with-lease)?|-f)\b)/iu;
+const BALANCED_PRIVILEGE_RE = /^(?:sudo|doas)\s+/iu;
+const BALANCED_SYSTEM_MUTATION_RE = /^(?:chown|chgrp)\b|^chmod\b[^\n]*(?:\s-R\b|\s--recursive\b)/iu;
+const BALANCED_SYSTEM_WRITE_TARGET_RE = /^(?:\/(?:etc|usr|var|opt|sys|proc|dev)(?:\/|$)|~\/(?:\.ssh|\.config)(?:\/|$))/iu;
+const BALANCED_SYSTEM_PACKAGE_REMOVE_RE = /^(?:apt(?:-get)?|dnf|yum|pacman|brew)\s+(?:remove|uninstall|autoremove|purge|dist-upgrade|full-upgrade|system-upgrade)\b/iu;
+const BALANCED_WIDE_SCAN_RE = /^(?:find|du|tree)\s+\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)|^(?:rg|grep)\b[^\n]*\s\/(?:home|root|etc|usr|var|opt|tmp|mnt(?:\/[A-Za-z])?)?(?:\s|$)/iu;
+const BALANCED_EXTREME_PARALLEL_RE = /^(?:make|ninja|gradle|mvn|cargo|go|pytest|tox|jest|vitest)\b[^\n]*\s(?:-j(?:=|\s*)?(?:0|[1-9]\d{2,})\b|-j\s*$|--(?:jobs|max-workers|parallel|workers)(?:=|\s+)(?:0|[1-9]\d{2,})\b|-n(?:=|\s*)[1-9]\d{2,}\b)/iu;
 // CodeGraph is the only non-context MCP provider declared by PAC Core today.
 // Keep the default to its single, documented read-only tool. A provider
 // prefix is deliberately not enough: re-enabling `codegraph_node` or a future
@@ -243,8 +246,14 @@ function quotePosix(value) {
   return `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 }
 
-function tokenize(command) {
+function tokenize(command, { effects = false, terminator = null, depth = 0 } = {}) {
   const tokens = [];
+  const operators = new Set();
+  const substitutions = [];
+  let end = command.length;
+  let terminated = false;
+  let nesting = 0;
+  let opaque = false;
   let current = '';
   let tokenStarted = false;
   let quote = null;
@@ -254,6 +263,7 @@ function tokenize(command) {
   const push = () => {
     if (tokenStarted) { tokens.push(current); current = ''; tokenStarted = false; }
   };
+  const operator = (value) => { operators.add(tokens.length); tokens.push(value); };
   for (let index = 0; index < command.length; index += 1) {
     const ch = command[index];
     if (escaped) {
@@ -264,6 +274,25 @@ function tokenize(command) {
       current += ch; tokenStarted = true; escaped = false; continue;
     }
     if (ch === '\\' && quote !== "'") { tokenStarted = true; escaped = true; continue; }
+    if (effects && !quote && ch === terminator && nesting === 0) {
+      end = index; terminated = true; break;
+    }
+    // Reuse this lexer to delimit live substitutions. Single-quoted and escaped
+    // examples stay ordinary arguments; double-quoted substitutions execute.
+    if (effects && quote !== "'" && (ch === '`' || (ch === '$' && command[index + 1] === '('))) {
+      if (depth >= 4) { opaque = true; break; }
+      const width = ch === '`' ? 1 : 2;
+      const nested = tokenize(command.slice(index + width), {
+        effects: true, terminator: ch === '`' ? '`' : ')', depth: depth + 1,
+      });
+      if (nested.opaque) { opaque = true; break; }
+      if (nested.terminated) {
+        substitutions.push(command.slice(index + width, index + width + nested.end));
+        current += '\0'; tokenStarted = true;
+        index += width + nested.end;
+        continue;
+      }
+    }
     if (quote) {
       if (ch === quote) quote = null;
       else { current += ch; tokenStarted = true; }
@@ -271,15 +300,19 @@ function tokenize(command) {
     }
     if (ch === "'" || ch === '"') { tokenStarted = true; quote = ch; continue; }
     if (ch === '\n' || ch === '\r') {
-      push(); tokens.push('\n'); unsafeSyntax = true; continue;
+      push(); operator('\n'); unsafeSyntax = true; continue;
     }
     if (ch === '$' && command[index + 1] === '(') unsafeSyntax = true;
     if (ch === '`') unsafeSyntax = true;
     if (';&|()<>'.includes(ch)) {
+      if (effects && terminator === ')') {
+        if (ch === '(') nesting += 1;
+        else if (ch === ')') nesting -= 1;
+      }
       push();
       const pair = command.slice(index, index + 2);
-      if (['&&', '||', '>>', '<<', '|&'].includes(pair)) { tokens.push(pair); index += 1; }
-      else tokens.push(ch);
+      if (['&&', '||', '>>', '<<', '|&'].includes(pair)) { operator(pair); index += 1; }
+      else operator(ch);
       continue;
     }
     if (/\s/u.test(ch)) { push(); continue; }
@@ -288,15 +321,15 @@ function tokenize(command) {
   if (escaped) { current += '\\'; unsafeSyntax = true; }
   push();
   if (quote) { unclosedQuote = true; unsafeSyntax = true; }
-  return { tokens, unsafeSyntax, unclosedQuote };
+  return { tokens, unsafeSyntax, unclosedQuote, operators, substitutions, end, terminated, opaque };
 }
 
-function commandSegments(tokens) {
+function commandSegments(tokens, operators = null) {
   const result = [];
   let current = [];
   let preceding = null;
-  for (const token of tokens) {
-    if (SHELL_OPERATORS.has(token)) {
+  for (const [index, token] of tokens.entries()) {
+    if (operators ? operators.has(index) : SHELL_OPERATORS.has(token)) {
       if (current.length) result.push({ tokens: current, preceding });
       current = [];
       preceding = token;
@@ -3443,23 +3476,89 @@ function balancedProcessCommand(tokens) {
   }
 }
 
-function balancedProcessChange(command, depth = 0) {
-  if (depth > 3) return true;
-  const lexical = tokenize(String(command));
-  for (const segment of commandSegments(lexical.tokens)) {
+function balancedLiteralOutput(executable, args) {
+  if (executable === 'echo') return args.filter((arg, index) => index !== 0 || arg !== '-n').join(' ');
+  if (executable !== 'printf' || !args.length) return null;
+  const [format, ...values] = args;
+  // ponytail: model only literal formats and repeated %s, not a printf runtime.
+  // Other producers remain outside this lexical hook's visibility.
+  if (format === '%s') return values.join('');
+  if (format === '%s\\n' || format === '%s\n') return values.join('\n');
+  if (!format.includes('%')) return format.replaceAll('\\n', '\n');
+  return null;
+}
+
+function balancedSystemWrite(target) {
+  return BALANCED_SYSTEM_WRITE_TARGET_RE.test(String(target || '')) &&
+    !/^\/dev\/(?:null|stdin|stdout|stderr|fd\/[012])$/u.test(String(target));
+}
+
+function balancedCommandFinding(command, cwd, depth = 0, stdinScript = null) {
+  if (depth > 3) return 'nested command exceeds the bounded impact inspection depth';
+  const lexical = tokenize(String(command), { effects: true });
+  if (lexical.opaque) return 'nested substitution exceeds the bounded impact inspection depth';
+  for (const script of lexical.substitutions) {
+    const reason = balancedCommandFinding(script, cwd, depth + 1);
+    if (reason) return reason;
+  }
+  const segments = commandSegments(lexical.tokens, lexical.operators);
+  let previous = null;
+  let previousOutput = null;
+  for (const segment of segments) {
+    if (['>', '>>', '<', '<<'].includes(segment.preceding)) {
+      if (['>', '>>'].includes(segment.preceding)) {
+        if (balancedSystemWrite(segment.tokens[0])) return 'system/security configuration or privileged redirection';
+        previousOutput = null;
+      } else if (previous && SHELLS.has(previous.executable)) {
+        const reason = balancedCommandFinding(segment.tokens.join(' '), cwd, depth + 1);
+        if (reason) return reason;
+      }
+      continue;
+    }
     const { commandTokens, index, executable, opaque = false } = balancedProcessCommand(segment.tokens);
-    if (opaque) return true;
-    if (executable === 'killall') return true;
-    if (executable === 'pkill' && !soleSignalZeroPkill(commandTokens.slice(index + 1))) return true;
-    if (executable === 'kill' && !readOnlyKill(commandTokens.slice(index + 1))) return true;
+    if (opaque) return 'privilege, process, or system-package change';
+    const args = commandTokens.slice(index + 1);
+    // Preserve argv boundaries: a header, search pattern, or printed example
+    // containing spaces/operators must not manufacture another executable/flag.
+    const effect = [executable, ...args.map((arg) => String(arg).replace(/[\s;&|<>]/gu, '\0') || '\0')].join(' ');
+    if (BALANCED_IRREVERSIBLE_RE.test(effect) ||
+        balancedCriticalDelete(commandTokens.slice(index).map(quotePosix).join(' '), cwd)) {
+      return 'irreversible or broad deletion/storage command';
+    }
+    if (BALANCED_SERVICE_CHANGE_RE.test(effect)) return 'service, container, infrastructure, or cluster mutation';
+    if (BALANCED_EXTERNAL_WRITE_RE.test(effect) || BALANCED_DESTRUCTIVE_GIT_RE.test(effect)) {
+      return 'external publication or destructive source-control operation';
+    }
+    if (BALANCED_PRIVILEGE_RE.test(effect) || BALANCED_SYSTEM_PACKAGE_REMOVE_RE.test(effect) ||
+        executable === 'killall' || (executable === 'pkill' && !soleSignalZeroPkill(args)) ||
+        (executable === 'kill' && !readOnlyKill(args))) return 'privilege, process, or system-package change';
+    if (BALANCED_SYSTEM_MUTATION_RE.test(effect) || (executable === 'tee' && args.some(balancedSystemWrite))) {
+      return 'system/security configuration or privileged redirection';
+    }
+    if (BALANCED_WIDE_SCAN_RE.test(effect)) return 'filesystem-wide scan can materially affect machine responsiveness';
+    if (BALANCED_EXTREME_PARALLEL_RE.test(effect)) return 'extreme parallelism can materially affect CPU, memory, or disk I/O';
+    const pipeInput = ['|', '|&'].includes(segment.preceding) ? previousOutput : stdinScript;
     const inner = shellInner(commandTokens, index);
-    if (inner?.script && balancedProcessChange(inner.script, depth + 1)) return true;
+    if (inner?.script) {
+      const reason = balancedCommandFinding(inner.script, cwd, depth + 1, pipeInput);
+      if (reason) return reason;
+    } else if (SHELLS.has(executable) && pipeInput !== null) {
+      const reason = balancedCommandFinding(pipeInput, cwd, depth + 1);
+      if (reason) return reason;
+    }
     if (executable === 'ssh') {
       const remote = sshRemoteCommand(commandTokens, index);
-      if (remote && balancedProcessChange(remote, depth + 1)) return true;
+      const reason = remote && balancedCommandFinding(remote, cwd, depth + 1, pipeInput);
+      if (reason) return reason;
     }
+    if (executable === 'eval') {
+      const reason = balancedCommandFinding(args.join(' '), cwd, depth + 1, pipeInput);
+      if (reason) return reason;
+    }
+    previous = { executable };
+    previousOutput = executable === 'cat' && !args.length ? pipeInput : balancedLiteralOutput(executable, args);
   }
-  return false;
+  return null;
 }
 
 function balancedSensitiveFinding(tool, input, cwd) {
@@ -3480,21 +3579,7 @@ function balancedSensitiveFinding(tool, input, cwd) {
       return { reason: 'authorization token does not match the exact command', target: authorization.command };
     }
     const text = authorization.command;
-    // Remote commands commonly arrive as one quoted SSH argument. Normalize
-    // only quote characters for impact classification while keeping the exact
-    // original command in the approval message.
-    const effect = text.replace(/["']/gu, ' ');
-    // A bounded read or diagnosis remains automatic, including remote SSH
-    // reads. The high-impact checks below deliberately target effects, not
-    // command names: `ssh host uptime` and `curl URL` are ordinary work.
-    let reason = null;
-    if (BALANCED_IRREVERSIBLE_RE.test(effect) || balancedCriticalDelete(effect, cwd)) reason = 'irreversible or broad deletion/storage command';
-    else if (BALANCED_SERVICE_CHANGE_RE.test(effect)) reason = 'service, container, infrastructure, or cluster mutation';
-    else if (BALANCED_EXTERNAL_WRITE_RE.test(effect) || BALANCED_DESTRUCTIVE_GIT_RE.test(effect)) reason = 'external publication or destructive source-control operation';
-    else if (BALANCED_PRIVILEGE_RE.test(effect) || balancedProcessChange(text) || BALANCED_SYSTEM_PACKAGE_REMOVE_RE.test(effect)) reason = 'privilege, process, or system-package change';
-    else if (BALANCED_SYSTEM_MUTATION_RE.test(effect)) reason = 'system/security configuration or privileged redirection';
-    else if (BALANCED_WIDE_SCAN_RE.test(effect)) reason = 'filesystem-wide scan can materially affect machine responsiveness';
-    else if (BALANCED_EXTREME_PARALLEL_RE.test(effect)) reason = 'extreme parallelism can materially affect CPU, memory, or disk I/O';
+    const reason = balancedCommandFinding(text, cwd);
     if (reason && !authorization.valid) return { reason, target: text };
   }
   return null;

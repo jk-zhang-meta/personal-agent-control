@@ -1197,6 +1197,17 @@ it without explicit task-scoped user authorization. Native file-edit tools stay
 frictionless and rely on the same proactive authority contract plus the host
 sandbox, because they have no shell-command prefix surface.
 
+Balanced impact matching uses executable command segments and argument
+boundaries. Printed documentation such as `echo 'git push origin main'` or
+`echo 'sudo apt install curl'` is ordinary data. The shared lexer and existing
+wrapper handling retain live command substitutions, nested shell/SSH commands,
+literal shell input, and actual system redirections for impact review. Quoting
+an executable or a shell script does not authorize its effects. Inspection is
+depth-bounded and lexical, not a general shell parser or a sandbox for arbitrary
+programs and dynamically generated input. The focused oracle is the balanced
+documentation/composition cases in `tests/scan-guard.test.mjs`, run alongside
+that file's existing security regressions outside synchronized source.
+
 ### Consequences
 
 PAC no longer turns routine work into a broker migration or approval ceremony.

@@ -32,6 +32,7 @@ import { PacError, usage } from './errors.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
 import { hostAdapterStatus, reconcileHostAdapters } from './host-adapters.mjs';
 import { scanGuardStatus, reconcileScanGuard } from './scan-guard.mjs';
+import { policyStatus, synchronizePolicy } from './policy-deployment.mjs';
 import { providerStatus, reconcileProviders } from './providers.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { profileBootstrapStatus, reconcileProfileBootstrap } from './profile-bootstrap.mjs';
@@ -1299,6 +1300,16 @@ async function selfUpdate(context, options) {
 
 export async function executeCommand(context, command, args, options = {}) {
   switch (command) {
+    case 'policy': {
+      const action = args.shift();
+      if (action === 'status' && args.length === 0) return await policyStatus(context);
+      if (action === 'sync' && (args.length === 3 || args.length === 4)) {
+        const [repository, commit, baseline, selection] = args;
+        return await synchronizePolicy(context, { repository, commit, baseline,
+          ...(selection ? { agents: selection.split(',') } : {}) });
+      }
+      throw usage('Usage: pac policy status | pac policy sync PROFILE_REPO COMMIT BASELINE [codex,claude,agy,grok]');
+    }
     case 'install': return await install(context, args, options);
     case 'plan': if (args.length) throw usage('pac plan accepts no arguments.'); return await plan(context, options);
     case 'apply': {

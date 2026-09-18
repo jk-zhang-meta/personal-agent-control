@@ -22,10 +22,12 @@ locators here.
   host, lock, and rollback boundaries documented in docs/ARCHITECTURE.md.
 - Use bounded, explicit roots for discovery; do not add recursive filesystem-wide
   scans or unreviewed network/update behavior.
-- Raw `rg`/`find`/equivalent directory traversal is denied by the host gate.
-  Directory discovery must use the local workspace index or the PAC
-  `resource-guard` route with one registered local root and its caps; small
-  exact-file reads still require an explicit result/file-size bound.
+- Balanced host hooks permit bounded, in-scope ordinary work, including scoped
+  `rg`/`find` searches and small exact-file reads with explicit output bounds.
+  Prefer the local workspace index for discovery; use `resource-guard` with one
+  registered local root and its caps for broader or resource-intensive work.
+  Filesystem-wide scans and materially disruptive resource use still require
+  pre-execution review; the internal strict broker retains its narrower grammar.
 - Keep public catalogs free of private Profile paths and secret-bearing values.
 
 ## Request scope routing

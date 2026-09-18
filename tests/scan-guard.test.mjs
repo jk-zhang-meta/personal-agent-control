@@ -489,6 +489,72 @@ test('balanced host mode lets ordinary work run and asks only for sensitive effe
     tool_input: { command: 'git status --short' } }, { ...balanced, host: 'claude' }), null);
 });
 
+test('balanced sensitive matching treats printed documentation and argument values as data', () => {
+  const cwd = '/root/.agent-work/runtime/pac-balanced-fixture';
+  const options = { mode: 'balanced', home: '/root' };
+  const documentation = [
+    'git push origin main', 'sudo apt install curl', 'shred /tmp/pac-demo',
+    'dd if=/dev/zero of=/dev/sda', 'rm -rf /', 'systemctl restart pac-demo',
+    'git reset --hard HEAD~1', 'curl -X POST https://example.com/health',
+    'apt-get remove pac-demo', 'chown root pac-demo', 'chmod -R 700 /tmp/pac-demo',
+    'echo x > /etc/pac-demo', 'tee /dev/sda', 'find / -name pac-demo',
+    'rg needle /', 'make -j1000 test', 'kill -9 12345',
+    '$(git push origin main)', '`sudo apt install curl`',
+  ];
+  const commands = documentation.flatMap((text) => [
+    `echo ${quote(text)}`,
+    `printf '%s\\n' ${quote(text)}`,
+    `printf '%s\\n' ${quote(text)} | cat`,
+    `sh -c ${quote(`echo ${quote(text)}`)}`,
+    `ssh compute ${quote(`printf '%s\\n' ${quote(text)}`)}`,
+  ]);
+  commands.push(
+    "echo ';' git push origin main", "echo '>' /etc/pac-demo",
+    'echo git push origin main', 'echo "sudo apt install curl"',
+    "git log --grep='git push origin main'",
+    "curl -H 'X-Documentation: curl -X POST' https://example.com/health",
+    "make 'NOTE=-j1000' test", "env NOTE='sudo apt install curl' true",
+    "echo \"$(printf '%s' 'git push origin main')\"",
+    "printf '%s\\n' 'echo git push origin main' | sh",
+    "sh <<< 'echo sudo apt install curl'",
+  );
+  for (const command of commands) {
+    assert.equal(hookDecision({ tool_name: 'Bash', cwd, tool_input: { command } }, options), null, command);
+  }
+});
+
+test('balanced sensitive matching retains actual effects in nested and composed commands', () => {
+  const cwd = '/root/.agent-work/runtime/pac-balanced-fixture';
+  const options = { mode: 'balanced', home: '/root' };
+  const effects = [
+    'git push origin main', 'sudo apt install curl', 'shred /tmp/pac-demo',
+    'dd if=/dev/zero of=/dev/sda', 'rm -rf /', 'systemctl restart pac-demo',
+    'git reset --hard HEAD~1', 'curl -X POST https://example.com/health',
+    'apt-get remove pac-demo', 'chown root pac-demo', 'chmod -R 700 /tmp/pac-demo',
+    'echo x > /etc/pac-demo', 'tee /dev/sda', 'find / -name pac-demo',
+    'rg needle /', 'make -j1000 test', 'kill -9 12345',
+  ];
+  const commands = effects.flatMap((text) => [
+    text, `echo ok && ${text}`, `sh -c ${quote(text)}`,
+    `ssh -o BatchMode=yes compute ${quote(text)}`, `echo "$(${text})"`,
+    `echo \`${text}\``, `printf '%s\\n' ${quote(text)} | sh`,
+    `sh <<< ${quote(text)}`, `eval ${quote(text)}`,
+  ]);
+  commands.push(
+    "'git' 'push' origin main", '/usr/bin/git push origin main',
+    "echo 'git push origin main'; sudo apt install curl",
+    'echo "$(echo "$(git push origin main)")"',
+    "ssh compute 'sh -c \"git push origin main\"'",
+    "printf '%s\\n' 'git push origin main' | ssh compute sh",
+    "echo ok > '/etc/pac-demo'", 'echo ok | tee /etc/pac-demo',
+  );
+  for (const command of commands) {
+    const result = hookDecision({ tool_name: 'Bash', cwd, tool_input: { command } }, options);
+    assert.equal(result?.blocked, true, command);
+    assert.equal(result?.approval, true, command);
+  }
+});
+
 test('context execution/index tools and unknown command-shaped tools fail closed', async (t) => {
   const { home, project, options } = await fixture(t);
   const blocked = [
