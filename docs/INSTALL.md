@@ -195,6 +195,10 @@ append `automated-rebuttal-workflow` or another reviewed native package. Draw.io
 is installed as the shared standalone Skill; the prior native Plugin is removed
 once through the reviewed migration catalog. Unknown installed Plugins are
 preserved and reported as `UNMANAGED`.
+Codex's installed remote applications from `openai-curated-remote`, whether
+default or user-selected, remain host-managed when PAC does not own that
+marketplace. Reconciliation reports them as preserved and not PAC-pinned;
+their installation and authorization remain with Codex.
 The CodeGraph MCP adapter launches the pinned `codegraph serve --mcp --no-watch`
 binary through `mise --cd <PAC Core> exec`; generated host configuration expands
 `{{PAC_ROOT}}` to the active Core checkout. This keeps the provider usable from

@@ -1379,3 +1379,19 @@ Keep logical ownership at the host-discovered path. This preserves the native
 directory link and unrelated rules without weakening general path validation.
 Regression coverage exercises existing ownership, synchronization through the
 alias, user-file preservation, drift detection, and unsafe alias rejection.
+
+## ADR-028: Preserve user-selected Codex native remote applications
+
+Decision date: 2026-09-20. Refines ADR-026's inventory boundary.
+
+Codex owns both default and user-selected remote applications. PAC preserves
+installed rows with policy `INSTALLED_BY_DEFAULT` or `AVAILABLE`, exact remote
+source, the `openai-curated-remote` marketplace, and a matching plugin ID.
+The exception does not apply if PAC manages that marketplace. Other sources,
+unknown policies, mismatched identities, and Claude inventories retain strict
+checking. No global Plugin skip or arbitrary marketplace exemption is added.
+
+Report these entries as host-managed and not PAC-pinned in reconciliation
+output. PAC neither adopts them into its pinned ownership inventory nor
+installs, updates, removes, or changes their authorization. This is ownership
+separation, not a claim that PAC has verified remote app code or permissions.

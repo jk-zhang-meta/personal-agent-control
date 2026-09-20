@@ -712,10 +712,10 @@ chmod 755 "$native_bin"/*
 empty_catalog="$tmp/empty-plugins.tsv"
 sed -n '1p' "$source/catalog/plugins.tsv" > "$empty_catalog"
 
-# Host-provided Codex Plugins marked INSTALLED_BY_DEFAULT are outside PAC's
-# ownership boundary. They must survive an empty PAC catalog without turning
-# every ordinary Profile update into Plugin drift, while an unmarked Plugin
-# from the same marketplace remains subject to the strict unmanaged check.
+# Host-provided Codex remote Plugins are outside PAC's ownership boundary.
+# They must survive an empty PAC catalog without turning ordinary Profile
+# updates into Plugin drift. The exception accepts only the vendor's remote
+# shape and its two known policies; lookalikes remain unmanaged.
 native_default_home="$tmp/native-default-plugin-home"
 mkdir -p "$native_default_home/.test-native" \
     "$native_default_home/.local/state/personal-agent-control"
@@ -730,12 +730,49 @@ cat > "$native_default_home/.test-native/plugins.json" <<'JSON'
   {
     "pluginId":"openai-templates@openai-curated-remote",
     "marketplaceName":"openai-curated-remote",
-    "installPolicy":"INSTALLED_BY_DEFAULT",
+    "installPolicy":"AVAILABLE",
     "source":{"source":"remote"}
   },
   {
-    "pluginId":"manual@openai-curated-remote",
+    "pluginId":"gmail@openai-curated-remote",
     "marketplaceName":"openai-curated-remote",
+    "installPolicy":"AVAILABLE",
+    "source":{"source":"remote"}
+  },
+  {
+    "pluginId":"google-calendar@openai-curated-remote",
+    "marketplaceName":"openai-curated-remote",
+    "installPolicy":"AVAILABLE",
+    "source":{"source":"remote"}
+  },
+  {
+    "pluginId":"google-drive@openai-curated-remote",
+    "marketplaceName":"openai-curated-remote",
+    "installPolicy":"AVAILABLE",
+    "source":{"source":"remote"}
+  },
+  {
+    "pluginId":"unknown-policy@openai-curated-remote",
+    "marketplaceName":"openai-curated-remote",
+    "installPolicy":"UNKNOWN",
+    "source":{"source":"remote"}
+  },
+  {
+    "pluginId":"local-source@openai-curated-remote",
+    "marketplaceName":"openai-curated-remote",
+    "installPolicy":"AVAILABLE",
+    "source":{"source":"local"}
+  },
+  {
+    "pluginId":"wrong-marketplace@other-marketplace",
+    "marketplaceName":"other-marketplace",
+    "installPolicy":"AVAILABLE",
+    "source":{"source":"remote"}
+  },
+  {
+    "pluginId":"mismatched-id@other-marketplace",
+    "marketplaceName":"openai-curated-remote",
+    "installPolicy":"AVAILABLE",
     "source":{"source":"remote"}
   }
 ]
@@ -744,30 +781,52 @@ printf '[]\n' > "$native_default_home/.test-native/marketplaces.json"
 if PATH="$native_bin:$PATH" HOME="$native_default_home" \
     "$source/scripts/reconcile-plugins.sh" preflight --home "$native_default_home" \
     --agents codex --catalog "$empty_catalog" > "$tmp/native-default.out" 2>&1; then
-    echo "unmarked Plugin from the vendor marketplace was accepted" >&2
+    echo "invalid remote Plugin shape was accepted" >&2
     exit 1
 fi
 grep -q '^UNMANAGED: installed codex Plugin(s) are absent from catalog/plugins.tsv:' \
     "$tmp/native-default.out"
-grep -q 'manual@openai-curated-remote' "$tmp/native-default.out"
+grep -qx '  unknown-policy@openai-curated-remote' "$tmp/native-default.out"
+grep -qx '  local-source@openai-curated-remote' "$tmp/native-default.out"
+grep -qx '  wrong-marketplace@other-marketplace' "$tmp/native-default.out"
+grep -qx '  mismatched-id@other-marketplace' "$tmp/native-default.out"
 
 node - "$native_default_home/.test-native/plugins.json" <<'NODE'
 const fs = require('node:fs');
 const plugins = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-if (plugins.length !== 3) process.exit(1);
-NODE
-node - "$native_default_home/.test-native/plugins.json" <<'NODE'
-const fs = require('node:fs');
-const file = process.argv[2];
-const plugins = JSON.parse(fs.readFileSync(file, 'utf8'))
-  .filter((entry) => entry.pluginId !== 'manual@openai-curated-remote');
-fs.writeFileSync(file, `${JSON.stringify(plugins, null, 2)}\n`);
+const allowed = new Set([
+  'plugin-management@openai-curated-remote',
+  'openai-templates@openai-curated-remote',
+  'gmail@openai-curated-remote',
+  'google-calendar@openai-curated-remote',
+  'google-drive@openai-curated-remote',
+]);
+fs.writeFileSync(process.argv[2], `${JSON.stringify(
+  plugins.filter((entry) => allowed.has(entry.pluginId)), null, 2)}\n`);
 NODE
 printf '# plugin\tmarketplace\ttargets\n' \
     > "$native_default_home/.local/state/personal-agent-control/owned-plugins.tsv"
-PATH="$native_bin:$PATH" HOME="$native_default_home" \
-    "$source/scripts/reconcile-plugins.sh" preflight --home "$native_default_home" \
-    --agents codex --catalog "$empty_catalog" >/dev/null
+native_default_plugins_before="$tmp/native-default-plugins-before.json"
+cp "$native_default_home/.test-native/plugins.json" "$native_default_plugins_before"
+for native_default_mode in preflight apply check; do
+    PATH="$native_bin:$PATH" HOME="$native_default_home" \
+        "$source/scripts/reconcile-plugins.sh" "$native_default_mode" \
+        --home "$native_default_home" --agents codex --catalog "$empty_catalog" \
+        > "$tmp/native-default-$native_default_mode.out"
+    if [ "$native_default_mode" = preflight ]; then
+        for native_default_id in \
+            plugin-management@openai-curated-remote \
+            openai-templates@openai-curated-remote \
+            gmail@openai-curated-remote \
+            google-calendar@openai-curated-remote \
+            google-drive@openai-curated-remote; do
+            grep -qx "Host-managed remote Plugin (preserved, not PAC-pinned): $native_default_id" \
+                "$tmp/native-default-$native_default_mode.out"
+        done
+    fi
+done
+cmp -s "$native_default_plugins_before" "$native_default_home/.test-native/plugins.json"
+[ ! -e "$native_default_home/.test-native/mutations.log" ]
 
 # Taking ownership of the vendor marketplace in a PAC catalog disables the
 # exception immediately; a default-looking row must then pass the normal
