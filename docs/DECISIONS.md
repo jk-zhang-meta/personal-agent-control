@@ -1362,3 +1362,20 @@ reconciliation. The exception is deliberately narrow and based on the host's
 explicit installation policy; it does not grant a wildcard marketplace or
 allow arbitrary user Plugins. A future host schema change must add a targeted
 fixture before broadening the rule.
+
+## ADR-027: Preserve the native Antigravity rules alias during policy delivery
+
+Decision date: 2026-09-20.
+
+Policy status and synchronization recognize only the owned
+`.gemini/antigravity-cli/rules/personal-agent-control.md` path when its rules
+directory aliases the exact home-local `.gemini/config/rules` directory.
+The destination must be a real directory with no symlink ancestors. Other
+destinations and nested aliases remain rejected by the existing path checks.
+
+Resolve the destination before preflight and again before replacement, reject
+a changed destination, and journal the physical file for backup and rollback.
+Keep logical ownership at the host-discovered path. This preserves the native
+directory link and unrelated rules without weakening general path validation.
+Regression coverage exercises existing ownership, synchronization through the
+alias, user-file preservation, drift detection, and unsafe alias rejection.

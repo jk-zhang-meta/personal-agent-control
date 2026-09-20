@@ -162,3 +162,51 @@ test('policy delivery drops full-install ownership while retaining compatibility
   assert.equal(status.entries.some((entry) => entry.relativePath.startsWith('.gemini/')), true);
   assert.equal(await fs.readFile(hostOwned, 'utf8'), 'Host owned\n');
 });
+
+test('policy delivery preserves the native rules alias and detects edits through it', async (t) => {
+  const f = await fixture(t);
+  const first = await f.commit(1);
+  const options = { repository: f.repository, baseline: first, commit: first };
+  await synchronizePolicy(f.context, options);
+  const alias = path.join(f.home, '.gemini/antigravity-cli/rules');
+  const destination = path.join(f.home, '.gemini/config/rules');
+  await fs.rename(alias, destination);
+  await fs.symlink(destination, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const originalLink = await fs.readlink(alias);
+  const unrelated = path.join(destination, 'user.md');
+  await fs.writeFile(unrelated, 'Keep my rules\n');
+  assert.equal((await policyStatus(f.context)).ok, true);
+  const rule = path.join(destination, 'personal-agent-control.md');
+  await fs.unlink(rule);
+  const second = await f.commit(2);
+  assert.equal((await synchronizePolicy(f.context, { ...options, commit: second })).ok, true);
+  assert.equal(await fs.readlink(alias), originalLink);
+  assert.equal(await fs.readFile(unrelated, 'utf8'), 'Keep my rules\n');
+  assert.equal((await policyStatus(f.context)).ok, true);
+  await fs.writeFile(rule, 'User modification\n');
+  await assert.rejects(synchronizePolicy(f.context, { ...options, commit: second }), { code: 'POLICY_DRIFT' });
+  assert.equal((await policyStatus(f.context)).ok, false);
+});
+
+test('rules alias rejects other destinations and nested symlinks before writing', async (t) => {
+  for (const nested of [false, true]) {
+    await t.test(nested ? 'nested alias' : 'outside destination', async (t) => {
+      const f = await fixture(t);
+      const first = await f.commit(1);
+      const outside = path.join(f.root, 'unrelated');
+      const alias = path.join(f.home, '.gemini/antigravity-cli/rules');
+      const destination = path.join(f.home, '.gemini/config/rules');
+      await fs.mkdir(outside);
+      await fs.mkdir(path.dirname(alias), { recursive: true });
+      if (nested) {
+        await fs.mkdir(path.dirname(destination), { recursive: true });
+        await fs.symlink(outside, destination, process.platform === 'win32' ? 'junction' : 'dir');
+      }
+      await fs.symlink(nested ? destination : outside, alias, process.platform === 'win32' ? 'junction' : 'dir');
+      await assert.rejects(synchronizePolicy(f.context, { repository: f.repository,
+        baseline: first, commit: first }), (error) => ['PATH_UNSAFE', 'POLICY_PATH_UNSAFE'].includes(error.code));
+      assert.deepEqual(await fs.readdir(outside), []);
+      await assert.rejects(fs.access(path.join(f.home, '.config/personal-agent-control/profile-bootstrap.md')));
+    });
+  }
+});

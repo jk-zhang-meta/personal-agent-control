@@ -31,7 +31,24 @@ function within(home, file) {
   return rel && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
 }
 
+async function policyTarget(home, file) {
+  const alias = path.join(home, '.gemini/antigravity-cli/rules');
+  if (file !== path.join(alias, 'personal-agent-control.md')) return file;
+  await assertSafeManagedObject(home, alias, 'policy rules alias');
+  if (!(await statOrNull(alias))?.isSymbolicLink()) return file;
+  const destination = path.join(home, '.gemini/config/rules');
+  if (path.resolve(path.dirname(alias), await fs.readlink(alias)) !== destination) {
+    throw new PacError('POLICY_PATH_UNSAFE', `Unsupported policy rules alias: ${alias}`);
+  }
+  // Only the native, home-local rules mapping is supported. Operate on the
+  // validated real directory so backups and replacements preserve the alias.
+  await assertSafeManagedObject(home, destination, 'policy rules destination', 'directory');
+  await fs.realpath(destination);
+  return path.join(destination, 'personal-agent-control.md');
+}
+
 async function identity(home, file) {
+  file = await policyTarget(home, file);
   await assertSafeManagedObject(home, file, 'policy target');
   const stat = await statOrNull(file);
   if (!stat) return null;
@@ -144,7 +161,8 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
     }
     const changes = [];
     for (const item of planned) {
-      const target = path.join(context.home, item.relativePath);
+      const target = await policyTarget(context.home, path.join(context.home, item.relativePath));
+      item.target = target;
       const actual = await identity(context.home, target);
       if (actual && actual.sha256 !== item.sha256 && actual.sha256 !== item.baseline && actual.sha256 !== owned.get(item.relativePath)) {
         throw new PacError('POLICY_DRIFT', `Preserving modified or unrelated policy content: ${target}`);
@@ -162,7 +180,8 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
     await atomicWriteFile(path.join(backup, 'plan.json'), JSON.stringify({ mode: 'policy-only', commit, baseline, changes: changes.map(({ relativePath, before }) => ({ relativePath, before })) }, null, 2));
     try {
       for (const [index, item] of changes.entries()) {
-        const target = path.join(context.home, item.relativePath);
+        const target = await policyTarget(context.home, path.join(context.home, item.relativePath));
+        if (target !== item.target) throw new PacError('POLICY_RACE', `Policy destination changed after preflight: ${target}`);
         const check = await identity(context.home, target);
         if (JSON.stringify(check) !== JSON.stringify(item.before)) throw new PacError('POLICY_RACE', `Policy changed after preflight: ${target}`);
         await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
