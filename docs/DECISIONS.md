@@ -31,9 +31,10 @@ and human output shows retention warnings. Snapshots that predate this change
 stay unsealed or unregistered and are still never adopted; removing them is an
 explicit owner action.
 
-Not decided here: the public default branch lags the working line, and its
-ADR-027 (preserve Plugins from marketplaces PAC does not manage) was never
-adopted there. Both need an explicit owner decision.
+The public default branch had diverged from the working line. By owner
+decision the working line is now the only published branch, and the one
+main-only decision it lacked is adopted as ADR-034. The second "ADR-028" is
+renumbered ADR-033 so each number names one decision.
 
 Oracle: `node --test tests/providers.test.mjs tests/backup-retention.test.mjs`,
 the undeclared-provider and self-update branch cases in
@@ -86,7 +87,7 @@ legacy TOML/JSON retirement, mixed Plugin handlers, host scoping, and idempotenc
 
 Decision date: 2026-08-06.
 
-## ADR-028: Allow native Plugins without bundled Skills
+## ADR-033: Allow native Plugins without bundled Skills
 
 Decision date: 2026-09-25.
 
@@ -1598,3 +1599,17 @@ Acceptance uses focused hook, backup lifecycle, no-op, atomic metadata and apply
 regressions in an isolated home. Generated adapters and exact integrity pins must
 agree with source. Source tests do not establish live routing, latency or billed
 token savings; activation and live measurements remain separate.
+
+## ADR-034: Audit PAC-owned marketplaces without blocking unrelated Plugins
+
+Decision date: 2026-09-25; adopted on the working line 2026-11-10. Supersedes
+the native-default exception of ADR-026 and the remote-application exception
+of ADR-028.
+
+Ordinary Skill/Profile updates must not require registering or uninstalling
+unrelated native Plugins. Both Codex and Claude inventories now report Plugins
+from external marketplaces as `EXTERNAL` and leave them unchanged. Current
+catalog and prior ownership still reserve their marketplace identities;
+unexpected Plugins there, malformed inventory, source/version drift and unsafe
+paths remain blocking. Backups, rollback and post-apply verification remain
+required. PAC does not claim to validate or manage external Plugins.

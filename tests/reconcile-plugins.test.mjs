@@ -88,8 +88,16 @@ if (args.join(' ') === 'plugin marketplace list --json') {
     run('git', ['-C', cachedSource, 'remote', 'set-url', 'origin', path.join(tmp, 'wrong-source')]);
     rejectPreflight(/DRIFT: Plugin source/u);
     run('git', ['-C', cachedSource, 'remote', 'set-url', 'origin', upstream]);
+    // A Plugin from a marketplace PAC does not manage is reported and preserved.
     await fs.writeFile(path.join(home, '.fixture-native/plugins.json'), JSON.stringify([
-      { pluginId: 'unmanaged@foreign', marketplaceName: 'foreign', enabled: true, installed: true }
+      { pluginId: 'external@foreign', marketplaceName: 'foreign', enabled: true, installed: true }
+    ]));
+    const external = spawnSync(path.join(repo, 'scripts/reconcile-plugins.sh'), ['preflight', ...args], { env, encoding: 'utf8' });
+    assert.equal(external.status, 0, external.stderr);
+    assert.match(external.stderr, /EXTERNAL: preserving codex Plugin external@foreign/u);
+    // An uncatalogued Plugin inside a PAC-managed marketplace still fails closed.
+    await fs.writeFile(path.join(home, '.fixture-native/plugins.json'), JSON.stringify([
+      { pluginId: 'rogue@context-mode', marketplaceName: 'context-mode', enabled: true, installed: true }
     ]));
     rejectPreflight(/UNMANAGED/u);
     await fs.writeFile(path.join(home, '.fixture-native/plugins.json'), '[]');

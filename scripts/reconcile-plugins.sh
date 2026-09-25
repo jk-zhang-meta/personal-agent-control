@@ -673,13 +673,8 @@ assert_all_installed_managed() {
         done < "$owned"
     fi
     LC_ALL=C sort -u "$tmp/$host_name-all-desired" -o "$tmp/$host_name-all-desired"
-    # Codex may expose vendor-owned Plugins from its remote catalog, bundled
-    # marketplace, or primary runtime. PAC must leave those host-native
-    # surfaces alone, including user-selected remote apps. Keep this inventory
-    # check fail-closed for other unmanaged and PAC-managed Plugins: it requires the exact known
-    # marketplace plus its native policy/source/path shape, and is disabled if
-    # PAC ever manages that marketplace. Claude does not currently expose
-    # equivalent host-native rows.
+    # PAC audits only its marketplace ownership boundary. Other host/user
+    # Plugins are reported and preserved, never adopted or removed implicitly.
     : > "$tmp/$host_name-managed-marketplaces"
     awk -F '\t' '$0 !~ /^#/ && NF { print $2 }' "$catalog" \
         >> "$tmp/$host_name-managed-marketplaces"
@@ -691,19 +686,13 @@ assert_all_installed_managed() {
     LC_ALL=C sort -u "$tmp/$host_name-managed-marketplaces" -o \
         "$tmp/$host_name-managed-marketplaces"
     node - "$host_name" "$tmp/$host_name-plugins.json" \
-        "$tmp/$host_name-managed-marketplaces" "$tmp/$host_name-native-remote" \
+        "$tmp/$host_name-managed-marketplaces" \
         > "$tmp/$host_name-all-actual-unsorted" <<'NODE'
 const fs = require('node:fs');
-const [host, file, managedFile, nativeFile] = process.argv.slice(2);
+const [host, file, managedFile] = process.argv.slice(2);
 const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
 const managed = new Set(fs.readFileSync(managedFile, 'utf8').split(/\r?\n/u).filter(Boolean));
 const rows = host === 'codex' ? parsed.installed : parsed;
-const nativeRemoteIds = [];
-function localPath(value) {
-    let normalized = String(value || '').replaceAll('\\', '/');
-    if (normalized.startsWith('//?/')) normalized = normalized.slice(4);
-    return normalized.replace(/\/+$/u, '');
-}
 for (const row of rows) {
     const id = host === 'codex' ? row.pluginId : row.id;
     if (typeof id !== 'string' || id.length === 0) {
@@ -713,35 +702,17 @@ for (const row of rows) {
     const marketplace = host === 'codex'
         ? row.marketplaceName
         : (id.includes('@') ? id.slice(id.lastIndexOf('@') + 1) : '');
-    const marketplaceRoot = localPath(row.marketplaceSource?.source);
-    const pluginPath = localPath(row.source?.path);
-    const nativeRemote = host === 'codex' &&
-        ['INSTALLED_BY_DEFAULT', 'AVAILABLE'].includes(row.installPolicy) &&
-        row.source && row.source.source === 'remote' &&
-        marketplace === 'openai-curated-remote' &&
-        /^[a-z0-9][a-z0-9-]*@openai-curated-remote$/u.test(id) &&
-        !managed.has(marketplace);
-    const nativeLocalDefault = host === 'codex' &&
-        row.installPolicy === 'AVAILABLE' &&
-        row.source?.source === 'local' &&
-        row.marketplaceSource?.sourceType === 'local' &&
-        !managed.has(marketplace) && (
-            (marketplace === 'openai-bundled' &&
-                marketplaceRoot.endsWith('/.codex/.tmp/bundled-marketplaces/openai-bundled') &&
-                pluginPath.startsWith(`${marketplaceRoot}/plugins/`)) ||
-            (marketplace === 'openai-primary-runtime' &&
-                marketplaceRoot.endsWith('/.cache/codex-runtimes/codex-primary-runtime/plugins/openai-primary-runtime') &&
-                pluginPath.startsWith(`${marketplaceRoot}/plugins/`))
-        );
-    if (nativeRemote) nativeRemoteIds.push(id);
-    if (!nativeRemote && !nativeLocalDefault) console.log(id);
+    if (typeof marketplace !== 'string' || !marketplace || !id.endsWith(`@${marketplace}`)) {
+        console.error(`invalid ${host} Plugin inventory row: inconsistent marketplace`);
+        process.exit(2);
+    }
+    if (marketplace && !managed.has(marketplace)) {
+        console.error(`EXTERNAL: preserving ${host} Plugin ${id} (marketplace not managed by PAC)`);
+    } else {
+        console.log(id);
+    }
 }
-fs.writeFileSync(nativeFile, nativeRemoteIds.sort().map((id) => `${id}\n`).join(''));
 NODE
-    if [ -s "$tmp/$host_name-native-remote" ]; then
-        sed 's/^/Host-managed remote Plugin (preserved, not PAC-pinned): /' \
-            "$tmp/$host_name-native-remote"
-    fi
     LC_ALL=C sort -u "$tmp/$host_name-all-actual-unsorted" \
         > "$tmp/$host_name-all-actual"
     comm -23 "$tmp/$host_name-all-actual" "$tmp/$host_name-all-desired" \
