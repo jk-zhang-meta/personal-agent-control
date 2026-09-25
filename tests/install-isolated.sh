@@ -712,10 +712,8 @@ chmod 755 "$native_bin"/*
 empty_catalog="$tmp/empty-plugins.tsv"
 sed -n '1p' "$source/catalog/plugins.tsv" > "$empty_catalog"
 
-# Host-provided Codex Plugins marked INSTALLED_BY_DEFAULT are outside PAC's
-# ownership boundary. They must survive an empty PAC catalog without turning
-# every ordinary Profile update into Plugin drift, while an unmarked Plugin
-# from the same marketplace remains subject to the strict unmanaged check.
+# Plugins from marketplaces PAC does not own survive reconciliation unchanged,
+# regardless of native-default markers. They cannot block a Skill update.
 native_default_home="$tmp/native-default-plugin-home"
 mkdir -p "$native_default_home/.test-native" \
     "$native_default_home/.local/state/personal-agent-control"
@@ -741,13 +739,15 @@ cat > "$native_default_home/.test-native/plugins.json" <<'JSON'
 ]
 JSON
 printf '[]\n' > "$native_default_home/.test-native/marketplaces.json"
-if PATH="$native_bin:$PATH" HOME="$native_default_home" \
+printf '# plugin\tmarketplace\ttargets\n' \
+    > "$native_default_home/.local/state/personal-agent-control/owned-plugins.tsv"
+PATH="$native_bin:$PATH" HOME="$native_default_home" \
     "$source/scripts/reconcile-plugins.sh" preflight --home "$native_default_home" \
-    --agents codex --catalog "$empty_catalog" > "$tmp/native-default.out" 2>&1; then
-    echo "unmarked Plugin from the vendor marketplace was accepted" >&2
+    --agents codex --catalog "$empty_catalog" > "$tmp/native-default.out" 2>&1 || {
+    cat "$tmp/native-default.out" >&2
     exit 1
-fi
-grep -q '^UNMANAGED: installed codex Plugin(s) are absent from catalog/plugins.tsv:' \
+}
+grep -q '^EXTERNAL: preserving codex Plugin manual@openai-curated-remote' \
     "$tmp/native-default.out"
 grep -q 'manual@openai-curated-remote' "$tmp/native-default.out"
 
@@ -763,8 +763,6 @@ const plugins = JSON.parse(fs.readFileSync(file, 'utf8'))
   .filter((entry) => entry.pluginId !== 'manual@openai-curated-remote');
 fs.writeFileSync(file, `${JSON.stringify(plugins, null, 2)}\n`);
 NODE
-printf '# plugin\tmarketplace\ttargets\n' \
-    > "$native_default_home/.local/state/personal-agent-control/owned-plugins.tsv"
 PATH="$native_bin:$PATH" HOME="$native_default_home" \
     "$source/scripts/reconcile-plugins.sh" preflight --home "$native_default_home" \
     --agents codex --catalog "$empty_catalog" >/dev/null
@@ -807,8 +805,7 @@ fi
 grep -q '^UNMANAGED: installed codex Plugin(s) are absent from catalog/plugins.tsv:' \
     "$tmp/managed-default.out"
 
-# The host-native exception is Codex-specific. A Claude inventory row carrying
-# a similarly named marker remains unmanaged and therefore fails closed.
+# The same external ownership boundary applies to Claude.
 claude_default_home="$tmp/claude-default-plugin-home"
 mkdir -p "$claude_default_home/.test-native-claude" \
     "$claude_default_home/.local/state/personal-agent-control"
@@ -817,13 +814,10 @@ printf '%s\n' '[{"id":"plugin-management@openai-curated-remote","installPolicy":
 printf '[]\n' > "$claude_default_home/.test-native-claude/marketplaces.json"
 printf '# plugin\tmarketplace\ttargets\n' \
     > "$claude_default_home/.local/state/personal-agent-control/owned-plugins.tsv"
-if PATH="$native_bin:$PATH" HOME="$claude_default_home" \
+PATH="$native_bin:$PATH" HOME="$claude_default_home" \
     "$source/scripts/reconcile-plugins.sh" preflight --home "$claude_default_home" \
-    --agents claude --catalog "$empty_catalog" > "$tmp/claude-default.out" 2>&1; then
-    echo "Claude default-like Plugin was accepted" >&2
-    exit 1
-fi
-grep -q '^UNMANAGED: installed claude Plugin(s) are absent from catalog/plugins.tsv:' \
+    --agents claude --catalog "$empty_catalog" > "$tmp/claude-default.out" 2>&1
+grep -q '^EXTERNAL: preserving claude Plugin plugin-management@openai-curated-remote' \
     "$tmp/claude-default.out"
 
 # Malformed native inventory is never converted into an opaque "undefined"
@@ -1036,16 +1030,13 @@ fs.writeFileSync(path.join(home, '.test-native/plugins.json'), JSON.stringify([
 NODE
 printf 'replacement=skill:drawio\n' \
     > "$active_home/.local/state/personal-agent-control/migrations/drawio-plugin-to-skill-v1-codex"
-if PATH="$native_bin:$PATH" HOME="$active_home" \
+PATH="$native_bin:$PATH" HOME="$active_home" \
     PAC_TEST_NATIVE_PLUGIN_SOURCE=https://example.invalid/plugin.git \
     PAC_TEST_NATIVE_PLUGIN_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     PAC_TEST_NATIVE_PLUGIN_TREE=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
     "$source/scripts/reconcile-plugins.sh" apply --home "$active_home" \
-    --agents codex --catalog "$active_catalog" > "$tmp/active-plugin.out" 2>&1; then
-    echo "active Plugin migration removed a marker-protected unmanaged Plugin" >&2
-    exit 1
-fi
-grep -q '^UNMANAGED: installed codex Plugin(s) are absent from catalog/plugins.tsv:' \
+    --agents codex --catalog "$active_catalog" > "$tmp/active-plugin.out" 2>&1
+grep -q '^EXTERNAL: preserving codex Plugin drawio@drawio' \
     "$tmp/active-plugin.out"
 node - "$active_home/.test-native/plugins.json" <<'NODE'
 const fs = require('node:fs');
@@ -1174,7 +1165,7 @@ if (plugins.some((entry) => entry.pluginId === 'drawio@drawio')) process.exit(1)
 NODE
 
 # A fresh, unowned native Plugin is not legacy PAC state. The migration marker
-# is recorded, but strict unmanaged inventory fails without deleting it.
+# is recorded and reconciliation preserves it without blocking unrelated work.
 unowned_home="$tmp/unowned-plugin-migration-home"
 unowned_source="$unowned_home/.local/share/agent-plugins/sources/managed-marketplace"
 unowned_marker="$unowned_home/.local/state/personal-agent-control/migrations/drawio-plugin-to-skill-v1-codex"
@@ -1199,16 +1190,13 @@ fs.writeFileSync(path.join(home, '.test-native/plugins.json'), JSON.stringify([
   { pluginId: 'drawio@drawio', marketplaceName: 'drawio' },
 ]));
 NODE
-if PATH="$native_bin:$PATH" HOME="$unowned_home" \
+PATH="$native_bin:$PATH" HOME="$unowned_home" \
     PAC_TEST_NATIVE_PLUGIN_SOURCE=https://example.invalid/plugin.git \
     PAC_TEST_NATIVE_PLUGIN_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     PAC_TEST_NATIVE_PLUGIN_TREE=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
     "$source/scripts/reconcile-plugins.sh" apply --home "$unowned_home" \
-    --agents codex --catalog "$active_catalog" > "$tmp/unowned-migration.out" 2>&1; then
-    echo "fresh unowned Plugin migration was accepted" >&2
-    exit 1
-fi
-grep -q '^UNMANAGED: installed codex Plugin(s) are absent from catalog/plugins.tsv:' \
+    --agents codex --catalog "$active_catalog" > "$tmp/unowned-migration.out" 2>&1
+grep -q '^EXTERNAL: preserving codex Plugin drawio@drawio' \
     "$tmp/unowned-migration.out"
 [ ! -e "$unowned_home/.test-native/mutations.log" ]
 [ -f "$unowned_marker" ] && [ ! -L "$unowned_marker" ]

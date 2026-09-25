@@ -1320,6 +1320,18 @@ apply removes its prospective file through rollback. Small immutable policy
 files may accumulate until a deliberate post-session cleanup; that storage
 cost is preferred to silently breaking a live fail-closed control path.
 
+## ADR-027: Audit PAC-owned marketplaces without blocking unrelated Plugins
+
+Decision date: 2026-09-25. Supersedes ADR-026's native-default-only exception.
+
+Ordinary Skill/Profile updates must not require registering or uninstalling
+unrelated native Plugins. Both Codex and Claude inventories now report Plugins
+from external marketplaces as `EXTERNAL` and leave them unchanged. Current
+catalog and prior ownership still reserve their marketplace identities;
+unexpected Plugins there, malformed inventory, source/version drift and unsafe
+paths remain blocking. Backups, rollback and post-apply verification remain
+required. PAC does not claim to validate or manage external Plugins.
+
 ## ADR-026: Preserve host-native default Plugins outside PAC ownership
 
 Decision date: 2026-09-05. Refines the Plugin inventory boundary used by

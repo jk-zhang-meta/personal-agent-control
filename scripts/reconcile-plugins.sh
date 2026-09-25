@@ -660,13 +660,8 @@ assert_all_installed_managed() {
         done < "$owned"
     fi
     LC_ALL=C sort -u "$tmp/$host_name-all-desired" -o "$tmp/$host_name-all-desired"
-    # Codex may expose a small set of vendor-installed remote Plugins (for
-    # example openai-curated-remote) that PAC cannot and should not own. Keep
-    # this inventory check fail-closed for user-installed and PAC-managed
-    # Plugins, but exempt only rows carrying the host's explicit
-    # INSTALLED_BY_DEFAULT policy, a remote source, and the known vendor
-    # marketplace. If PAC later manages that marketplace, the row is checked
-    # normally. Claude does not currently expose this inventory marker.
+    # PAC audits only its marketplace ownership boundary. Other host/user
+    # Plugins are reported and preserved, never adopted or removed implicitly.
     : > "$tmp/$host_name-managed-marketplaces"
     awk -F '\t' '$0 !~ /^#/ && NF { print $2 }' "$catalog" \
         >> "$tmp/$host_name-managed-marketplaces"
@@ -694,12 +689,15 @@ for (const row of rows) {
     const marketplace = host === 'codex'
         ? row.marketplaceName
         : (id.includes('@') ? id.slice(id.lastIndexOf('@') + 1) : '');
-    const nativeDefault = host === 'codex' &&
-        row.installPolicy === 'INSTALLED_BY_DEFAULT' &&
-        row.source && row.source.source === 'remote' &&
-        marketplace === 'openai-curated-remote' &&
-        !managed.has(marketplace);
-    if (!nativeDefault) console.log(id);
+    if (typeof marketplace !== 'string' || !marketplace || !id.endsWith(`@${marketplace}`)) {
+        console.error(`invalid ${host} Plugin inventory row: inconsistent marketplace`);
+        process.exit(2);
+    }
+    if (marketplace && !managed.has(marketplace)) {
+        console.error(`EXTERNAL: preserving ${host} Plugin ${id} (marketplace not managed by PAC)`);
+    } else {
+        console.log(id);
+    }
 }
 NODE
     LC_ALL=C sort -u "$tmp/$host_name-all-actual-unsorted" \

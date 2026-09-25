@@ -180,8 +180,10 @@ the Codex and Claude native Plugin CLIs to create their own required projections
 The public Core declares `context-mode`; a private Configuration Profile may
 append `automated-rebuttal-workflow` or another reviewed native package. Draw.io
 is installed as the shared standalone Skill; the prior native Plugin is removed
-once through the reviewed migration catalog. Unknown installed Plugins are
-preserved and reported as `UNMANAGED`.
+once through the reviewed migration catalog. Plugins from marketplaces outside
+PAC ownership are preserved and reported as `EXTERNAL`; they do not block Skill
+or Profile updates. Unknown Plugins in a current or previously PAC-owned
+marketplace still fail as `UNMANAGED` to protect shared source ownership.
 The CodeGraph MCP adapter launches the pinned `codegraph serve --mcp --no-watch`
 binary through `mise --cd <PAC Core> exec`; generated host configuration expands
 `{{PAC_ROOT}}` to the active Core checkout. This keeps the provider usable from
@@ -197,7 +199,7 @@ recovery fixes that are only present after re-indexing. Put the project copy and
 OneDrive checkout, and record the source commit used for the refresh.
 An inactive host is outside the active Plugin audit: PAC removes only Plugins
 it previously owned there and preserves unrelated native Plugins and their
-marketplaces. Re-enabling that host restores strict `UNMANAGED` checking.
+marketplaces. Re-enabling that host restores checking of PAC-owned marketplaces.
 
 Only one control plane may own a native marketplace identity. An external
 launcher that independently installs `context-mode@context-mode` conflicts with
