@@ -202,6 +202,12 @@ marketplace_was_owned() {
         '$0 !~ /^#/ && $2 == marketplace { found = 1 } END { exit !found }' "$owned"
 }
 
+source_pending_install() {
+    [ "$mode" = preflight ] &&
+        [ ! -e "$source_parent/$1" ] && [ ! -L "$source_parent/$1" ] &&
+        ! marketplace_was_owned "$1"
+}
+
 source_current() {
     marketplace=$1
     acquisition=$2
@@ -286,18 +292,18 @@ while IFS="$(printf '\t')" read -r marketplace acquisition source ref commit tre
     [ -n "$marketplace" ] || continue
     if [ "$mode" = apply ]; then
         install_source "$marketplace" "$acquisition" "$source" "$ref" "$commit" "$tree"
-    elif [ "$mode" = check ] || [ -e "$source_parent/$marketplace" ] || \
-        [ -L "$source_parent/$marketplace" ]; then
-        source_current "$marketplace" "$acquisition" "$source" "$ref" "$commit" "$tree" || {
-            echo "DRIFT: Plugin source $source_parent/$marketplace" >&2
-            exit 1
-        }
+    elif source_pending_install "$marketplace"; then
+        continue
+    elif ! source_current "$marketplace" "$acquisition" "$source" "$ref" "$commit" "$tree"; then
+        echo "DRIFT: Plugin source $source_parent/$marketplace" >&2
+        exit 1
     fi
 done < "$tmp/marketplaces"
 
 while IFS="$(printf '\t')" read -r plugin marketplace _acquisition _source _ref _commit _tree _version _targets bundled _rest; do
     case "$plugin" in ''|'#'*) continue ;; esac
     [ "$bundled" != - ] || continue
+    source_pending_install "$marketplace" && continue
     directory="$source_parent/$marketplace"
     [ "$mode" != preflight ] || [ -e "$directory" ] || [ -L "$directory" ] || continue
     remaining=$bundled

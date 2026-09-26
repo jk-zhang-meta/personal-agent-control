@@ -12,6 +12,13 @@ reconciliation. The catalog reader and capability resolver represent this as
 an empty list; reconciliation skips only Skill existence checks for that row.
 Pinned commit/tree checks and native host ownership checks remain unchanged.
 
+Preflight permits a new marketplace whose source path is absent and not
+previously owned; apply must acquire and verify its source and declared Skills
+before native host changes. Existing source paths and prior ownership still
+undergo validation. Preflight audits native Plugins against desired and prior
+ownership; only check mode compares ownership to the exact desired state,
+which apply writes after reconciliation.
+
 ## ADR-001: Compile canonical policy into native host adapters
 
 ### Context

@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -277,18 +280,20 @@ test('hook-only Plugin preflight preserves inventory and pinned-source checks', 
   const commit = git('rev-parse', 'HEAD');
   const tree = git('rev-parse', 'HEAD^{tree}');
   const bin = join(fixture.root, 'bin');
-  write(join(bin, 'codex'), '#!/bin/sh\nprintf \'{"marketplaces":[],"installed":[]}\\n\'\n');
+  write(join(bin, 'codex'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$HOME/native-calls"\nprintf \'{"marketplaces":[],"installed":[]}\\n\'\n');
   chmodSync(join(bin, 'codex'), 0o755);
   write(join(fixture.home, '.local/state/personal-agent-control/owned-plugins.tsv'),
     '# plugin\tmarketplace\ttargets\nprivate-plugin\tprivate-marketplace\tcodex\n');
   const catalog = join(fixture.root, 'plugins.tsv');
-  const preflight = (bundled, pinnedCommit = commit, pinnedTree = tree) => {
+  let sourceLocation = 'example/private-plugin';
+  const preflight = (bundled, pinnedCommit = commit, pinnedTree = tree, mode = 'preflight') => {
     const fields = pluginRow('private-plugin', 'private-marketplace', bundled).split('\t');
     fields.splice(2, 1, 'github-commit');
+    fields[3] = sourceLocation;
     fields.splice(4, 3, '-', pinnedCommit, pinnedTree);
     writePluginCatalog(catalog, [fields.join('\t')]);
     return spawnSync('sh', [join(process.cwd(), 'scripts/reconcile-plugins.sh'),
-      'preflight', '--home', fixture.home, '--agents', 'codex', '--catalog', catalog,
+      mode, '--home', fixture.home, '--agents', 'codex', '--catalog', catalog,
     ], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
   };
   const valid = preflight('-');
@@ -307,6 +312,50 @@ test('hook-only Plugin preflight preserves inventory and pinned-source checks', 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /DRIFT: Plugin source/u);
   }
+
+  sourceLocation = join(fixture.root, 'upstream');
+  renameSync(source, sourceLocation);
+  const missingOwned = preflight('-');
+  assert.notEqual(missingOwned.status, 0);
+  assert.match(missingOwned.stderr, /DRIFT: Plugin source/u);
+  const ownership = join(fixture.home, '.local/state/personal-agent-control/owned-plugins.tsv');
+  rmSync(ownership);
+  for (const bundled of ['-', 'fixture-skill']) {
+    const pending = preflight(bundled);
+    assert.equal(pending.status, 0, pending.stderr);
+    assert.equal(existsSync(source), false);
+    assert.equal(existsSync(ownership), false);
+  }
+  write(ownership, '# plugin\tmarketplace\ttargets\nother-plugin\tother-marketplace\tcodex\n');
+  const priorOwned = preflight('fixture-skill');
+  assert.equal(priorOwned.status, 0, priorOwned.stderr);
+  assert.equal(readFileSync(ownership, 'utf8').includes('private-plugin'), false);
+  write(ownership, 'invalid ownership\n');
+  const corruptOwned = preflight('-');
+  assert.notEqual(corruptOwned.status, 0);
+  assert.match(corruptOwned.stderr, /invalid Plugin ownership header/u);
+  rmSync(ownership);
+  const missingCheck = preflight('-', commit, tree, 'check');
+  assert.notEqual(missingCheck.status, 0);
+  assert.match(missingCheck.stderr, /DRIFT: Plugin source/u);
+  symlinkSync(join(fixture.root, 'absent'), source);
+  const unsafe = preflight('-');
+  assert.notEqual(unsafe.status, 0);
+  assert.match(unsafe.stderr, /DRIFT: Plugin source/u);
+  rmSync(source);
+  mkdirSync(source);
+  const unowned = preflight('-');
+  assert.notEqual(unowned.status, 0);
+  assert.match(unowned.stderr, /DRIFT: Plugin source/u);
+  rmSync(source, { recursive: true });
+  const nativeCalls = readFileSync(join(fixture.home, 'native-calls'), 'utf8');
+  const missingSkill = preflight('fixture-skill', commit, tree, 'apply');
+  assert.notEqual(missingSkill.status, 0);
+  assert.match(missingSkill.stderr, /does not contain bundled Skill fixture-skill/u);
+  assert.equal(git('rev-parse', 'HEAD'), commit);
+  assert.equal(git('rev-parse', 'HEAD^{tree}'), tree);
+  assert.equal(readFileSync(join(fixture.home, 'native-calls'), 'utf8'), nativeCalls);
+  assert.equal(existsSync(ownership), false);
 });
 
 test('resolver rejects divergent Profile Skill host targets', (t) => {
