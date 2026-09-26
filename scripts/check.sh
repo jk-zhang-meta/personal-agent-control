@@ -2,6 +2,9 @@
 set -eu
 
 repo=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd -P)
+# Test HOME fixtures must use physical paths, including macOS /tmp aliases.
+TMPDIR=$(unset CDPATH; cd -- "${TMPDIR:-/tmp}" && pwd -P)
+export TMPDIR
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/pac-check.XXXXXX")
 trap 'rm -rf -- "$tmp"' EXIT HUP INT TERM
 

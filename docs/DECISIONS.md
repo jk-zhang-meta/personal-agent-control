@@ -2,6 +2,16 @@
 
 Decision date: 2026-08-06.
 
+## ADR-028: Allow native Plugins without bundled Skills
+
+Decision date: 2026-09-25.
+
+The Plugin catalog uses `-` in `bundled-skills` for an explicitly empty
+inventory, including hook-only Plugins. Empty cells remain invalid during
+reconciliation. The catalog reader and capability resolver represent this as
+an empty list; reconciliation skips only Skill existence checks for that row.
+Pinned commit/tree checks and native host ownership checks remain unchanged.
+
 ## ADR-001: Compile canonical policy into native host adapters
 
 ### Context

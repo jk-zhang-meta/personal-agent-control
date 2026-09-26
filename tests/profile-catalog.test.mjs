@@ -236,6 +236,79 @@ test('resolver merges Profile metadata and enabled private Plugin in library and
   assert.equal(checked.status, 0, checked.stderr);
 });
 
+test('hook-only Plugin catalogs resolve an explicit empty Skill inventory', async (t) => {
+  const fixture = createResolverFixture(t);
+  writePluginCatalog(join(fixture.profile, 'catalog/plugins.tsv'), [
+    pluginRow('private-plugin', 'private-marketplace', '-'),
+  ]);
+  const overlay = join(fixture.profile, 'catalog/capabilities.jsonl');
+  const rows = readFileSync(overlay, 'utf8').trim().split('\n')
+    .map((line) => JSON.parse(line)).filter(({ id }) => id !== 'skill:private-bundle');
+  write(overlay, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
+  rmSync(join(fixture.home, '.local/share/agent-plugins'), { recursive: true });
+
+  const catalog = await pluginCatalog({ root: fixture.repo }, {
+    catalog: { plugins: join(fixture.profile, 'catalog/plugins.tsv') },
+  });
+  assert.deepEqual(catalog[0].bundledSkills, []);
+  assert.deepEqual(loadSourceModel(fixture).capabilities.map(({ id }) => id), [
+    'provider:plugin:private-plugin@private-marketplace',
+    'skill:base-skill',
+    'skill:personal-skill',
+  ]);
+  assert.equal(validateRepositoryMetadata(fixture).capabilityCount, 3);
+});
+
+test('hook-only Plugin preflight preserves inventory and pinned-source checks', (t) => {
+  const fixture = createResolverFixture(t);
+  const source = join(fixture.home, '.local/share/agent-plugins/sources/private-marketplace');
+  rmSync(source, { recursive: true });
+  write(join(source, 'hooks/hooks.json'), '{"hooks":{}}\n');
+  const git = (...args) => {
+    const result = spawnSync('git', ['-C', source, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git('init', '--quiet');
+  git('remote', 'add', 'origin', 'example/private-plugin');
+  git('add', '.');
+  git('-c', 'user.name=PAC Test', '-c', 'user.email=pac-test@example.invalid',
+    '-c', 'core.hooksPath=/dev/null', 'commit', '--quiet', '--no-gpg-sign', '-m', 'fixture');
+  const commit = git('rev-parse', 'HEAD');
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  const bin = join(fixture.root, 'bin');
+  write(join(bin, 'codex'), '#!/bin/sh\nprintf \'{"marketplaces":[],"installed":[]}\\n\'\n');
+  chmodSync(join(bin, 'codex'), 0o755);
+  write(join(fixture.home, '.local/state/personal-agent-control/owned-plugins.tsv'),
+    '# plugin\tmarketplace\ttargets\nprivate-plugin\tprivate-marketplace\tcodex\n');
+  const catalog = join(fixture.root, 'plugins.tsv');
+  const preflight = (bundled, pinnedCommit = commit, pinnedTree = tree) => {
+    const fields = pluginRow('private-plugin', 'private-marketplace', bundled).split('\t');
+    fields.splice(2, 1, 'github-commit');
+    fields.splice(4, 3, '-', pinnedCommit, pinnedTree);
+    writePluginCatalog(catalog, [fields.join('\t')]);
+    return spawnSync('sh', [join(process.cwd(), 'scripts/reconcile-plugins.sh'),
+      'preflight', '--home', fixture.home, '--agents', 'codex', '--catalog', catalog,
+    ], { encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+  };
+  const valid = preflight('-');
+  assert.equal(valid.status, 0, valid.stderr);
+  for (const [bundled, pattern] of [
+    ['', /missing bundled Skill inventory/u],
+    ['-,fixture-skill', /invalid bundled Skill -/u],
+    ['fixture-skill', /does not contain bundled Skill fixture-skill/u],
+  ]) {
+    const result = preflight(bundled);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, pattern);
+  }
+  for (const pins of [['0'.repeat(40), tree], [commit, '0'.repeat(40)]]) {
+    const result = preflight('-', ...pins);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /DRIFT: Plugin source/u);
+  }
+});
+
 test('resolver rejects divergent Profile Skill host targets', (t) => {
   const fixture = createResolverFixture(t);
   const manifestPath = join(fixture.profile, 'pac-profile.json');

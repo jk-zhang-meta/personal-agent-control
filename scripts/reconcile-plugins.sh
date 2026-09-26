@@ -93,7 +93,7 @@ awk -F '\t' 'BEGIN { ok = 1 }
             print "marketplace source mismatch for " $2 > "/dev/stderr"; ok = 0
         }
         marketplace_spec[$2] = source_spec
-        count = split($10, skills, ",")
+        count = $10 == "-" ? 0 : split($10, skills, ",")
         for (i = 1; i <= count; i++) {
             if (skills[i] !~ /^[a-z0-9][a-z0-9-]*[a-z0-9]$/) {
                 print "invalid bundled Skill " skills[i] > "/dev/stderr"; ok = 0
@@ -294,6 +294,7 @@ done < "$tmp/marketplaces"
 
 while IFS="$(printf '\t')" read -r plugin marketplace _acquisition _source _ref _commit _tree _version _targets bundled _rest; do
     case "$plugin" in ''|'#'*) continue ;; esac
+    [ "$bundled" != - ] || continue
     directory="$source_parent/$marketplace"
     remaining=$bundled
     while [ -n "$remaining" ]; do
