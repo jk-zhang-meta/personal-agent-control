@@ -202,6 +202,12 @@ marketplace_was_owned() {
         '$0 !~ /^#/ && $2 == marketplace { found = 1 } END { exit !found }' "$owned"
 }
 
+source_pending_install() {
+    [ "$mode" = preflight ] &&
+        [ ! -e "$source_parent/$1" ] && [ ! -L "$source_parent/$1" ] &&
+        ! marketplace_was_owned "$1"
+}
+
 source_current() {
     marketplace=$1
     acquisition=$2
@@ -286,6 +292,8 @@ while IFS="$(printf '\t')" read -r marketplace acquisition source ref commit tre
     [ -n "$marketplace" ] || continue
     if [ "$mode" = apply ]; then
         install_source "$marketplace" "$acquisition" "$source" "$ref" "$commit" "$tree"
+    elif source_pending_install "$marketplace"; then
+        continue
     elif ! source_current "$marketplace" "$acquisition" "$source" "$ref" "$commit" "$tree"; then
         echo "DRIFT: Plugin source $source_parent/$marketplace" >&2
         exit 1
@@ -295,6 +303,7 @@ done < "$tmp/marketplaces"
 while IFS="$(printf '\t')" read -r plugin marketplace _acquisition _source _ref _commit _tree _version _targets bundled _rest; do
     case "$plugin" in ''|'#'*) continue ;; esac
     [ "$bundled" != - ] || continue
+    source_pending_install "$marketplace" && continue
     directory="$source_parent/$marketplace"
     remaining=$bundled
     while [ -n "$remaining" ]; do
@@ -794,7 +803,7 @@ if [ "$mode" = apply ]; then
     cp "$tmp/expected-owned" "$tmp/owned-plugins.tsv"
     chmod 600 "$tmp/owned-plugins.tsv"
     mv -f -- "$tmp/owned-plugins.tsv" "$owned"
-else
+elif [ "$mode" = check ]; then
     if [ ! -f "$owned" ] || [ -L "$owned" ] || \
         ! cmp -s "$tmp/expected-owned" "$owned"; then
         echo "DRIFT: Plugin ownership state $owned" >&2
