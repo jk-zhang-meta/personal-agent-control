@@ -17,7 +17,7 @@ async function readCatalog(file) {
     return {
       name: fields[0], marketplace: fields[1], acquisition: fields[2], source: fields[3],
       ref: fields[4], commit: fields[5], tree: fields[6], version: fields[7],
-      targets: fields[8], bundledSkills: fields[9].split(','), license: fields[10],
+      targets: fields[8], bundledSkills: fields[9] === '-' ? [] : fields[9].split(','), license: fields[10],
       visibility: fields[11], line,
     };
   });
