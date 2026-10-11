@@ -5,7 +5,7 @@ import { resolveWslPlaywright, installWslPlaywright } from '../src/playwright-ws
 
 const provider = { name: 'playwright', version: '0.0.83', command: 'mise', args: ['exec', '--', 'playwright-mcp'] };
 const windowsNode = '/mnt/c/Program Files/nodejs/node.exe';
-const context = { isWsl: true, root: '/pac-core' };
+const context = { platform: 'linux', isWsl: true, root: '/pac-core' };
 const findNode = async () => windowsNode;
 const host = {
   localAppData: 'C:\\Users\\Test User\\AppData\\Local',
@@ -13,11 +13,14 @@ const host = {
   npm: 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js',
 };
 
-test('native hosts and other providers retain their launcher without Windows discovery', async () => {
+test('macOS retains its native launcher; native Linux rejects Playwright without affecting other providers', async () => {
   const reject = async () => { throw Error('unexpected Windows process'); };
-  assert.equal(await resolveWslPlaywright({ isWsl: false }, provider, { execute: reject, findNode: reject }), provider);
+  assert.equal(await resolveWslPlaywright({ platform: 'darwin', isWsl: false }, provider, { execute: reject, findNode: reject }), provider);
+  await assert.rejects(resolveWslPlaywright({ platform: 'linux', isWsl: false }, provider, { execute: reject, findNode: reject }),
+    { code: 'BROWSER_PLATFORM_UNSUPPORTED' });
   const codegraph = { ...provider, name: 'codegraph' };
   assert.equal(await resolveWslPlaywright(context, codegraph, { execute: reject, findNode: reject }), codegraph);
+  assert.equal(await resolveWslPlaywright({ platform: 'linux', isWsl: false }, codegraph, { execute: reject, findNode: reject }), codegraph);
 });
 
 test('WSL resolves Windows-only arguments without installing; apply installs the exact isolated package once', async () => {

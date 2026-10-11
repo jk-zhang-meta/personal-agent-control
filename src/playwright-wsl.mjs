@@ -18,7 +18,13 @@ async function findWindowsNode(execute) {
 }
 
 export async function resolveWslPlaywright(context, provider, { execute = run, findNode = findWindowsNode } = {}) {
-  if (!context.isWsl || provider.name !== 'playwright') return provider;
+  if (provider.name !== 'playwright') return provider;
+  if (!context.isWsl) {
+    if ((context.platform || process.platform) === 'linux') {
+      throw new PacError('BROWSER_PLATFORM_UNSUPPORTED', 'Playwright browser automation supports Windows/WSL and macOS; native Linux is not supported.');
+    }
+    return provider;
+  }
   const command = await findNode(execute);
   const windowsOptions = { cwd: path.dirname(command), timeoutMs: 15000 };
   const discovery = await execute(command, ['-e', `

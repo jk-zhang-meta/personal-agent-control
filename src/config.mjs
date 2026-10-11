@@ -64,6 +64,7 @@ export function resolveContext(options = {}) {
   return {
     root,
     home,
+    platform: process.platform,
     isWsl: process.platform === 'linux' && /microsoft/iu.test(os.release()),
     stateDir,
     manifestDir: path.join(root, 'packages/skills'),

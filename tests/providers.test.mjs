@@ -34,7 +34,7 @@ test('Playwright uses its pinned version probe and isolated host-local configura
   await fs.writeFile(path.join(home, '.codex/config.toml'), unrelated);
   await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ theme: 'dark', mcpServers: { other: { command: 'keep' } } }));
   await fs.writeFile(mise, '#!/bin/sh\ncase "$*" in\n "exec -- codegraph --version") echo 1.6.0 ;;\n "exec -- playwright-mcp --version") echo "Version 0.0.83" ;;\n *) exit 42 ;;\nesac\n', { mode: 0o700 });
-  const context = { root, home, stateDir, mise };
+  const context = { root, home, stateDir, mise, platform: 'darwin', isWsl: false };
   const both = { manifest: { providers: { enabled: ['codegraph', 'playwright'] } } };
   try {
     const applied = await reconcileProviders(context, both, ['codex', 'claude'], ['codex', 'claude']);
@@ -78,7 +78,7 @@ test('unmanaged conflicting Playwright entries are preserved for both hosts befo
     await fs.writeFile(path.join(home, '.codex/config.toml'), codex);
     await fs.writeFile(path.join(home, '.claude.json'), claude);
     try {
-      await assert.rejects(reconcileProviders({ root: process.cwd(), home, stateDir },
+      await assert.rejects(reconcileProviders({ root: process.cwd(), home, stateDir, platform: 'darwin', isWsl: false },
         { manifest: { providers: { enabled: ['playwright'] } } }, ['codex', 'claude'], ['codex', 'claude']), { code: 'PROVIDER_CONFLICT' });
       assert.equal(await fs.readFile(path.join(home, '.codex/config.toml'), 'utf8'), codex);
       assert.equal(await fs.readFile(path.join(home, '.claude.json'), 'utf8'), claude);

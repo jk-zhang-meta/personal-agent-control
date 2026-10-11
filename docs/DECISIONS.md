@@ -1403,8 +1403,9 @@ Decision date: 2026-10-11.
 WSL Playwright providers use Windows Node, the pinned official Playwright MCP
 package, and Windows Chrome. PAC discovers Node through the standard Windows
 installation path translated by wslpath or a bounded WSL PATH lookup. Missing
-Windows dependencies fail closed; there is no Linux browser fallback. Native
-Linux and macOS retain their existing native mise provider launch.
+Windows dependencies fail closed; there is no Linux browser fallback. macOS
+retains its existing native mise provider launch. Native Linux Playwright
+activation is explicitly unsupported; other providers are unaffected.
 
 Only apply installs the exact npm package into a version-specific directory
 under Windows LOCALAPPDATA; status does not install. Existing unexpected runtime
