@@ -696,6 +696,13 @@ set -eu
 [ "${1:-}" = -C ] || { echo "unexpected git fixture invocation: $*" >&2; exit 2; }
 case "${3:-}" in
     remote) printf '%s\n' "$PAC_TEST_NATIVE_PLUGIN_SOURCE" ;;
+    config)
+        [ "$#" -eq 6 ] && [ "$4" = --local ] && [ "$5" = --get-all ] && \
+            [ "$6" = remote.origin.url ] || {
+            echo "unexpected git config fixture invocation: $*" >&2; exit 2;
+        }
+        printf '%s\n' "$PAC_TEST_NATIVE_PLUGIN_SOURCE"
+        ;;
     status) ;;
     rev-parse)
         case "${4:-}" in
