@@ -6,9 +6,66 @@ import test from 'node:test';
 
 import { providerStatus, reconcileProviders } from '../src/providers.mjs';
 
+test('Playwright uses its pinned version probe and isolated host-local configuration without changing CodeGraph', async () => {
+  const home = await temp('pac-playwright-home-');
+  const root = process.cwd();
+  const stateDir = path.join(home, '.local/state/personal-agent-control');
+  const mise = path.join(home, 'mise');
+  await fs.mkdir(path.join(home, '.codex'), { recursive: true });
+  const unrelated = '[mcp_servers.other]\ncommand = "keep"\nargs = []\n';
+  await fs.writeFile(path.join(home, '.codex/config.toml'), unrelated);
+  await fs.writeFile(path.join(home, '.claude.json'), JSON.stringify({ theme: 'dark', mcpServers: { other: { command: 'keep' } } }));
+  await fs.writeFile(mise, '#!/bin/sh\ncase "$*" in\n "exec -- codegraph --version") echo 1.6.0 ;;\n "exec -- playwright-mcp --version") echo "Version 0.0.83" ;;\n *) exit 42 ;;\nesac\n', { mode: 0o700 });
+  const context = { root, home, stateDir, mise };
+  const both = { manifest: { providers: { enabled: ['codegraph', 'playwright'] } } };
+  try {
+    const applied = await reconcileProviders(context, both, ['codex', 'claude'], ['codex', 'claude']);
+    assert.equal(applied.providers.length, 4);
+    assert.equal(applied.providers.every((entry) => entry.version.matches), true);
+    const claude = JSON.parse(await fs.readFile(path.join(home, '.claude.json'), 'utf8'));
+    assert.equal(claude.theme, 'dark');
+    assert.deepEqual(claude.mcpServers.other, { command: 'keep' });
+    assert.deepEqual(claude.mcpServers.playwright.args, ['--cd', root, 'exec', '--', 'playwright-mcp', '--browser', 'chrome', '--headless', '--isolated', '--output-dir', path.join(home, '.agent-work/browser-automation/mcp')]);
+    assert.deepEqual(claude.mcpServers.codegraph.args, ['--cd', root, 'exec', '--', 'codegraph', 'serve', '--mcp', '--no-watch']);
+    assert.ok((await fs.readFile(path.join(home, '.codex/config.toml'), 'utf8')).startsWith(unrelated));
+    assert.equal((await providerStatus(context, both, ['codex', 'claude'], ['codex', 'claude'])).every((entry) => entry.valid), true);
+    await fs.writeFile(mise, '#!/bin/sh\necho "Version 0.0.82"\n', { mode: 0o700 });
+    await assert.rejects(reconcileProviders(context, { manifest: { providers: { enabled: ['playwright'] } } }, ['codex'], ['codex']), { code: 'PROVIDER_VERSION_INVALID' });
+    await fs.writeFile(mise, '#!/bin/sh\necho 1.6.0\n', { mode: 0o700 });
+    await reconcileProviders(context, { manifest: { providers: { enabled: ['codegraph'] } } }, ['codex', 'claude'], ['codex', 'claude']);
+    const retired = JSON.parse(await fs.readFile(path.join(home, '.claude.json'), 'utf8'));
+    assert.equal(retired.mcpServers.playwright, undefined);
+    assert.deepEqual(retired.mcpServers.codegraph, claude.mcpServers.codegraph);
+    assert.deepEqual(retired.mcpServers.other, { command: 'keep' });
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
 async function temp(prefix) {
   return await fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
+
+test('unmanaged conflicting Playwright entries are preserved for both hosts before any projection', async () => {
+  for (const host of ['codex', 'claude']) {
+    const home = await temp('pac-playwright-conflict-');
+    const stateDir = path.join(home, '.local/state/personal-agent-control');
+    await fs.mkdir(path.join(home, '.codex'), { recursive: true });
+    const codex = host === 'codex' ? '[mcp_servers.playwright]\ncommand = "native"\nargs = ["keep"]\n' : 'model = "keep"\n';
+    const claude = host === 'claude' ? '{"mcpServers":{"playwright":{"command":"native","args":["keep"]}}}\n' : '{}\n';
+    await fs.writeFile(path.join(home, '.codex/config.toml'), codex);
+    await fs.writeFile(path.join(home, '.claude.json'), claude);
+    try {
+      await assert.rejects(reconcileProviders({ root: process.cwd(), home, stateDir },
+        { manifest: { providers: { enabled: ['playwright'] } } }, ['codex', 'claude'], ['codex', 'claude']), { code: 'PROVIDER_CONFLICT' });
+      assert.equal(await fs.readFile(path.join(home, '.codex/config.toml'), 'utf8'), codex);
+      assert.equal(await fs.readFile(path.join(home, '.claude.json'), 'utf8'), claude);
+      await assert.rejects(fs.access(path.join(stateDir, 'owned-providers.json')), { code: 'ENOENT' });
+    } finally {
+      await fs.rm(home, { recursive: true, force: true });
+    }
+  }
+});
 
 test('CodeGraph provider is projected to Codex and Claude and preserves surrounding config', async () => {
   const home = await temp('pac-provider-home-');

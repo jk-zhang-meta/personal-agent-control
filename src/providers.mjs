@@ -49,6 +49,7 @@ async function catalog(context) {
         || !['latest', 'pinned'].includes(provider.versionPolicy)
         || (provider.versionPolicy === 'pinned' && (typeof provider.version !== 'string' || !provider.version))
         || typeof provider.command !== 'string' || !Array.isArray(provider.args)
+        || typeof provider.versionCommand !== 'string' || !provider.versionCommand
         || !provider.hosts || typeof provider.hosts !== 'object' || Array.isArray(provider.hosts)) {
       throw new PacError('PROVIDER_CATALOG_INVALID', `Invalid provider entry in ${file}.`);
     }
@@ -87,7 +88,8 @@ function providerConfigPath(context, relative) {
 function expandedArgs(context, provider) {
   return provider.args.map((argument) => {
     if (argument === '{{PAC_ROOT}}') return context.root;
-    return typeof argument === 'string' ? argument.replaceAll('{{PAC_ROOT}}', context.root) : argument;
+    return typeof argument === 'string' ? argument.replaceAll('{{PAC_ROOT}}', context.root)
+      .replaceAll('{{PAC_HOME}}', context.home) : argument;
   });
 }
 
@@ -210,11 +212,11 @@ async function providerVersion(context, provider) {
   if (process.env.PAC_PROVIDER_NO_VERSION_CHECK === '1') {
     return { expected: provider.version || provider.versionPolicy, actual: null, matches: true, skipped: true };
   }
-  const result = await run(context.mise || 'mise', ['exec', '--', 'codegraph', '--version'], {
+  const result = await run(context.mise || 'mise', ['exec', '--', provider.versionCommand, '--version'], {
     cwd: context.root,
     errorCode: 'PROVIDER_VERSION_INVALID',
   });
-  const actual = result.stdout.trim();
+  const actual = result.stdout.trim().replace(/^Version /u, '');
   return {
     expected: provider.version || provider.versionPolicy,
     actual,
@@ -263,6 +265,17 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
   for (const provider of providers) {
     const activeHosts = HOSTS.filter((host) => scopeHosts.includes(host)
       && enabledHosts.includes(host) && provider.hosts[host] && selected.has(provider.name));
+    for (const host of activeHosts) {
+      if (ownership.providers[provider.name]?.[host]) continue;
+      const file = providerConfigPath(context, provider.hosts[host].config);
+      const inspected = provider.hosts[host].format === 'codex-toml'
+        ? await readCodex(context, provider, file)
+        : await readClaude(context, provider, file);
+      // An already matching entry is safe to adopt; conflicting native config is not.
+      if (inspected.present && !inspected.valid) {
+        throw new PacError('PROVIDER_CONFLICT', `Refusing to replace unmanaged ${provider.name} configuration for ${host}.`, inspected);
+      }
+    }
     const upgrade = mode === 'apply' && activeHosts.length
       ? await upgradeLatest(provider)
       : { skipped: true, reason: mode === 'apply' ? 'inactive' : 'check' };

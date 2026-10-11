@@ -102,6 +102,7 @@ for (const provider of providers.providers) {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(provider.name)
       || provider.kind !== 'mcp-server' || !['latest', 'pinned'].includes(provider.versionPolicy)
       || (provider.versionPolicy === 'pinned' && !provider.version)
+      || typeof provider.versionCommand !== 'string' || !provider.versionCommand
       || providerIds.has(provider.name)
       || coreHosts.some((host) => !providerHosts.includes(host))
       || providerHosts.some((host) => !coreHosts.includes(host))) {

@@ -118,6 +118,10 @@ url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-win-x64.zip"
 version = "1.6.0"
 backend = "npm:@colbymchenry/codegraph"
 
+[[tools."npm:@playwright/mcp"]]
+version = "0.0.83"
+backend = "npm:@playwright/mcp"
+
 [[tools."npm:rulesync"]]
 version = "16.7.0"
 backend = "npm:rulesync"

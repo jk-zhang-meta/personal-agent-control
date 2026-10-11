@@ -6,8 +6,28 @@
       "kind": "mcp-server",
       "versionPolicy": "pinned",
       "version": "1.6.0",
+      "versionCommand": "codegraph",
       "command": "mise",
       "args": ["--cd", "{{PAC_ROOT}}", "exec", "--", "codegraph", "serve", "--mcp", "--no-watch"],
+      "hosts": {
+        "codex": {
+          "config": ".codex/config.toml",
+          "format": "codex-toml"
+        },
+        "claude": {
+          "config": ".claude.json",
+          "format": "claude-json"
+        }
+      }
+    },
+    {
+      "name": "playwright",
+      "kind": "mcp-server",
+      "versionPolicy": "pinned",
+      "version": "0.0.83",
+      "versionCommand": "playwright-mcp",
+      "command": "mise",
+      "args": ["--cd", "{{PAC_ROOT}}", "exec", "--", "playwright-mcp", "--browser", "chrome", "--headless", "--isolated", "--output-dir", "{{PAC_HOME}}/.agent-work/browser-automation/mcp"],
       "hosts": {
         "codex": {
           "config": ".codex/config.toml",
