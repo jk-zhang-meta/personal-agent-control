@@ -48,9 +48,10 @@ pac_source="$repo/bin/pac"
 pac="$home/.local/bin/pac"
 [ -x "$pac_source" ] || drift "PAC executable is missing: $pac_source"
 if [ "$windows_host" -eq 1 ] && [ -f "$pac" ] && [ ! -L "$pac" ]; then
-    grep -Fq "$repo/src/entry.mjs" "$pac" && \
-        grep -Fq "$home/.local/bin/mise.exe" "$pac" || \
+    if ! grep -Fq "$repo/src/entry.mjs" "$pac" || \
+        ! grep -Fq "$home/.local/bin/mise.exe" "$pac"; then
         drift "installed PAC launcher does not target the active Core source"
+    fi
     pac_entry=$(cygpath -m "$repo/src/entry.mjs" 2>/dev/null || true)
     pac_mise=$(cygpath -m "$home/.local/bin/mise.exe" 2>/dev/null || true)
     for windows_launcher in "$home/.local/bin/pac.cmd" "$home/.local/bin/pac.ps1"; do

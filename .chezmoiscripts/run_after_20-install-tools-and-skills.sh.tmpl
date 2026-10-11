@@ -286,18 +286,18 @@ if [ "$windows_host" = true ]; then
         "$mise_windows" "$source_windows" "$source_windows" > "$cmd_tmp"
     source_ps=$(printf '%s' "$source_windows" | sed "s/'/''/g")
     mise_ps=$(printf '%s' "$mise_windows" | sed "s/'/''/g")
-    printf '& ''%s'' --cd ''%s'' exec -- node ''%s/src/entry.mjs'' @args\r\nexit $LASTEXITCODE\r\n' \
+    printf "& '%s' --cd '%s' exec -- node '%s/src/entry.mjs' @args\r\nexit \$LASTEXITCODE\r\n" \
         "$mise_ps" "$source_ps" "$source_ps" > "$ps1_tmp"
     install_launcher() {
         target=$1
         staged=$2
         mode_bits=$3
         if [ -e "$target" ] || [ -L "$target" ]; then
-            [ -f "$target" ] && [ ! -L "$target" ] && cmp -s "$staged" "$target" || {
+            if [ ! -f "$target" ] || [ -L "$target" ] || ! cmp -s "$staged" "$target"; then
                 rm -f -- "$staged"
                 echo "unmanaged PAC launcher is preserved: $target" >&2
                 exit 1
-            }
+            fi
             rm -f -- "$staged"
         else
             chmod "$mode_bits" "$staged"
