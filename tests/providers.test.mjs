@@ -5,6 +5,24 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { providerStatus, reconcileProviders } from '../src/providers.mjs';
+import { rebuildIndex, checkIndex } from '../payload/skills/capability-resolver/scripts/lib/index.mjs';
+
+test('the actual Core provider catalog rebuilds the resolver index', async () => {
+  const home = await temp('pac-provider-resolver-');
+  const repo = process.cwd();
+  const dbPath = path.join(home, '.cache/personal-agent-control/capabilities-v1.sqlite');
+  try {
+    for (const name of ['capability-resolver', 'graph-workflow']) {
+      const target = path.join(home, '.local/share/agent-skills/.agents/skills', name);
+      await fs.mkdir(target, { recursive: true });
+      await fs.copyFile(path.join(repo, 'payload/skills', name, 'SKILL.md'), path.join(target, 'SKILL.md'));
+    }
+    assert.equal((await rebuildIndex({ repo, home, dbPath })).ok, true);
+    assert.equal((await checkIndex({ repo, home, dbPath })).ok, true);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
 
 test('Playwright uses its pinned version probe and isolated host-local configuration without changing CodeGraph', async () => {
   const home = await temp('pac-playwright-home-');
