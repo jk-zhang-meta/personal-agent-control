@@ -216,6 +216,38 @@ An inactive host is outside the active Plugin audit: PAC removes only Plugins
 it previously owned there and preserves unrelated native Plugins and their
 marketplaces. Re-enabling that host restores strict `UNMANAGED` checking.
 
+For homes that only need a selected MCP provider, use the narrower provider
+route as the target home's operating-system user:
+
+```sh
+pac provider sync playwright PROFILE_REPO EXACT_PROFILE_COMMIT codex,claude,agy,grok
+pac provider status playwright codex,claude,agy,grok
+```
+
+The client list defaults to `codex,claude`; it is separate from `--hosts` and
+does not enable a full PAC installation. Sync verifies the exact Profile and
+requires that it enables the named provider. It reconciles only that provider,
+preserving CodeGraph and unrelated native configuration. Playwright supports
+Codex's `~/.codex/config.toml`, Claude's `~/.claude.json`, agy's
+`~/.gemini/config/mcp_config.json`, and Grok's `~/.grok/config.toml`.
+Explicit native disables, conflicting unmanaged entries, modified owned
+bindings, symlinked paths, and non-native configuration overrides fail closed.
+The TOML adapters support explicit `[mcp_servers.NAME]` tables and reject inline
+or dotted MCP declarations before editing configuration.
+
+This route requires the reviewed runtime to exist and pass its real version
+check; it never installs package managers, Skills, Plugins, or provider
+packages. WSL reuses the existing Windows runtime; the selected WSL Node and
+Core launcher paths must remain readable and executable by the recipient.
+Use a durable reviewed Core checkout or snapshot, never a temporary build tree.
+Sync retains private originals and a recovery journal below
+`~/.agent-work/backups/personal-agent-control/provider-*`, with automatic
+rollback after a failure and concurrent-edit checks. Ownership remains in
+the shared `owned-providers.json`. Status reads the selected native bindings,
+saved Profile commit, and runtime version without creating a lock, backup, or
+Profile cache; native client listing and an MCP connection remain separate
+deployment acceptance checks.
+
 Only one control plane may own a native marketplace identity. An external
 launcher that independently installs `context-mode@context-mode` conflicts with
 PAC even when the versions match, because the native manager also records the

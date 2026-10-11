@@ -37,6 +37,16 @@
           "config": ".claude.json",
           "format": "claude-json"
         }
+      },
+      "clients": {
+        "agy": {
+          "config": ".gemini/config/mcp_config.json",
+          "format": "agy-json"
+        },
+        "grok": {
+          "config": ".grok/config.toml",
+          "format": "grok-toml"
+        }
       }
     }
   ]

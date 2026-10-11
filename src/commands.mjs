@@ -35,6 +35,7 @@ import { hostAdapterStatus, reconcileHostAdapters } from './host-adapters.mjs';
 import { scanGuardStatus, reconcileScanGuard } from './scan-guard.mjs';
 import { policyStatus, synchronizePolicy } from './policy-deployment.mjs';
 import { providerStatus, reconcileProviders } from './providers.mjs';
+import { providerDeploymentStatus, synchronizeProvider } from './provider-deployment.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { profileBootstrapStatus, reconcileProfileBootstrap } from './profile-bootstrap.mjs';
 import {
@@ -1309,6 +1310,19 @@ async function selfUpdate(context, options) {
 
 export async function executeCommand(context, command, args, options = {}) {
   switch (command) {
+    case 'provider': {
+      if (options.hosts !== undefined) throw usage('Use positional provider clients instead of --hosts.');
+      const action = args.shift();
+      if (action === 'status' && (args.length === 1 || args.length === 2)) {
+        const [name, selection] = args;
+        return await providerDeploymentStatus(context, { name, ...(selection ? { clients: selection.split(',') } : {}) });
+      }
+      if (action === 'sync' && (args.length === 3 || args.length === 4)) {
+        const [name, repository, commit, selection] = args;
+        return await synchronizeProvider(context, { name, repository, commit, ...(selection ? { clients: selection.split(',') } : {}) });
+      }
+      throw usage('Usage: pac provider status NAME [codex,claude,agy,grok] | pac provider sync NAME PROFILE_REPO COMMIT [codex,claude,agy,grok]');
+    }
     case 'policy': {
       const action = args.shift();
       if (action === 'status' && args.length === 0) return await policyStatus(context);

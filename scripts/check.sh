@@ -97,6 +97,7 @@ if (providers.schemaVersion !== 1 || !Array.isArray(providers.providers) || !pro
   throw new Error('provider catalog schema is invalid');
 }
 const providerIds = new Set();
+const providerClients = { codex: 'codex-toml', claude: 'claude-json', agy: 'agy-json', grok: 'grok-toml' };
 for (const provider of providers.providers) {
   const providerHosts = Object.keys(provider.hosts || {});
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(provider.name)
@@ -105,7 +106,11 @@ for (const provider of providers.providers) {
       || typeof provider.versionCommand !== 'string' || !provider.versionCommand
       || providerIds.has(provider.name)
       || coreHosts.some((host) => !providerHosts.includes(host))
-      || providerHosts.some((host) => !coreHosts.includes(host))) {
+      || providerHosts.some((host) => !coreHosts.includes(host)
+        || provider.hosts[host].format !== providerClients[host])
+      || (provider.clients !== undefined && (!provider.clients || Array.isArray(provider.clients) || typeof provider.clients !== 'object'))
+      || Object.entries(provider.clients || {}).some(([client, spec]) => !['agy', 'grok'].includes(client)
+        || !spec || spec.format !== providerClients[client] || typeof spec.config !== 'string')) {
     throw new Error(`invalid provider declaration: ${provider.name}`);
   }
   providerIds.add(provider.name);

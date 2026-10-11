@@ -97,6 +97,13 @@ be edited as an authoring surface.
   `enabled hosts intersect operation scope`.
 - PAC-owned links point to the expected neutral roots; same-named unmanaged
   directories or different links are preserved and block conflicting apply.
+- Provider-only sync preserves unselected providers and their ownership rows.
+  Targeted tests cover four native client formats, unrelated configuration,
+  explicit disables, unmanaged conflicts, owned drift, read-only status,
+  idempotence, symlink rejection, version-check bypass rejection, late failure
+  rollback with metadata, and preservation of concurrent native edits.
+  Native client discovery and an actual MCP handshake must also pass before
+  claiming a deployed provider works.
 
 ## Update semantics
 
@@ -105,6 +112,7 @@ The following paths must remain distinct in tests and operator output:
 | Command | Permitted change | Must not change implicitly |
 |---|---|---|
 | `pac apply` | Reconcile Derived Runtime from current desired state | Core revision, Profile ref/commit, editable workspace |
+| `pac provider sync` | Reconcile one exact Profile-selected MCP provider for named clients | Other providers, Skills, Plugins, runtime packages, full host enablement |
 | `pac self-update` | Fast-forward the clean Core checkout | Profile source or personal package choices |
 | `pac profile update` | Resolve, validate, and select a newer commit from the active Profile ref | Editable workspace or Core |
 | `pac profile sync` | Validate/commit and Git-sync the editable workspace, then activate its exact commit | Core |

@@ -1422,3 +1422,26 @@ the versioned package cache and browser output remain available for explicit
 owner-scoped cleanup. Cross-WSL installation into the shared Windows prefix is
 serialized by the deployment operator; a failed partial install requires repair
 instead of silently overwriting unknown contents.
+
+## ADR-030: Separate provider clients from full Core hosts
+
+Decision date: 2026-10-11.
+
+Provider-only delivery uses one exact Profile commit and one named provider,
+with an explicit client list. The catalog's `hosts` retain full Core targets;
+optional `clients` declare additional native MCP adapters. Playwright adds agy
+and Grok through this field without changing Core hosts, resolver targets,
+Skill projections, Plugins, or package-manager installation.
+
+Reuse the existing provider reconciliation and ownership store with an explicit
+provider-name scope. A narrow transaction owns only the selected native config
+files and provider ownership file, under the existing PAC lock. It verifies
+paths, current-user ownership, before-write identities, read-back identities,
+and runtime versions; preserves file modes and ownership; and restores original
+bytes and metadata after failure. Concurrent changes block replacement or
+rollback instead of being overwritten. The retained private journal identifies
+the exact files, original snapshots, Profile commit, and recovery state.
+
+Provider-only sync requires an already installed runtime. Status is read-only
+and reports only the named clients. MCP connection and browser checks belong
+to deployment acceptance; a configured entry alone does not prove that path.
