@@ -8,13 +8,14 @@ import test from 'node:test';
 import { providerDeploymentStatus, synchronizeProvider } from '../src/provider-deployment.mjs';
 import { PROVIDER_CLIENTS, reconcileProviders } from '../src/providers.mjs';
 import { HOSTS } from '../src/config.mjs';
+import { hashDirectory } from '../src/profile.mjs';
 
 const paths = { codex: '.codex/config.toml', claude: '.claude.json', agy: '.gemini/config/mcp_config.json', grok: '.grok/config.toml' };
 const original = { codex: '# mcp_servers = { playwright = { command = "comment only" } }\nmodel = "keep"\n[mcp_servers.other]\ncommand = "keep"\nargs = []\n',
   claude: '{"theme":"keep","mcpServers":{"other":{"command":"keep"}}}\n',
   agy: '', grok: 'disabled_mcp_servers = ["other"]\n\n[mcp_servers.other]\ncommand = "keep"\nargs = []\nenabled = false\n' };
 
-async function fixture(t, enabled = ['playwright']) {
+async function fixture(t, enabled = ['playwright'], indexing = false) {
   const temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'pac-provider-only-')));
   t.after(() => fs.rm(temporary, { recursive: true, force: true }));
   const home = path.join(temporary, 'home');
@@ -26,8 +27,16 @@ async function fixture(t, enabled = ['playwright']) {
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, original[client], { mode: 0o640 });
   }
-  await fs.writeFile(path.join(repository, 'pac-profile.json'), JSON.stringify({ schemaVersion: 3, bootstrap: null,
-    skills: [], plugins: { enabled: [], disabled: [] }, providers: { enabled } }));
+  const skills = [];
+  if (indexing) {
+    const root = path.join(repository, 'skills/workspace-locator');
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, 'SKILL.md'), '---\nname: workspace-locator\ndescription: Test indexing intent.\n---\n');
+    skills.push({ name: 'workspace-locator', path: 'skills/workspace-locator', contentSha256: await hashDirectory(root), targets: ['*'] });
+  }
+  const manifest = { schemaVersion: 3, bootstrap: null,
+    skills, plugins: { enabled: [], disabled: [] }, providers: { enabled } };
+  await fs.writeFile(path.join(repository, 'pac-profile.json'), JSON.stringify(manifest));
   const git = (...args) => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8', timeout: 10000,
     env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } }).trim();
   git('init', '--quiet');
@@ -39,8 +48,98 @@ async function fixture(t, enabled = ['playwright']) {
   await fs.writeFile(mise, '#!/bin/sh\ncase "$*" in\n "exec -- codegraph --version") echo 1.6.0 ;;\n "exec -- playwright-mcp --version") echo "Version 0.0.83" ;;\n *) exit 42 ;;\nesac\n', { mode: 0o700 });
   const context = { root: process.cwd(), home, stateDir: path.join(home, '.local/state/personal-agent-control'), mise, platform: 'darwin', isWsl: false };
   const options = { name: 'playwright', repository, commit: git('rev-parse', 'HEAD'), clients: [...PROVIDER_CLIENTS] };
-  return { home, context, options, file: (client) => path.join(home, paths[client]), owner: path.join(context.stateDir, 'owned-providers.json') };
+  return { home, context, options, profile: { manifest }, file: (client) => path.join(home, paths[client]), owner: path.join(context.stateDir, 'owned-providers.json') };
 }
+
+const runtimeRoots = home => ['project-index', 'resource'].map(name => path.join(home, '.agent-work/runtime/pac', name));
+
+test('full Profile reconciliation grants only missing indexing roots and retires only its additions', async t => {
+  const f = await fixture(t, ['codegraph'], true);
+  const [project, resource] = runtimeRoots(f.home);
+  await fs.mkdir(project, { recursive: true, mode: 0o700 });
+  const prefix = 'sandbox_mode = "workspace-write"\napproval_policy = "on-request"\n# user setting\n';
+  const config = `${prefix}[sandbox_workspace_write]\nnetwork_access = false\nwritable_roots = [\n  ${JSON.stringify(project)},\n  "/user/keep",\n]\n`;
+  await fs.writeFile(f.file('codex'), config);
+  await reconcileProviders(f.context, f.profile, ['codex'], ['codex'], 'apply', { installRuntime: false });
+  const applied = await fs.readFile(f.file('codex'), 'utf8');
+  assert.ok(applied.startsWith(prefix));
+  assert.match(applied, /network_access = false/u);
+  assert.ok(applied.includes(`writable_roots = ${JSON.stringify([project, '/user/keep', resource])}`));
+  assert.deepEqual(JSON.parse(await fs.readFile(f.owner, 'utf8')).codexRuntimeRoots, [resource]);
+  for (const root of [project, resource]) assert.equal((await fs.stat(root)).mode & 0o777, 0o700);
+  await reconcileProviders(f.context, { manifest: { skills: [], providers: { enabled: [] } } }, [], ['codex'], 'apply');
+  const retired = await fs.readFile(f.file('codex'), 'utf8');
+  assert.ok(retired.startsWith(prefix));
+  assert.ok(retired.includes(`writable_roots = ${JSON.stringify([project, '/user/keep'])}`));
+  assert.equal(JSON.parse(await fs.readFile(f.owner, 'utf8')).codexRuntimeRoots, undefined);
+  await fs.stat(resource); // Retiring a grant never deletes runtime data/directories.
+});
+
+test('provider-only indexing grant is Profile-gated, additive, private, visible and idempotent', async t => {
+  for (const indexing of [false, true]) {
+    const f = await fixture(t, ['codegraph'], indexing);
+    const options = { ...f.options, name: 'codegraph', clients: ['codex'] };
+    await synchronizeProvider(f.context, options);
+    const config = await fs.readFile(f.file('codex'), 'utf8');
+    assert.equal(config.includes('[sandbox_workspace_write]'), indexing);
+    assert.doesNotMatch(config, /sandbox_mode|approval_policy/u);
+    const owned = JSON.parse(await fs.readFile(f.owner, 'utf8'));
+    assert.deepEqual(owned.codexRuntimeRoots, indexing ? runtimeRoots(f.home) : undefined);
+    const status = await providerDeploymentStatus(f.context, options);
+    assert.equal(status.ok, true);
+    assert.equal(status.providers[0].runtimeRoots?.valid, indexing ? true : undefined);
+    assert.equal((await synchronizeProvider(f.context, options)).changed, 0);
+  }
+});
+
+test('indexing roots reject ambiguous config, unsafe directories and out-of-scope ownership', async t => {
+  for (const config of [
+    'sandbox_workspace_write = { writable_roots = [] }\n',
+    'sandbox_workspace_write.writable_roots = []\n',
+    '[[sandbox_workspace_write]]\nwritable_roots = ["/user/keep"]\n',
+    '[sandbox_workspace_write.writable_roots]\nkeep = true\n',
+    '[sandbox_workspace_write]\nwritable_roots = []\nwritable_roots = []\n',
+    '[sandbox_workspace_write]\nwritable_roots = [42]\n',
+    '[sandbox_workspace_write]\n"\\u0077ritable_roots" = ["/user/keep"]\n',
+    '["\\u0073andbox_workspace_write"]\nwritable_roots = ["/user/keep"]\n',
+    '"\\U00000073andbox_workspace_write".writable_roots = ["/user/keep"]\n',
+  ]) {
+    const f = await fixture(t, ['codegraph'], true);
+    await fs.writeFile(f.file('codex'), config);
+    await fs.mkdir(f.context.stateDir, { recursive: true });
+    const owned = '{"schemaVersion":1,"providers":{}}\n';
+    await fs.writeFile(f.owner, owned);
+    await assert.rejects(synchronizeProvider(f.context, { ...f.options, name: 'codegraph', clients: ['codex'] }), { code: 'PROVIDER_CONFIG_INVALID' });
+    assert.equal(await fs.readFile(f.file('codex'), 'utf8'), config);
+    assert.equal(await fs.readFile(f.owner, 'utf8'), owned);
+    for (const root of runtimeRoots(f.home)) await assert.rejects(fs.access(root), { code: 'ENOENT' });
+  }
+  const f = await fixture(t, ['codegraph'], true);
+  const [project] = runtimeRoots(f.home);
+  await fs.mkdir(path.dirname(project), { recursive: true });
+  await fs.symlink(f.home, project);
+  await assert.rejects(synchronizeProvider(f.context, { ...f.options, name: 'codegraph', clients: ['codex'] }), { code: 'PATH_UNSAFE' });
+  assert.equal(await fs.readFile(f.file('codex'), 'utf8'), original.codex);
+  await fs.mkdir(f.context.stateDir, { recursive: true });
+  await fs.writeFile(f.owner, JSON.stringify({ schemaVersion: 1, providers: {}, codexRuntimeRoots: [f.home] }));
+  await assert.rejects(synchronizeProvider(f.context, { ...f.options, name: 'codegraph', clients: ['codex'] }), { code: 'PROVIDER_OWNERSHIP_INVALID' });
+});
+
+test('indexing grant and ownership roll back with native config bytes and metadata on late failure', async t => {
+  const f = await fixture(t, ['codegraph'], true);
+  const before = await fs.stat(f.file('codex'));
+  const rename = fs.rename;
+  t.mock.method(fs, 'rename', async (from, to) => {
+    if (to === f.owner && path.basename(from).startsWith('.pac-provider-')) throw Object.assign(new Error('late failure'), { code: 'EIO' });
+    return rename(from, to);
+  });
+  await assert.rejects(synchronizeProvider(f.context, { ...f.options, name: 'codegraph', clients: ['codex'] }), { code: 'EIO' });
+  assert.equal(await fs.readFile(f.file('codex'), 'utf8'), original.codex);
+  const after = await fs.stat(f.file('codex'));
+  assert.equal(after.mode, before.mode);
+  assert.ok(Math.abs(after.mtimeMs - before.mtimeMs) < 1);
+  await assert.rejects(fs.access(f.owner), { code: 'ENOENT' });
+});
 
 test('provider-only delivery round-trips all four clients, preserves CodeGraph/native values and is idempotent', async (t) => {
   const f = await fixture(t);

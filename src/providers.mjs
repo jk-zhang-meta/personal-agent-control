@@ -27,6 +27,11 @@ async function readOwnership(context) {
         || typeof value.providers !== 'object' || Array.isArray(value.providers)) {
       throw new Error('invalid provider ownership shape');
     }
+    if (Object.hasOwn(value, 'codexRuntimeRoots') && (!Array.isArray(value.codexRuntimeRoots)
+        || value.codexRuntimeRoots.some(root => !indexingRuntimeRoots(context).includes(root))
+        || new Set(value.codexRuntimeRoots).size !== value.codexRuntimeRoots.length)) {
+      throw new Error('invalid Codex runtime-root ownership');
+    }
     return value;
   } catch (error) {
     if (error.code === 'ENOENT') return { schemaVersion: OWNERSHIP_SCHEMA, providers: {} };
@@ -190,7 +195,86 @@ function tomlBinding(text, key) {
   } catch { return null; }
 }
 
-function upsertCodex(text, context, provider, format) {
+function indexingRuntimeRoots(context) {
+  return ['project-index', 'resource'].map(name => path.join(context.home, '.agent-work/runtime/pac', name));
+}
+
+function indexingSelected(profile) {
+  return selectedNames(profile).has('codegraph') && profile?.manifest?.skills?.some(skill =>
+    skill.name === 'workspace-locator' && (skill.targets.includes('*') || skill.targets.includes('codex')));
+}
+
+function runtimeRootTable(text) {
+  const lines = text.split(/\r?\n/u);
+  if (lines.some(line => {
+    const identifier = /^[ \t]*\[{1,2}[ \t]*("(?:[^"\\]|\\.)*")/u.exec(line)?.[1]
+      ?? /^[ \t]*("(?:[^"\\]|\\.)*")[ \t]*[.=]/u.exec(line)?.[1];
+    return identifier?.includes('\\');
+  })) {
+    throw new PacError('PROVIDER_CONFIG_INVALID', 'Escaped TOML identifiers are unsupported for runtime-root reconciliation.');
+  }
+  const key = '(?:sandbox_workspace_write|"sandbox_workspace_write"|\'sandbox_workspace_write\')';
+  if (lines.some(line => new RegExp(`^[ \\t]*${key}[ \\t]*(?:=|\\.)|^[ \\t]*\\[\\[?[ \\t]*${key}[ \\t]*(?:\\.|\\]\\])`, 'u').test(line))) {
+    throw new PacError('PROVIDER_CONFIG_INVALID', 'Runtime roots require an explicit [sandbox_workspace_write] table.');
+  }
+  const starts = lines.flatMap((line, i) => new RegExp(`^[ \\t]*\\[[ \\t]*${key}[ \\t]*\\][ \\t]*(?:#.*)?$`, 'u').test(line) ? [i] : []);
+  if (starts.length > 1) throw new PacError('PROVIDER_CONFIG_INVALID', 'Duplicate sandbox_workspace_write tables.');
+  const start = starts[0] ?? -1;
+  const next = start < 0 ? -1 : lines.findIndex((line, i) => i > start && /^\s*\[/u.test(line));
+  const end = next < 0 ? lines.length : next;
+  const block = start < 0 ? [] : lines.slice(start, end);
+  const binding = tomlBinding(block.join('\n'), 'writable_roots');
+  const declared = block.some(line => /^[ \t]*(?:writable_roots|"writable_roots"|'writable_roots')[ \t]*(?:=|\.)/u.test(line));
+  if (declared && (!binding || !Array.isArray(binding.value))) {
+    throw new PacError('PROVIDER_CONFIG_INVALID', 'writable_roots must be one supported TOML string array.');
+  }
+  return { lines, start, end, block, binding, roots: binding?.value || [] };
+}
+
+async function privateRuntimeDirectory(context, directory, create) {
+  await assertSafeManagedObject(context.home, directory, 'indexing runtime root', 'directory');
+  if (create) await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  const stat = await fs.stat(directory);
+  if ((process.geteuid && stat.uid !== process.geteuid()) || (process.platform !== 'win32' && (stat.mode & 0o077))) {
+    throw new PacError('PROVIDER_RUNTIME_UNSAFE', `Indexing runtime root must be owner-private: ${directory}`);
+  }
+}
+
+async function runtimeRootPlan(context, profile, ownership, active) {
+  const required = indexingRuntimeRoots(context);
+  const owned = ownership.codexRuntimeRoots || [];
+  const wanted = active && indexingSelected(profile);
+  if (!wanted && !Object.hasOwn(ownership, 'codexRuntimeRoots')) return null;
+  const file = path.join(context.home, '.codex/config.toml');
+  await assertSafeManagedObject(context.home, file, 'Codex runtime configuration', 'file');
+  const text = await fs.readFile(file, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; });
+  const current = runtimeRootTable(text).roots;
+  if (owned.some(root => !current.includes(root))) throw new PacError('PROVIDER_DRIFT', 'A PAC-owned Codex runtime root was removed.');
+  const added = wanted ? required.filter(root => !current.includes(root)) : [];
+  const roots = wanted ? [...current, ...added] : current.filter(root => !owned.includes(root));
+  return { wanted, required, added: wanted ? [...owned, ...added] : [], transform(next) {
+    if (JSON.stringify(current) === JSON.stringify(roots)) return next;
+    const table = runtimeRootTable(next);
+    const line = `writable_roots = ${JSON.stringify(roots)}`;
+    if (table.binding) table.block.splice(table.binding.firstLine, table.binding.lastLine - table.binding.firstLine + 1, line);
+    else table.block.push(line);
+    if (table.start < 0) return `${next}${next.endsWith('\n') ? '' : '\n'}\n[sandbox_workspace_write]\n${line}\n`;
+    return [...table.lines.slice(0, table.start), ...table.block, ...table.lines.slice(table.end)].join('\n');
+  } };
+}
+
+async function runtimeRootsReady(context, profile, ownership) {
+  if (!indexingSelected(profile) && !Object.hasOwn(ownership, 'codexRuntimeRoots')) return null;
+  try {
+    const file = path.join(context.home, '.codex/config.toml');
+    const roots = runtimeRootTable(await fs.readFile(file, 'utf8')).roots;
+    const required = indexingRuntimeRoots(context);
+    for (const root of required) await privateRuntimeDirectory(context, root, false);
+    return { valid: required.every(root => roots.includes(root)), required };
+  } catch (error) { return { valid: false, reason: error.code || 'PROVIDER_CONFIG_INVALID' }; }
+}
+
+function upsertCodex(text, context, provider, format, runtime) {
   const lines = text ? text.split(/\r?\n/u) : [];
   const start = providerTableStart(lines, provider);
   const endFrom = start < 0 ? -1 : lines.findIndex((line, index) => index > start && /^\s*\[[^[]/u.test(line));
@@ -206,9 +290,11 @@ function upsertCodex(text, context, provider, format) {
   setLine('args', expectedArgs(context, provider));
   if (start < 0) {
     const prefix = lines.length && lines.at(-1) !== '' ? [''] : [];
-    return [...lines, ...prefix, ...block, ''].join('\n');
+    const next = [...lines, ...prefix, ...block, ''].join('\n');
+    return runtime ? runtime.transform(next) : next;
   }
-  return [...lines.slice(0, start), ...block, ...lines.slice(end)].join('\n');
+  const next = [...lines.slice(0, start), ...block, ...lines.slice(end)].join('\n');
+  return runtime ? runtime.transform(next) : next;
 }
 
 function removeCodex(text, provider) {
@@ -259,12 +345,12 @@ async function readClaude(context, provider, file, format) {
   return { present: Boolean(entry), valid, path: file };
 }
 
-async function applyCodex(context, provider, file, format, write) {
+async function applyCodex(context, provider, file, format, write, runtime) {
   await assertSafeManagedObject(context.home, file, `${provider.name} Codex config`, 'file');
   let text = '';
   try { text = await fs.readFile(file, 'utf8'); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
-  await write(file, upsertCodex(text, context, provider, format));
+  await write(file, upsertCodex(text, context, provider, format, runtime));
 }
 
 async function applyClaude(context, provider, file, format, write) {
@@ -283,13 +369,14 @@ async function inspect(context, provider, host, file) {
   return format.endsWith('-toml') ? readCodex(context, provider, file) : readClaude(context, provider, file, format);
 }
 
-async function retireProvider(context, provider, host, file, write) {
+async function retireProvider(context, provider, host, file, write, runtime) {
   await assertSafeManagedObject(context.home, file, `${provider.name} ${host} config`, 'file');
   if (provider.hosts[host].format.endsWith('-toml')) {
     let text;
     try { text = await fs.readFile(file, 'utf8'); }
     catch (error) { if (error.code === 'ENOENT') return; throw error; }
-    await write(file, removeCodex(text, provider));
+    const next = removeCodex(text, provider);
+    await write(file, runtime ? runtime.transform(next) : next);
     return;
   }
   let value;
@@ -349,6 +436,8 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
       const file = providerConfigPath(context, provider.hosts[host].config);
       const inspectedProvider = hostActive ? provider : ownedBinding(provider, ownership, host);
       const inspected = await inspect(context, inspectedProvider, host, file);
+      const runtimeRoots = host === 'codex' && provider.name === 'codegraph'
+        ? await runtimeRootsReady(context, profile, ownership) : null;
       const owned = Boolean(ownership.providers[provider.name]?.[host]);
       results.push({
         provider: provider.name, host, ...inspected,
@@ -356,7 +445,8 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
         owned,
         profileCommit: ownership.providers[provider.name]?.[host]?.profileCommit || null,
         version,
-        valid: hostActive ? inspected.valid && version.matches : owned ? !inspected.present : true,
+        ...(runtimeRoots ? { runtimeRoots } : {}),
+        valid: hostActive ? inspected.valid && version.matches && runtimeRoots?.valid !== false : owned ? !inspected.present : true,
       });
     }
   }
@@ -371,6 +461,8 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
   const providers = await catalog(context);
   assertSelectedKnown(selected, providers);
   if (names) assertSelectedKnown(new Set(names), providers);
+  const runtime = scopeHosts.includes('codex') && (!names || names.includes('codegraph'))
+    ? await runtimeRootPlan(context, profile, ownership, enabledHosts.includes('codex')) : null;
   const results = [];
   for (let provider of providers) {
     if (names && !names.includes(provider.name)) continue;
@@ -398,13 +490,18 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
       if (!scopeHosts.includes(host) || !provider.hosts[host]) continue;
       const file = providerConfigPath(context, provider.hosts[host].config);
       if (activeHosts.includes(host)) {
+        const hostRuntime = host === 'codex' && provider.name === 'codegraph' ? runtime : null;
         if (mode === 'apply') {
+          if (hostRuntime?.wanted) for (const root of hostRuntime.required) await privateRuntimeDirectory(context, root, true);
           const format = provider.hosts[host].format;
-          if (format.endsWith('-toml')) await applyCodex(context, provider, file, format, write);
+          if (format.endsWith('-toml')) await applyCodex(context, provider, file, format, write, hostRuntime);
           else await applyClaude(context, provider, file, format, write);
         }
         const inspected = await inspect(context, provider, host, file);
         if (!inspected.valid) throw new PacError('PROVIDER_CONFIG_INVALID', `${provider.name} was not configured for ${host}.`, inspected);
+        if (hostRuntime?.wanted && !(await runtimeRootsReady(context, profile, ownership))?.valid) {
+          throw new PacError('PROVIDER_CONFIG_INVALID', 'Codex indexing runtime roots are not ready.');
+        }
         ownership.providers[provider.name] = { ...(ownership.providers[provider.name] || {}), [host]: {
           ...(ownership.providers[provider.name]?.[host] || {}),
           config: provider.hosts[host].config, command: expectedCommand(context, provider), args: expandedArgs(context, provider),
@@ -417,12 +514,17 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
         if (inspected.present && !inspected.valid) {
           throw new PacError('PROVIDER_DRIFT', `Refusing to retire modified ${provider.name} configuration for ${host}.`, inspected);
         }
-        if (mode === 'apply') await retireProvider(context, provider, host, file, write);
+        if (mode === 'apply') await retireProvider(context, provider, host, file, write,
+          host === 'codex' && provider.name === 'codegraph' ? runtime : null);
         delete ownership.providers[provider.name][host];
         if (!Object.keys(ownership.providers[provider.name]).length) delete ownership.providers[provider.name];
         results.push({ provider: provider.name, host, action: mode === 'apply' ? 'retired' : 'retire-required', upgrade });
       }
     }
+  }
+  if (runtime && mode === 'apply') {
+    if (runtime.wanted) ownership.codexRuntimeRoots = runtime.added;
+    else delete ownership.codexRuntimeRoots;
   }
   if (mode === 'apply') await writeOwnership(context, ownership, write);
   return { valid: mode === 'apply' || results.every((entry) => entry.action === 'checked'), providers: results };
