@@ -152,6 +152,44 @@ function providerTableStart(lines, provider) {
   return starts[0] ?? -1;
 }
 
+// This text adapter accepts string bindings, not arbitrary TOML expressions.
+// Decode native formatting before comparing values; unsupported syntax fails closed.
+function tomlBinding(text, key) {
+  const fields = [...text.matchAll(new RegExp(`^[ \\t]*(?:${key}|"${key}"|'${key}')[ \\t]*=[ \\t]*`, 'gmu'))];
+  if (fields.length !== 1) return null;
+  const field = fields[0];
+  let offset = field.index + field[0].length;
+  const string = () => {
+    const match = /^(?:"(?:[^"\\\u0000-\u001f\u007f]|\\(?:["\\bfnrt]|u[\da-fA-F]{4}))*"|'[^'\u0000-\u0008\u000a-\u001f\u007f]*')/u.exec(text.slice(offset));
+    if (!match) throw new Error('unsupported TOML string');
+    offset += match[0].length;
+    return match[0][0] === "'" ? match[0].slice(1, -1) : JSON.parse(match[0]);
+  };
+  const trivia = () => {
+    const match = /^(?:[ \t\r\n]|#[^\r\n]*(?:\r?\n|$))*/u.exec(text.slice(offset));
+    offset += match[0].length;
+  };
+  try {
+    let value;
+    if (text[offset] === '[') {
+      value = [];
+      offset += 1;
+      trivia();
+      while (text[offset] !== ']') {
+        value.push(string());
+        trivia();
+        if (text[offset] !== ',') break;
+        offset += 1;
+        trivia();
+      }
+      if (text[offset++] !== ']') return null;
+    } else value = string();
+    if (!/^[ \t]*(?:#[^\r\n]*)?(?:\r?\n|$)/u.test(text.slice(offset))) return null;
+    return { value, firstLine: text.slice(0, field.index).split('\n').length - 1,
+      lastLine: text.slice(0, offset).split('\n').length - 1 };
+  } catch { return null; }
+}
+
 function upsertCodex(text, context, provider, format) {
   const lines = text ? text.split(/\r?\n/u) : [];
   const start = providerTableStart(lines, provider);
@@ -159,10 +197,10 @@ function upsertCodex(text, context, provider, format) {
   const end = endFrom < 0 ? lines.length : endFrom;
   const block = start < 0 ? codexBlock(context, provider, format) : lines.slice(start, end);
   const setLine = (name, value) => {
-    const index = block.findIndex((line) => new RegExp(`^\\s*${name}\\s*=`).test(line));
+    const binding = tomlBinding(block.join('\n'), name);
     const line = `${name} = ${value}`;
-    if (index < 0) block.splice(1, 0, line);
-    else block[index] = line;
+    if (!binding) block.splice(1, 0, line);
+    else block.splice(binding.firstLine, binding.lastLine - binding.firstLine + 1, line);
   };
   setLine('command', JSON.stringify(expectedCommand(context, provider)));
   setLine('args', expectedArgs(context, provider));
@@ -193,10 +231,10 @@ async function readCodex(context, provider, file) {
   if (start < 0) return { present: globallyDisabled, valid: false, path: file };
   const end = lines.findIndex((line, index) => index > start && /^\s*\[[^[]/u.test(line));
   const block = lines.slice(start, end < 0 ? lines.length : end).join('\n');
-  const command = block.match(/^\s*command\s*=\s*"([^"]*)"/mu)?.[1];
-  const args = block.match(/^\s*args\s*=\s*(\[[^\n]*\])/mu)?.[1];
+  const command = tomlBinding(block, 'command')?.value;
+  const args = tomlBinding(block, 'args')?.value;
   const disabled = /^\s*enabled\s*=\s*false\b/mu.test(block) || globallyDisabled;
-  return { present: true, valid: !disabled && command === expectedCommand(context, provider) && args === expectedArgs(context, provider), path: file };
+  return { present: true, valid: !disabled && command === expectedCommand(context, provider) && JSON.stringify(args) === expectedArgs(context, provider), path: file };
 }
 
 async function readJsonConfig(file, format) {

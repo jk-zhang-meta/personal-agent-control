@@ -68,6 +68,69 @@ async function temp(prefix) {
   return await fs.mkdtemp(path.join(os.tmpdir(), prefix));
 }
 
+test('native Codex TOML spacing and multiline args are adopted by semantic value', async () => {
+  const root = process.cwd();
+  const args = ['--cd', root, 'exec', '--', 'codegraph', 'serve', '--mcp', '--no-watch'];
+  const formats = [
+    `[ ${args.map(JSON.stringify).join(', ')} ]`,
+    `[\n  ${args.map(JSON.stringify).join(', # native formatting\n  ')},\n]`,
+    `[\n  ${args.map(value => `'${value}'`).join(',\n  ')},\n]`,
+  ];
+  const previous = process.env.PAC_PROVIDER_NO_VERSION_CHECK;
+  process.env.PAC_PROVIDER_NO_VERSION_CHECK = '1';
+  try {
+    for (const serialized of formats) {
+      const home = await temp('pac-native-provider-');
+      const mise = 'C:\\Program Files\\mise.exe';
+      const context = { root, home, mise, stateDir: path.join(home, 'state') };
+      const profile = { manifest: { providers: { enabled: ['codegraph'] } } };
+      const file = path.join(home, '.codex/config.toml');
+      const suffix = '\n[mcp_servers.codegraph.env]\nDO_NOT_TRACK = "1"\n\n[projects."/keep"]\ntrust_level = "trusted"\n';
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, `[mcp_servers.codegraph]\ncommand = ${JSON.stringify(mise)} # native launcher\nargs = ${serialized}\n${suffix}`);
+      try {
+        assert.equal((await providerStatus(context, profile, ['codex'], ['codex']))[0].valid, true);
+        await reconcileProviders(context, profile, ['codex'], ['codex'], 'apply', { installRuntime: false });
+        assert.equal((await providerStatus(context, profile, ['codex'], ['codex']))[0].valid, true);
+        const applied = await fs.readFile(file, 'utf8');
+        assert.ok(applied.endsWith(suffix));
+        assert.ok(applied.includes(`args = ${JSON.stringify(args)}\n`));
+      } finally { await fs.rm(home, { recursive: true, force: true }); }
+    }
+  } finally {
+    if (previous === undefined) delete process.env.PAC_PROVIDER_NO_VERSION_CHECK;
+    else process.env.PAC_PROVIDER_NO_VERSION_CHECK = previous;
+  }
+});
+
+test('native Codex TOML adoption rejects changed, disabled, duplicate, and malformed bindings without writes', async () => {
+  const root = process.cwd();
+  const args = JSON.stringify(['--cd', root, 'exec', '--', 'codegraph', 'serve', '--mcp', '--no-watch']);
+  const cases = [
+    `command = "mise"\nargs = ${args.replace('--no-watch', '--watch')}`,
+    `command = "mise"\nargs = ${args}\nargs = ${args}`,
+    `command = "mise"\nargs = ${args}\n"args" = ${args}`,
+    `command = "mise"\nargs = ${args.slice(0, -1)}`,
+    `command = "mise"\nargs = ${args.replace(',"exec"', ' "exec"')}`,
+    `command = "mise"\nargs = ${args.replace('"exec"', '42')}`,
+    `command = "mise"\nargs = ${args}\nenabled = false`,
+  ];
+  for (const binding of cases) {
+    const home = await temp('pac-native-provider-conflict-');
+    const context = { root, home, stateDir: path.join(home, 'state') };
+    const profile = { manifest: { providers: { enabled: ['codegraph'] } } };
+    const file = path.join(home, '.codex/config.toml');
+    const text = `[mcp_servers.codegraph]\n${binding}\n`;
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, text);
+    try {
+      await assert.rejects(reconcileProviders(context, profile, ['codex'], ['codex'], 'apply', { installRuntime: false }), { code: 'PROVIDER_CONFLICT' });
+      assert.equal(await fs.readFile(file, 'utf8'), text);
+      await assert.rejects(fs.access(path.join(context.stateDir, 'owned-providers.json')), { code: 'ENOENT' });
+    } finally { await fs.rm(home, { recursive: true, force: true }); }
+  }
+});
+
 test('unmanaged conflicting Playwright entries are preserved for both hosts before any projection', async () => {
   for (const host of ['codex', 'claude']) {
     const home = await temp('pac-playwright-conflict-');
