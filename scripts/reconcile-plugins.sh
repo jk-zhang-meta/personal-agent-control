@@ -217,7 +217,9 @@ source_current() {
     tree=$6
     directory="$source_parent/$marketplace"
     [ -d "$directory" ] && [ ! -L "$directory" ] && [ -d "$directory/.git" ] || return 1
-    [ "$(git -C "$directory" remote get-url origin 2>/dev/null)" = "$source" ] || return 1
+    # Preserve the terminator so even an extra empty URL fails exact identity matching.
+    configured_origin=$(git -C "$directory" config --local --get-all remote.origin.url 2>/dev/null && printf '.') || return 1
+    [ "$configured_origin" = "$(printf '%s\n.' "$source")" ] || return 1
     [ "$(git -C "$directory" rev-parse HEAD 2>/dev/null)" = "$commit" ] || return 1
     [ "$(git -C "$directory" rev-parse 'HEAD^{tree}' 2>/dev/null)" = "$tree" ] || return 1
     dirty=$(git -C "$directory" status --porcelain=v1 --untracked-files=all 2>/dev/null)

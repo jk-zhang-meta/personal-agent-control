@@ -262,7 +262,7 @@ test('hook-only Plugin catalogs resolve an explicit empty Skill inventory', asyn
   assert.equal(validateRepositoryMetadata(fixture).capabilityCount, 3);
 });
 
-test('hook-only Plugin preflight preserves inventory and pinned-source checks', (t) => {
+test('hook-only Plugin preflight preserves pins and raw origin identity under transport rewrites', (t) => {
   const fixture = createResolverFixture(t);
   const source = join(fixture.home, '.local/share/agent-plugins/sources/private-marketplace');
   rmSync(source, { recursive: true });
@@ -274,6 +274,9 @@ test('hook-only Plugin preflight preserves inventory and pinned-source checks', 
   };
   git('init', '--quiet');
   git('remote', 'add', 'origin', 'example/private-plugin');
+  git('config', '--local', 'url.https://transport.example.invalid/.insteadOf', 'example/');
+  assert.equal(git('config', '--local', '--get', 'remote.origin.url'), 'example/private-plugin');
+  assert.equal(git('remote', 'get-url', 'origin'), 'https://transport.example.invalid/private-plugin');
   git('add', '.');
   git('-c', 'user.name=PAC Test', '-c', 'user.email=pac-test@example.invalid',
     '-c', 'core.hooksPath=/dev/null', 'commit', '--quiet', '--no-gpg-sign', '-m', 'fixture');
@@ -298,6 +301,24 @@ test('hook-only Plugin preflight preserves inventory and pinned-source checks', 
   };
   const valid = preflight('-');
   assert.equal(valid.status, 0, valid.stderr);
+  for (const extraOrigin of ['example/private-plugin', '']) {
+    git('config', '--local', '--add', 'remote.origin.url', extraOrigin);
+    const duplicateOrigin = preflight('-');
+    assert.notEqual(duplicateOrigin.status, 0);
+    assert.match(duplicateOrigin.stderr, /DRIFT: Plugin source/u);
+    git('config', '--local', '--unset-all', 'remote.origin.url');
+    git('config', '--local', 'remote.origin.url', 'example/private-plugin');
+  }
+  git('config', '--local', 'remote.origin.url', 'example/other-plugin');
+  const wrongOrigin = preflight('-');
+  assert.notEqual(wrongOrigin.status, 0);
+  assert.match(wrongOrigin.stderr, /DRIFT: Plugin source/u);
+  git('config', '--local', 'remote.origin.url', 'example/private-plugin');
+  write(join(source, 'hooks/hooks.json'), '{"hooks":{"changed":[]}}\n');
+  const dirtySource = preflight('-');
+  assert.notEqual(dirtySource.status, 0);
+  assert.match(dirtySource.stderr, /DRIFT: Plugin source/u);
+  write(join(source, 'hooks/hooks.json'), '{"hooks":{}}\n');
   for (const [bundled, pattern] of [
     ['', /missing bundled Skill inventory/u],
     ['-,fixture-skill', /invalid bundled Skill -/u],
