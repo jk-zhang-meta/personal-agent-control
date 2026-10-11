@@ -27,6 +27,7 @@ export async function run(command, args = [], options = {}) {
     env = process.env,
     input,
     inherit = false,
+    timeoutMs,
     errorCode = 'COMMAND_FAILED',
   } = options;
 
@@ -35,6 +36,7 @@ export async function run(command, args = [], options = {}) {
     const commandArgs = resolvedArgs(command, args);
     const child = spawn(executable, commandArgs, {
       cwd,
+      timeout: timeoutMs,
       env,
       stdio: inherit ? 'inherit' : ['pipe', 'pipe', 'pipe'],
     });

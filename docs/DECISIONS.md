@@ -1395,3 +1395,29 @@ Report these entries as host-managed and not PAC-pinned in reconciliation
 output. PAC neither adopts them into its pinned ownership inventory nor
 installs, updates, removes, or changes their authorization. This is ownership
 separation, not a claim that PAC has verified remote app code or permissions.
+
+## ADR-029: Keep WSL browser automation on the Windows host
+
+Decision date: 2026-10-11.
+
+WSL Playwright providers use Windows Node, the pinned official Playwright MCP
+package, and Windows Chrome. PAC discovers Node through the standard Windows
+installation path translated by wslpath or a bounded WSL PATH lookup. Missing
+Windows dependencies fail closed; there is no Linux browser fallback. Native
+Linux and macOS retain their existing native mise provider launch.
+
+Only apply installs the exact npm package into a version-specific directory
+under Windows LOCALAPPDATA; status does not install. Existing unexpected runtime
+contents are rejected. Installation and version checks use Windows Node directly
+with argument arrays and timeouts, without cmd or npm shell wrappers. A fixed
+Core Node launcher supplies a Windows-mounted working directory for WSL interop,
+inherits MCP stdio, forwards termination signals, and reports the child exit.
+
+The default browser remains headless and isolated, with a Windows-local output
+spool. Existing tabs require separate explicit authorization. Provider ownership
+records retain the projected binding so disabling a provider needs no Windows
+dependency discovery. Retirement removes only matching owned configuration;
+the versioned package cache and browser output remain available for explicit
+owner-scoped cleanup. Cross-WSL installation into the shared Windows prefix is
+serialized by the deployment operator; a failed partial install requires repair
+instead of silently overwriting unknown contents.

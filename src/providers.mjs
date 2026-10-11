@@ -6,6 +6,7 @@ import { HOSTS } from './config.mjs';
 import { run } from './exec.mjs';
 import { PacError } from './errors.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
+import { resolveWslPlaywright, installWslPlaywright } from './playwright-wsl.mjs';
 
 const PROVIDER_CATALOG = 'catalog/providers.json';
 const OWNERSHIP_SCHEMA = 1;
@@ -99,6 +100,15 @@ function expectedArgs(context, provider) {
 
 function expectedCommand(context, provider) {
   return provider.command === 'mise' ? context.mise || provider.command : provider.command;
+}
+
+function ownedBinding(provider, ownership, host) {
+  const owned = ownership.providers[provider.name]?.[host];
+  if (!owned || !Object.hasOwn(owned, 'command')) return provider;
+  if (typeof owned.command !== 'string' || !Array.isArray(owned.args) || owned.args.some(arg => typeof arg !== 'string')) {
+    throw new PacError('PROVIDER_OWNERSHIP_INVALID', `Invalid saved ${provider.name} binding for ${host}.`);
+  }
+  return { ...provider, command: owned.command, args: owned.args };
 }
 
 function codexBlock(context, provider) {
@@ -216,8 +226,13 @@ async function providerVersion(context, provider) {
   if (process.env.PAC_PROVIDER_NO_VERSION_CHECK === '1') {
     return { expected: provider.version || provider.versionPolicy, actual: null, matches: true, skipped: true };
   }
-  const result = await run(context.mise || 'mise', ['exec', '--', provider.versionCommand, '--version'], {
-    cwd: context.root,
+  if (provider.windowsRuntime && !provider.windowsRuntime.version) {
+    return { expected: provider.version, actual: null, matches: false, missing: true };
+  }
+  const result = await run(provider.windowsRuntime ? provider.windowsRuntime.command : context.mise || 'mise',
+    provider.windowsRuntime ? [provider.windowsRuntime.cli, '--version'] : ['exec', '--', provider.versionCommand, '--version'], {
+    cwd: provider.windowsRuntime ? path.dirname(provider.windowsRuntime.command) : context.root,
+    timeoutMs: 15000,
     errorCode: 'PROVIDER_VERSION_INVALID',
   });
   const actual = result.stdout.trim().replace(/^Version /u, '');
@@ -235,17 +250,19 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts)
   const providers = await catalog(context);
   assertSelectedKnown(selected, providers);
   const results = [];
-  for (const provider of providers) {
+  for (let provider of providers) {
     const active = HOSTS.some((host) => scopeHosts.includes(host)
       && enabledHosts.includes(host) && provider.hosts[host] && selected.has(provider.name));
+    if (active) provider = await resolveWslPlaywright(context, provider);
     const version = active ? await providerVersion(context, provider) : null;
     for (const host of HOSTS) {
       if (!scopeHosts.includes(host) || !provider.hosts[host]) continue;
       const hostActive = enabledHosts.includes(host) && selected.has(provider.name);
       const file = providerConfigPath(context, provider.hosts[host].config);
+      const inspectedProvider = hostActive ? provider : ownedBinding(provider, ownership, host);
       const inspected = provider.hosts[host].format === 'codex-toml'
-        ? await readCodex(context, provider, file)
-        : await readClaude(context, provider, file);
+        ? await readCodex(context, inspectedProvider, file)
+        : await readClaude(context, inspectedProvider, file);
       const owned = Boolean(ownership.providers[provider.name]?.[host]);
       results.push({
         provider: provider.name, host, ...inspected,
@@ -266,9 +283,10 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
   const providers = await catalog(context);
   assertSelectedKnown(selected, providers);
   const results = [];
-  for (const provider of providers) {
+  for (let provider of providers) {
     const activeHosts = HOSTS.filter((host) => scopeHosts.includes(host)
       && enabledHosts.includes(host) && provider.hosts[host] && selected.has(provider.name));
+    if (activeHosts.length) provider = await resolveWslPlaywright(context, provider);
     for (const host of activeHosts) {
       if (ownership.providers[provider.name]?.[host]) continue;
       const file = providerConfigPath(context, provider.hosts[host].config);
@@ -283,6 +301,7 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
     const upgrade = mode === 'apply' && activeHosts.length
       ? await upgradeLatest(provider)
       : { skipped: true, reason: mode === 'apply' ? 'inactive' : 'check' };
+    if (mode === 'apply' && activeHosts.length) await installWslPlaywright(provider);
     const version = activeHosts.length ? await providerVersion(context, provider) : null;
     if (version && !version.matches) {
       throw new PacError('PROVIDER_VERSION_INVALID', `${provider.name} version does not match the reviewed Core pin.`, version);
@@ -299,12 +318,15 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
           ? await readCodex(context, provider, file)
           : await readClaude(context, provider, file);
         if (!inspected.valid) throw new PacError('PROVIDER_CONFIG_INVALID', `${provider.name} was not configured for ${host}.`, inspected);
-        ownership.providers[provider.name] = { ...(ownership.providers[provider.name] || {}), [host]: { config: provider.hosts[host].config } };
+        ownership.providers[provider.name] = { ...(ownership.providers[provider.name] || {}), [host]: {
+          config: provider.hosts[host].config, command: expectedCommand(context, provider), args: expandedArgs(context, provider),
+        } };
         results.push({ provider: provider.name, host, action: mode === 'apply' ? 'applied' : 'checked', upgrade, version });
       } else if (ownership.providers[provider.name]?.[host]) {
+        const savedProvider = ownedBinding(provider, ownership, host);
         const inspected = provider.hosts[host].format === 'codex-toml'
-          ? await readCodex(context, provider, file)
-          : await readClaude(context, provider, file);
+          ? await readCodex(context, savedProvider, file)
+          : await readClaude(context, savedProvider, file);
         if (inspected.present && !inspected.valid) {
           throw new PacError('PROVIDER_DRIFT', `Refusing to retire modified ${provider.name} configuration for ${host}.`, inspected);
         }

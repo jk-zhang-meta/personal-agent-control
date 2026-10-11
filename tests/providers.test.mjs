@@ -54,7 +54,7 @@ test('Playwright uses its pinned version probe and isolated host-local configura
     await fs.writeFile(mise, '#!/bin/sh\necho "Version 0.0.82"\n', { mode: 0o700 });
     await assert.rejects(reconcileProviders(context, { manifest: { providers: { enabled: ['playwright'] } } }, ['codex'], ['codex']), { code: 'PROVIDER_VERSION_INVALID' });
     await fs.writeFile(mise, '#!/bin/sh\necho 1.6.0\n', { mode: 0o700 });
-    await reconcileProviders(context, { manifest: { providers: { enabled: ['codegraph'] } } }, ['codex', 'claude'], ['codex', 'claude']);
+    await reconcileProviders({ ...context, isWsl: true }, { manifest: { providers: { enabled: ['codegraph'] } } }, ['codex', 'claude'], ['codex', 'claude']);
     const retired = JSON.parse(await fs.readFile(path.join(home, '.claude.json'), 'utf8'));
     assert.equal(retired.mcpServers.playwright, undefined);
     assert.deepEqual(retired.mcpServers.codegraph, claude.mcpServers.codegraph);
