@@ -43,9 +43,13 @@ test('Playwright uses its pinned version probe and isolated host-local configura
     const claude = JSON.parse(await fs.readFile(path.join(home, '.claude.json'), 'utf8'));
     assert.equal(claude.theme, 'dark');
     assert.deepEqual(claude.mcpServers.other, { command: 'keep' });
+    assert.equal(claude.mcpServers.playwright.command, mise);
+    assert.equal(claude.mcpServers.codegraph.command, mise);
     assert.deepEqual(claude.mcpServers.playwright.args, ['--cd', root, 'exec', '--', 'playwright-mcp', '--browser', 'chrome', '--headless', '--isolated', '--output-dir', path.join(home, '.agent-work/browser-automation/mcp')]);
     assert.deepEqual(claude.mcpServers.codegraph.args, ['--cd', root, 'exec', '--', 'codegraph', 'serve', '--mcp', '--no-watch']);
     assert.ok((await fs.readFile(path.join(home, '.codex/config.toml'), 'utf8')).startsWith(unrelated));
+    const codex = await fs.readFile(path.join(home, '.codex/config.toml'), 'utf8');
+    assert.equal(codex.split(`command = ${JSON.stringify(mise)}`).length - 1, 2);
     assert.equal((await providerStatus(context, both, ['codex', 'claude'], ['codex', 'claude'])).every((entry) => entry.valid), true);
     await fs.writeFile(mise, '#!/bin/sh\necho "Version 0.0.82"\n', { mode: 0o700 });
     await assert.rejects(reconcileProviders(context, { manifest: { providers: { enabled: ['playwright'] } } }, ['codex'], ['codex']), { code: 'PROVIDER_VERSION_INVALID' });
@@ -144,6 +148,10 @@ test('CodeGraph version check uses the PAC mise launcher even when mise is absen
     const applied = await reconcileProviders(context, profile, ['codex', 'claude'], ['codex', 'claude']);
     assert.equal(applied.valid, true);
     assert.equal(applied.providers.every((entry) => entry.version.matches), true);
+    const claude = JSON.parse(await fs.readFile(path.join(home, '.claude.json'), 'utf8'));
+    assert.equal(claude.mcpServers.codegraph.command, mise);
+    assert.ok((await fs.readFile(path.join(home, '.codex/config.toml'), 'utf8')).includes(`command = ${JSON.stringify(mise)}`));
+    assert.equal((await providerStatus(context, profile, ['codex', 'claude'], ['codex', 'claude'])).every((entry) => entry.valid), true);
   } finally {
     if (previousUpgrade === undefined) delete process.env.PAC_PROVIDER_NO_UPGRADE;
     else process.env.PAC_PROVIDER_NO_UPGRADE = previousUpgrade;

@@ -97,10 +97,14 @@ function expectedArgs(context, provider) {
   return JSON.stringify(expandedArgs(context, provider));
 }
 
+function expectedCommand(context, provider) {
+  return provider.command === 'mise' ? context.mise || provider.command : provider.command;
+}
+
 function codexBlock(context, provider) {
   return [
     `[mcp_servers.${provider.name}]`,
-    `command = ${JSON.stringify(provider.command)}`,
+    `command = ${JSON.stringify(expectedCommand(context, provider))}`,
     `args = ${expectedArgs(context, provider)}`,
     'startup_timeout_sec = 30',
   ];
@@ -119,7 +123,7 @@ function upsertCodex(text, context, provider) {
     if (index < 0) block.splice(1, 0, line);
     else block[index] = line;
   };
-  setLine('command', JSON.stringify(provider.command));
+  setLine('command', JSON.stringify(expectedCommand(context, provider)));
   setLine('args', expectedArgs(context, provider));
   if (start < 0) {
     const prefix = lines.length && lines.at(-1) !== '' ? [''] : [];
@@ -150,7 +154,7 @@ async function readCodex(context, provider, file) {
   const block = lines.slice(start, end < 0 ? lines.length : end).join('\n');
   const command = block.match(/^\s*command\s*=\s*"([^"]*)"/mu)?.[1];
   const args = block.match(/^\s*args\s*=\s*(\[[^\n]*\])/mu)?.[1];
-  return { present: true, valid: command === provider.command && args === expectedArgs(context, provider), path: file };
+  return { present: true, valid: command === expectedCommand(context, provider) && args === expectedArgs(context, provider), path: file };
 }
 
 async function readClaude(context, provider, file) {
@@ -158,7 +162,7 @@ async function readClaude(context, provider, file) {
   try { value = JSON.parse(await fs.readFile(file, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw new PacError('PROVIDER_CONFIG_INVALID', `Cannot parse ${file}: ${error.message}`); }
   const entry = value.mcpServers?.[provider.name];
-  const valid = entry?.type === 'stdio' && entry.command === provider.command
+  const valid = entry?.type === 'stdio' && entry.command === expectedCommand(context, provider)
     && JSON.stringify(entry.args) === expectedArgs(context, provider);
   return { present: Boolean(entry), valid, path: file };
 }
@@ -178,7 +182,7 @@ async function applyClaude(context, provider, file) {
   catch (error) { if (error.code !== 'ENOENT') throw new PacError('PROVIDER_CONFIG_INVALID', `Cannot parse ${file}: ${error.message}`); }
   value.mcpServers = { ...(value.mcpServers || {}), [provider.name]: {
     ...(value.mcpServers?.[provider.name] || {}),
-    type: 'stdio', command: provider.command, args: expandedArgs(context, provider),
+    type: 'stdio', command: expectedCommand(context, provider), args: expandedArgs(context, provider),
   } };
   await atomicWriteFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }
