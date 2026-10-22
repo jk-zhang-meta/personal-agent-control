@@ -11,8 +11,16 @@ test('the global kernel permits bounded delegation and completes on verified res
   const kernel = read('.rulesync/rules/00-kernel.md');
   const compact = kernel.replace(/\s+/gu, ' ');
 
-  assert.match(kernel, /Proactively delegate bounded, verifiable work across all workflows/u);
-  assert.match(kernel, /including sequential work where supported/u);
+  assert.match(compact, /Delegate complete, bounded assignments when worthwhile/u);
+  assert.match(compact, /keep small\/coupled work inline/u);
+  assert.match(compact, /preserve required independent review/u);
+  assert.match(compact, /Avoid tiny follow-ups and repeated status polling/u);
+  assert.match(compact, /use completion notifications or bounded waits/u);
+  assert.match(compact, /Use native descriptions when sufficient/u);
+  assert.match(compact, /resolver once only when selection remains ambiguous/u);
+  assert.match(compact, /not merely because the catalog is large or context may be private/u);
+  assert.match(compact, /not tool-call counts/u);
+  assert.ok(kernel.trim().split(/\s+/u).length <= 900, 'kernel must remain within 900 words');
   assert.match(kernel, /ordinary serial work does not require a graph/u);
   assert.doesNotMatch(kernel, /use the host's native graph for dependencies/u);
   assert.match(compact,

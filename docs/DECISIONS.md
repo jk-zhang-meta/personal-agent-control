@@ -1462,3 +1462,22 @@ the exact files, original snapshots, Profile commit, and recovery state.
 Provider-only sync requires an already installed runtime. Status is read-only
 and reports only the named clients. MCP connection and browser checks belong
 to deployment acceptance; a configured entry alone does not prove that path.
+
+## ADR-031: Scope workflow startup and coordination
+
+Use native capability descriptions directly when sufficient. Resolve the catalog
+only for a genuine selection ambiguity, not catalog size or the mere possibility
+of private context. Delegate complete bounded assignments only when benefit
+justifies coordination; preserve required independent review. Prefer completion
+notifications or a bounded wait to repeated status polling and tiny follow-ups.
+Report substantive results, blockers and decisions rather than tool-call counts.
+
+This changes instruction routing, not permissions, execution tools, publication
+scope or terminal-result evidence. Keep the global kernel within its existing
+120-line/900-word budget. Canonical Rulesync input and both generated adapters
+must agree; the policy tests assert scoped selection and review safeguards.
+A passing configuration check does not establish lower latency or token cost.
+Policy-only delivery must verify exact versions and installed references without
+reconciling packages, providers, credentials or native hooks. Test reverse sync
+with the prior Core and Profile revisions; full-install rollback and policy-only
+backup formats are different and are not interchangeable.
