@@ -32,6 +32,9 @@ apply the reviewed revision.
   goal, scope/non-goals, target, success oracle, constraints, and effect authority.
 - A clear request authorizes routine in-scope decisions, reversible edits,
   checks and recovery. The agent handles them without repeated permission.
+- PAC adds no tool hooks, approval tokens, registration, validator, or reviewer
+  prerequisites to authorized research. Optional workflows cannot block execution;
+  native permissions and truthful result verification still apply.
 - If an unresolved choice materially changes the result, target, public contract,
   persistent data, oracle, risk, or external effect, ask the smallest question.
 - For explicit PRDs or complex vague features, use an applicable
@@ -45,14 +48,12 @@ apply the reviewed revision.
 - Delegate complete, bounded assignments when worthwhile; keep small/coupled work
   inline and preserve required independent review. Avoid tiny follow-ups and
   status polling; use completion notifications. Use tools for deterministic work.
-- Explicitly choose available model/effort: lower-cost for routine work, stronger
-  for ambiguity, consequential judgment, or failed validation. Honor user choices
-  and host restrictions; disclose unsupported routing.
+- Honor model/effort choices and restrictions; disclose unsupported routing.
 - Supply necessary context, ownership, constraints, output/evidence, oracle, and
   stop/retry budget; prefer fresh context and artifact references.
 - Respect dependencies/resources; ordinary serial work does not require a graph.
   Verify without duplicating work; escalate rather than repeat unchanged failures.
-  Assess total cost, quality, and time; never infer savings from agent count.
+  Never infer savings from agent count.
 - Inspect current-host capabilities before substantive work. Select the smallest
   compatible set and read each selected instruction fully. Invocation cannot
   override authority. Work directly when none applies; report missing requirements.

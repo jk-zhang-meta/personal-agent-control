@@ -1,5 +1,26 @@
 # Architecture Decisions
 
+## Remove PAC execution gates (2026-10-24)
+
+Status: accepted; owner: explicit user authorization for PAC.
+
+PAC is a configuration/capability manager, not a prerequisite checker for agent
+research. Remove the scan-guard classifier, approval-token protocol, helper and
+registry hash checks, and hook-trust probing. Applying PAC retires its legacy
+handlers instead of installing them, regardless of selected Profile helpers.
+Optional registration, validator, and reviewer workflows cannot block authorized
+research. This supersedes earlier scan-guard deployment/enforcement decisions.
+
+Keep native host permissions, third-party hooks, secret handling, recoverable
+configuration writes, package integrity, and truthful verification of results.
+The former policy API remains a no-op compatibility shim. Existing host sessions
+may retain a cached old hook command until configuration is reloaded.
+
+Oracle: `node --test tests/scan-guard.test.mjs` plus the real apply/status case
+in `tests/pac-cli.test.mjs`; generated adapters must match canonical Rulesync
+inputs. Coverage includes selected helpers without installation or trust probes,
+legacy TOML/JSON retirement, mixed Plugin handlers, host scoping, and idempotence.
+
 Decision date: 2026-08-06.
 
 ## ADR-028: Allow native Plugins without bundled Skills

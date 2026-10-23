@@ -1803,12 +1803,12 @@ test('a staged built-in doctor preserves the installation and propagates non-hea
   assert.doesNotMatch(human.stdout, /PAC apply complete/u);
 });
 
-test('real apply path stages an untrusted Codex hook and converges after the same hook is trusted', { timeout: 120_000 }, async () => {
+test('real apply needs no hook trust even when both scan helpers remain selected', { timeout: 120_000 }, async () => {
   const { root, home, env } = await makeRealLifecycleFixture();
   const profile = await makeProfileRepository({ scanGuard: true, skillTargets: ['codex'] });
   const hookFile = path.join(home, '.codex/config.toml');
-  const trustFile = path.join(home, 'fake-codex-trust-state');
   const fakeCodex = path.join(home, 'fake-codex.cjs');
+  const invoked = path.join(home, 'fake-codex-invoked');
   const registry = path.join(home, '.config/personal-agent-control/search-roots.json');
   const installedPac = path.join(home, '.local/bin/pac');
   const sourcePac = path.join(root, 'bin/pac');
@@ -1833,60 +1833,10 @@ test('real apply path stages an untrusted Codex hook and converges after the sam
     schemaVersion: 1,
     roots: [{ id: 'fixture', path: root, kind: 'filesystem' }],
   })}\n`, { mode: 0o600 });
-  await fs.writeFile(trustFile, 'untrusted\n', { mode: 0o600 });
   await fs.writeFile(fakeCodex, `#!/usr/bin/env node
 const fs = require('node:fs');
-const hookFile = ${JSON.stringify(hookFile)};
-const trustFile = ${JSON.stringify(trustFile)};
-process.stdin.setEncoding('utf8');
-let buffered = '';
-process.stdin.on('data', (chunk) => {
-  buffered += chunk;
-  let newline;
-  while ((newline = buffered.indexOf('\\n')) >= 0) {
-    const line = buffered.slice(0, newline);
-    buffered = buffered.slice(newline + 1);
-    if (!line.trim()) continue;
-    const message = JSON.parse(line);
-    if (message.id === 1) {
-      process.stdout.write(JSON.stringify({ id: 1, result: {} }) + '\\n');
-      continue;
-    }
-    if (message.id !== 2) continue;
-    const config = fs.readFileSync(hookFile, 'utf8');
-    const lines = config.split(/\\r?\\n/);
-    const markerLine = lines.findIndex((line) => line.includes('--pac-scan-guard-v2'));
-    let hook = null;
-    if (markerLine >= 0) {
-      let start = markerLine;
-      while (start >= 0 && lines[start].trim() !== '[[hooks.PreToolUse]]') start -= 1;
-      const block = lines.slice(start, markerLine + 1);
-      const literal = (name) => {
-        const row = block.find((candidate) => candidate.trimStart().startsWith(name + ' ='));
-        return row ? JSON.parse(row.slice(row.indexOf('=') + 1).trim()) : null;
-      };
-      hook = {
-        matcher: literal('matcher'),
-        command: literal('command_windows') || literal('commandWindows') || literal('command'),
-      };
-    }
-    const cwd = message.params.cwds[0];
-    const result = { data: [{ cwd, hooks: hook ? [{
-      key: hookFile + ':pre_tool_use:0:0',
-      eventName: 'preToolUse',
-      handlerType: 'command',
-      command: hook.command,
-      matcher: hook.matcher,
-      sourcePath: hookFile,
-      source: 'user',
-      isManaged: false,
-      enabled: true,
-      currentHash: 'sha256:${'b'.repeat(64)}',
-      trustStatus: fs.readFileSync(trustFile, 'utf8').trim(),
-    }] : [], warnings: [], errors: [] }] };
-    process.stdout.write(JSON.stringify({ id: 2, result }) + '\\n');
-  }
-});
+fs.writeFileSync(${JSON.stringify(invoked)}, 'unexpected hook trust probe');
+process.exit(1);
 `, { mode: 0o700 });
   await fs.writeFile(path.join(root, 'catalog/files.sha256'), await sourceIntegrityManifest(root));
 
@@ -1900,20 +1850,20 @@ process.stdin.on('data', (chunk) => {
     'profile', 'set', profile.root, 'main', profile.commit,
   ], guardedEnv, 'codex');
   assert.equal(attached.status, 0, attached.stderr || attached.stdout);
-  assert.equal(attached.json?.data?.verification?.state, 'staged');
-  assert.equal(attached.json?.data?.verification?.healthy, false);
+  assert.equal(attached.json?.data?.verification?.state, 'healthy');
+  assert.equal(attached.json?.data?.verification?.healthy, true);
   assert.equal(await exists(path.join(home, '.agents/skills/resource-guard')), true);
   assert.equal(await exists(path.join(home, '.config/personal-agent-control/profile.json')), true);
-  const stagedReceipt = JSON.parse(await fs.readFile(attached.json.data.receipt, 'utf8'));
-  assert.deepEqual(stagedReceipt.verification, { state: 'staged', healthy: false });
+  const receipt = JSON.parse(await fs.readFile(attached.json.data.receipt, 'utf8'));
+  assert.deepEqual(receipt.verification, { state: 'healthy', healthy: true });
+  assert.doesNotMatch(await fs.readFile(hookFile, 'utf8'), /--pac-scan-guard-v2/u);
 
   const pending = runJsonPac(root, home, ['status'], guardedEnv, 'codex');
-  assert.equal(pending.status, 1, pending.stderr || pending.stdout);
+  assert.equal(pending.status, 0, pending.stderr || pending.stdout);
   assert.equal(pending.json?.data?.activation?.ready, true);
-  assert.equal(pending.json?.data?.activation?.pending?.length, 1);
-  assert.equal(pending.json?.data?.scanGuard?.[0]?.pendingTrust, true);
+  assert.deepEqual(pending.json?.data?.activation?.pending, []);
+  assert.equal(pending.json?.data?.scanGuard?.[0]?.state, 'inactive');
 
-  await fs.writeFile(trustFile, 'trusted\n', { mode: 0o600 });
   const converged = runJsonPac(root, home, ['apply'], guardedEnv, 'codex');
   assert.equal(converged.status, 0, converged.stderr || converged.stdout);
   assert.equal(converged.json?.data?.verification?.state, 'healthy');
@@ -1923,6 +1873,7 @@ process.stdin.on('data', (chunk) => {
   assert.equal(healthy.json?.data?.ok, true);
   assert.deepEqual(healthy.json?.data?.activation?.pending, []);
   assert.equal(healthy.json?.data?.scanGuard?.[0]?.valid, true);
+  assert.equal(await exists(invoked), false, 'native hook trust is never probed');
 });
 
 test('scoped apply snapshots only the selected enabled host and ignores an unsafe enabled peer', { timeout: 120_000 }, async () => {

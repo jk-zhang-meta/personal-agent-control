@@ -58,7 +58,7 @@ function human(command, data) {
   if (command === 'status') {
     const drift = data.projections.filter((entry) => !entry.valid).length;
     const scanGuard = !data.scanGuard?.length || data.scanGuard.every((entry) => entry.state === 'inactive')
-      ? 'inactive' : data.scanGuard.every((entry) => entry.valid) ? 'enforced' : 'needs attention';
+      ? 'removed' : 'legacy hooks pending removal';
     return [
       `PAC status: ${data.ok ? 'healthy' : 'needs attention'}`,
       `Source payload: ${data.sourceIntegrity?.valid ? 'reviewed and current' : 'drifted'}`,

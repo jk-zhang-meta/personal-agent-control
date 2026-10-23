@@ -523,10 +523,8 @@ async function applyUnlocked(context, options = {}) {
       context, neutral, desired, enabled, reconciliationScope,
     );
     const retiredProfileSkills = await retireProfileSkills(context, neutral, priorOwnedMap, desired);
-    // Native Plugin reconciliation may refresh host hook files.  The PAC
-    // fragment is still installed after all other work so the final state is
-    // what status checks, while Plugin failure can no longer occur after
-    // Skill/projection mutation.
+    // Retire legacy PAC interceptors after native Plugin reconciliation.
+    // No Profile or selected Skill can install a new PAC tool gate.
     const scanGuard = await reconcileScanGuard(context, enabled, reconciliationScope, effectiveProfile);
     const resolver = await rebuildOptionalResolver(context, profile);
     const verification = await postDoctor(context, scopedEnabledHosts, profile);
@@ -752,18 +750,11 @@ async function status(context, options = {}) {
       && adapters.every((entry) => entry.valid)
       && providers.every((entry) => entry.valid)
       && projections.every((entry) => entry.valid) && plugins.valid;
-  const pendingActivation = scanGuard.filter((entry) => entry.pendingTrust).map((entry) => ({
-    host: entry.host,
-    action: 'trust-hook',
-    trustStatus: entry.hookTrust,
-    key: entry.hookTrustProbe?.key || null,
-    currentHash: entry.hookTrustProbe?.currentHash || null,
-  }));
   const result = {
     ok: baseHealthy && scanGuard.every((entry) => entry.valid),
     activation: {
-      ready: baseHealthy && scanGuard.every((entry) => entry.valid || entry.pendingTrust),
-      pending: pendingActivation,
+      ready: baseHealthy && scanGuard.every((entry) => entry.valid),
+      pending: [],
     },
     root: context.root,
     home: context.home,

@@ -16,6 +16,13 @@ Core and Profile remain ordinary independent Git repositories. Runtime is
 rebuildable machine state, never a third source of truth. New hosts are added
 through adapters instead of duplicating either source layer.
 
+PAC does not intercept agent tools or require approval tokens, registration,
+validators, reviewers, or hook trust before authorized research. `pac apply`
+removes legacy PAC scan-guard handlers from Codex and Claude without removing
+unrelated host or Plugin hooks. The old policy module is a no-op compatibility
+shim only. Native permissions, backups, package integrity checks, and honest
+verification of claimed results remain unchanged.
+
 The repository deliberately composes maintained tools instead of implementing
 another agent framework:
 

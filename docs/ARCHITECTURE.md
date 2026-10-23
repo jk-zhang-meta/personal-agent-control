@@ -465,21 +465,16 @@ and preserves unrelated files for an inactive host.
 
 Authentication, sessions, history, permissions, Plugin runtime state, logs, and
 caches stay host-owned. PAC reconciles only the declared Plugin installation and
-marketplace source through each host's native CLI. When an active Profile
-selects both scan helpers, the one deliberate exception is a marker-tagged
-`PreToolUse` scan-guard fragment in each enabled host user config (Codex
-`config.toml`, Claude `settings.json`); neither helper keeps
-the seam inactive and a partial pair fails closed. PAC owns only that fragment,
-preserves every other host field, snapshots it before mutation, and fails closed
-when it is removed or modified. Its per-host matcher
-selects shell, recursive/MCP, and native high-I/O tools; the staged policy then
-validates each native payload by schema instead of treating file contents as a
-shell command. Each generated command pins a digest-named immutable policy file
-under `~/.agent-work/runtime/pac`; reconciliation never overwrites or
-automatically removes older revisions because already-open host sessions may
-still hold those commands. The legacy stable runtime path remains a
-backup/restore-only compatibility surface and is never referenced by newly
-generated hooks. Normal installation
+marketplace source through each host's native CLI. PAC no longer installs or
+enforces tool interception. Reconciliation removes legacy PAC-marked handlers
+from Codex `config.toml`/`hooks.json` and Claude `settings.json`, including when
+the old ownership digest has drifted or both scan helpers remain selected.
+Other handlers, settings, native permissions, and Plugin hooks are preserved.
+There are no PAC approval tokens, search-registry checks, helper-hash gates, or
+hook-trust probes on the agent execution path. The old policy API is a no-op
+compatibility shim; old runtime files remain backup/restore compatibility data,
+not newly installed hooks. Already-open host sessions may need to reload their
+configuration to stop invoking a cached old hook command. Normal installation
 does not redirect `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; those broad variables
 are suitable for isolated tests, not for locating one Markdown file.
 
@@ -545,8 +540,8 @@ invariant is that no two tools own the same target:
 - mise owns the shared tool store.
 - Codex and Claude native Plugin mechanisms own registration, Hooks, MCP/App
   lifecycles, and caches. PAC owns only the merged desired Plugin overlay,
-  pinned source identity, adapter invocation, and prior-ownership evidence,
-  plus one explicitly marked scan-guard `PreToolUse` fragment. Hosts retain
+  pinned source identity, adapter invocation, and prior-ownership evidence.
+  PAC only retires its legacy scan-guard handlers. Hosts retain
   auth, sessions, and every unrelated setting/hook; PAC never rewrites the
   surrounding arrays or Plugin-owned entries.
 
