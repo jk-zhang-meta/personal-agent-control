@@ -14,11 +14,12 @@ test('the global kernel permits bounded delegation and completes on verified res
   assert.match(compact, /Delegate complete, bounded assignments when worthwhile/u);
   assert.match(compact, /keep small\/coupled work inline/u);
   assert.match(compact, /preserve required independent review/u);
-  assert.match(compact, /Avoid tiny follow-ups and repeated status polling/u);
-  assert.match(compact, /use completion notifications or bounded waits/u);
+  assert.match(compact, /Avoid tiny follow-ups and status polling/u);
+  assert.match(compact, /use completion notifications/u);
   assert.match(compact, /Use native descriptions when sufficient/u);
   assert.match(compact, /resolver once only when selection remains ambiguous/u);
-  assert.match(compact, /not merely because the catalog is large or context may be private/u);
+  assert.match(compact, /Load only needed instructions\/context/u);
+  assert.match(compact, /Stop when the requested oracle passes/u);
   assert.match(compact, /not tool-call counts/u);
   assert.ok(kernel.trim().split(/\s+/u).length <= 900, 'kernel must remain within 900 words');
   assert.match(kernel, /ordinary serial work does not require a graph/u);

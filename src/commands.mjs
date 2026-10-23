@@ -30,6 +30,7 @@ import {
 } from './capabilities.mjs';
 import { run } from './exec.mjs';
 import { PacError, usage } from './errors.mjs';
+import { completeManagedBackup, retainManagedBackups } from './backup-retention.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
 import { hostAdapterStatus, reconcileHostAdapters } from './host-adapters.mjs';
 import { scanGuardStatus, reconcileScanGuard } from './scan-guard.mjs';
@@ -156,6 +157,16 @@ async function runResolver(context, args) {
   });
   try { return JSON.parse(stdout); }
   catch { return { output: stdout.trim() }; }
+}
+
+async function rebuildOptionalResolver(context, profile) {
+  try {
+    return await runResolver(context, ['rebuild', '--repo', context.root, '--home', context.home,
+      ...profileResolverArgs(profile)]);
+  } catch (error) {
+    return { degraded: true, code: error.code, reason: 'optional-index-unavailable',
+      message: 'Native capability discovery remains available; repair the resolver before querying its index.' };
+  }
 }
 
 async function restore(context, backup) {
@@ -297,7 +308,8 @@ async function postDoctor(context, hosts, profile = null) {
   });
   const output = result.stdout.trim();
   const staged = !override && output.startsWith('STAGED:');
-  return { skipped: false, state: staged ? 'staged' : 'healthy', healthy: !staged, output };
+  const degraded = !override && output.startsWith('DEGRADED:');
+  return { skipped: false, state: staged ? 'staged' : degraded ? 'degraded' : 'healthy', healthy: !staged && !degraded, output };
 }
 
 async function rebuildResolverAfterRestore(context, neutral) {
@@ -307,10 +319,7 @@ async function rebuildResolverAfterRestore(context, neutral) {
     throw error;
   }
   const profile = await loadActiveProfile(context);
-  return await runResolver(context, [
-    'rebuild', '--repo', context.root, '--home', context.home,
-    ...profileResolverArgs(profile),
-  ]);
+  return await rebuildOptionalResolver(context, profile);
 }
 
 async function preflightManagedDrift(
@@ -380,6 +389,39 @@ async function preflightManagedDrift(
   return { checked: true, engine: 'runtime-lock-hashes', ...verified };
 }
 
+// Capture native takeover evidence before reconciliation writes ownership receipts.
+export async function hasUnownedNativeBaseline(context, hosts, profile) {
+  const ownership = {};
+  for (const name of ['owned-host-adapters', 'owned-providers', 'scan-guard']) {
+    const file = path.join(context.stateDir, `${name}.json`);
+    await assertSafeManagedObject(context.home, file, 'native backup ownership', 'file');
+    try {
+      if ((await fs.stat(file)).size > 1024 * 1024) return true;
+      ownership[name] = JSON.parse(await fs.readFile(file, 'utf8'));
+    } catch (error) { if (error.code !== 'ENOENT') return true; ownership[name] = {}; }
+  }
+  const skills = new Set((profile?.skills || []).map((entry) => typeof entry === 'string' ? entry : entry.name));
+  const scanSelected = ['resource-guard', 'workspace-locator'].every((name) => skills.has(name));
+  const providers = profile?.manifest?.providers?.enabled || [];
+  const surfaces = {
+    codex: ['.codex/config.toml', '.codex/hooks.json', '.codex/AGENTS.md', '.codex/agents/independent-reviewer.toml'],
+    claude: ['.claude.json', '.claude/.claude.json', '.claude/settings.json', '.claude/CLAUDE.md', '.claude/agents/independent-reviewer.md'],
+  };
+  for (const host of hosts) {
+    const takeover = !ownership['owned-host-adapters']?.hosts?.[host]?.length
+      || providers.some((name) => !ownership['owned-providers']?.providers?.[name]?.[host])
+      || (scanSelected && !ownership['scan-guard']?.hosts?.[host]);
+    if (!takeover) continue;
+    for (const relative of surfaces[host] || []) {
+      const file = path.join(context.home, relative);
+      await assertSafeManagedObject(context.home, file, `PAC backup source ${relative}`, 'file');
+      try { await fs.lstat(file); return true; }
+      catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+  }
+  return false;
+}
+
 async function applyUnlocked(context, options = {}) {
   const config = await loadConfig(context);
   const machine = await loadMachineProfile(context, config);
@@ -425,6 +467,7 @@ async function applyUnlocked(context, options = {}) {
       previousMaterializerEntries,
     },
   );
+  const unownedNativeBaseline = await hasUnownedNativeBaseline(context, scopedEnabledHosts, profile);
   const backup = options.precreatedBackup
     || await createBackup(
       context,
@@ -485,11 +528,13 @@ async function applyUnlocked(context, options = {}) {
     // what status checks, while Plugin failure can no longer occur after
     // Skill/projection mutation.
     const scanGuard = await reconcileScanGuard(context, enabled, reconciliationScope, effectiveProfile);
-    const resolver = await runResolver(context, [
-      'rebuild', '--repo', context.root, '--home', context.home,
-      ...profileResolverArgs(profile),
-    ]);
+    const resolver = await rebuildOptionalResolver(context, profile);
     const verification = await postDoctor(context, scopedEnabledHosts, profile);
+    if (resolver.degraded) {
+      verification.resolver = 'unavailable';
+      verification.healthy = false;
+      if (verification.state === 'healthy') verification.state = 'degraded';
+    }
     const receipt = await writeReceipt(context, {
       operation: 'apply', backup, hosts: scopedEnabledHosts, enabledHosts: enabled,
       neutralSkillStore: neutral, skills: desired, plugins: effectivePlugins,
@@ -497,8 +542,16 @@ async function applyUnlocked(context, options = {}) {
       verification: { state: verification.state, healthy: verification.healthy },
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
     });
+    let retention = { removed: [], warnings: [] };
+    if (options.precreatedBackupKind !== 'chezmoi-outer'
+        && ['healthy', 'degraded'].includes(verification.state) && !verification.skipped) {
+      const sealed = await completeManagedBackup(context, backup, { outcome: 'complete',
+        containsUnownedOriginals: priorOwnedMap.size === 0 || unownedNativeBaseline });
+      retention = await retainManagedBackups(context, { protectedBackups: [backup] });
+      if (!sealed.ok) retention.warnings.push(sealed.warning);
+    }
     return {
-      backup, receipt, hosts: scopedEnabledHosts, neutralSkillStore: neutral, skills: desired,
+      backup, receipt, retention, hosts: scopedEnabledHosts, neutralSkillStore: neutral, skills: desired,
       materializers, profileSkills, retiredProfileSkills, retiredLegacyCodexSkills,
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
       bootstrap, profileApm, adapters, scanGuard, providers, projections, plugins, resolver, verification, sourceIntegrity,

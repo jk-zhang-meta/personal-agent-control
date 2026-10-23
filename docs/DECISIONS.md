@@ -1198,10 +1198,9 @@ rather than unfamiliar command names:
    destructive Git history changes or remote publication, service/container/
    infrastructure mutation, privilege/security changes, filesystem-wide
    scans, and extreme parallelism require a pre-execution review;
-3. the Profile requires agents to identify those steps before beginning work,
-   present exact target, rationale, benefit, worst case, rollback, and a
-   narrower alternative, and batch related high-impact steps into one bounded
-   request where practical; and
+3. the Profile requires agents to identify concrete high-risk effects before
+   execution. State the exact target, risk and recovery briefly; reuse existing
+   exact-target authorization and batch related decisions where practical; and
 4. if an agent misses that planning gate, PreToolUse denies the high-impact
    shell command once. After explicit user authorization it may retry with the
    returned `PAC_USER_AUTHORIZED_SHA256` prefix. The hash covers the exact
@@ -1481,3 +1480,37 @@ Policy-only delivery must verify exact versions and installed references without
 reconciling packages, providers, credentials or native hooks. Test reverse sync
 with the prior Core and Profile revisions; full-install rollback and policy-only
 backup formats are different and are not interchangeable.
+
+
+## ADR-032: Reduce routine stops and bound owned backup history
+
+Decision date: 2026-10-23. This is a source-only revision until explicitly activated.
+
+Agents decide ordinary reversible work within the requested scope. Balanced
+hooks no longer demand user approval merely for parser/wrapper uncertainty.
+Recognizable destructive source/data operations, forced Git loss, system changes
+and previously protected external effects retain review. Scoped conventional
+build/cache cleanup remains ordinary; non-force `git rm` uses Git's recovery
+checks. Matching is lexical and cannot prove the effects of arbitrary programs.
+Native host permission boundaries remain authoritative.
+
+Provider-only and policy-only no-ops create no backup. After verified deployment,
+PAC rotates only newly registered, unchanged terminal snapshots, keeping the
+latest three per mode plus original takeover baselines and referenced recovery
+points. Active, incomplete, pinned, changed and unknown historical backups stay
+protected. Registration happens while the backup is empty under the existing
+PAC lock; bounded metadata checks and ownership markers prevent silent adoption
+of old directories. Cleanup failure reports a warning without undoing a verified
+deployment. This is count retention for eligible snapshots, not a hard disk quota.
+
+An optional resolver rebuild failure yields a degraded result while preserving
+a successful deployment. Doctor distinguishes structural failures, pending host
+trust and an unavailable optional index. Degraded never means fully healthy.
+Atomic file replacement preserves existing mode and ownership unless the caller
+explicitly chooses a mode. Ordinary edits use Git or an existing recovery point;
+no extra project-wide snapshots or runtime scheduler are introduced.
+
+Acceptance uses focused hook, backup lifecycle, no-op, atomic metadata and apply
+regressions in an isolated home. Generated adapters and exact integrity pins must
+agree with source. Source tests do not establish live routing, latency or billed
+token savings; activation and live measurements remain separate.

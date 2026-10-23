@@ -544,7 +544,8 @@ run_pac "$lifecycle_home" --hosts all skill remove demo-skill >/dev/null
 
 # A successful change can roll the active Profile and derived runtime back while
 # retaining the editable workspace history for a later explicit sync/retry.
-[ -n "$add_backup" ] || {
+[ -n "$add_backup" ] && [ -d "$add_backup" ] || {
+    printf 'module-before-change\n' > "$lifecycle_home/.local/share/agent-skills/apm_modules/fixture"
     run_pac "$lifecycle_home" --json --hosts all skill add \
         acme/rollback-skill/skills/rollback-skill#2222222222222222222222222222222222222222 \
         > "$tmp/rollback-add.json"

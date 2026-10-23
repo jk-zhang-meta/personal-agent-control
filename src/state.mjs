@@ -5,6 +5,7 @@ import { PacError } from './errors.mjs';
 import { HOSTS, hostSkillDirectory } from './config.mjs';
 import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mjs';
 import { atomicWriteFile } from './atomic-file.mjs';
+import { abandonManagedBackup, registerManagedBackup } from './backup-retention.mjs';
 import { hasPriorScanGuardState, scanGuardManagedPaths } from './scan-guard.mjs';
 import { hashDirectory } from './profile.mjs';
 
@@ -739,7 +740,12 @@ export async function createBackup(context, config, neutralStore, desiredSkills,
   );
   const backupHome = path.join(backup, 'home');
   await assertSafeManagedPath(context.home, backup, 'PAC backup directory');
+  let createdIdentity;
   try {
+    await fs.mkdir(path.dirname(backup), { recursive: true, mode: 0o700 });
+    await fs.mkdir(backup, { mode: 0o700 });
+    createdIdentity = await fs.lstat(backup);
+    await registerManagedBackup(context, backup, { mode: 'apply' });
     await fs.mkdir(backupHome, { recursive: true, mode: 0o700 });
     for (const relative of managedPaths) {
       const source = path.join(context.home, relative);
@@ -766,10 +772,17 @@ export async function createBackup(context, config, neutralStore, desiredSkills,
     await atomicWrite(path.join(context.stateDir, 'last-backup'), `${backup}\n`);
     return backup;
   } catch (error) {
-    try {
-      await assertSafeManagedPath(context.home, backup, 'PAC incomplete backup');
-      await fs.rm(backup, { recursive: true, force: true });
-    } catch { /* leave an unreferenced snapshot when safe cleanup cannot be proven */ }
+    if (createdIdentity) {
+      try {
+        await assertSafeManagedObject(context.home, backup, 'PAC incomplete backup', 'directory');
+        const current = await fs.lstat(backup);
+        if (current.dev !== createdIdentity.dev || current.ino !== createdIdentity.ino || current.uid !== createdIdentity.uid) {
+          throw new PacError('BACKUP_CHANGED', 'Preserving a replaced incomplete backup.');
+        }
+        await fs.rm(backup, { recursive: true });
+        await abandonManagedBackup(context, backup);
+      } catch { /* preserve bytes/registration when exact failed-backup cleanup cannot be proven */ }
+    }
     throw error;
   }
 }

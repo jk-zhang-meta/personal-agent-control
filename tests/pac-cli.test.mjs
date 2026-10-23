@@ -1995,6 +1995,49 @@ test('fresh install still retires a deselected host with proven legacy PAC proje
   assert.equal(await exists(path.join(home, '.claude/skills/base-skill')), false);
 });
 
+test('optional resolver failure preserves a successful deployment and reports degradation', { timeout: 120_000 }, async () => {
+  const { root, home, env } = await makeRealLifecycleFixture();
+  const resolver = path.join(root, 'failed-resolver.mjs');
+  const doctor = path.join(root, 'successful-doctor.sh');
+  await fs.writeFile(resolver, 'process.exit(1);\n');
+  await fs.writeFile(doctor, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+  const applied = runJsonPac(root, home, ['apply'], { ...env, PAC_NO_RESOLVER: '0', PAC_RESOLVER: resolver,
+    PAC_SKIP_POST_DOCTOR: '0', PAC_DOCTOR: doctor });
+  assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+  assert.equal(applied.json.data.resolver.degraded, true);
+  assert.equal(applied.json.data.verification.healthy, false);
+  assert.equal(applied.json.data.verification.state, 'degraded');
+  assert.equal(await exists(path.join(home, '.agents/skills/base-skill')), true);
+  assert.equal(await exists(applied.json.data.backup), true);
+});
+
+test('full deployments register terminal backups and bound routine snapshot history', { timeout: 120_000 }, async () => {
+  const { root, home, env } = await makeRealLifecycleFixture();
+  const doctor = path.join(root, 'successful-doctor.sh');
+  await fs.writeFile(doctor, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
+  const backups = [];
+  for (let i = 0; i < 5; i += 1) {
+    const applied = runJsonPac(root, home, ['apply'], { ...env, PAC_SKIP_POST_DOCTOR: '0', PAC_DOCTOR: doctor });
+    assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+    assert.deepEqual(applied.json.data.retention.warnings, []);
+    backups.push(applied.json.data.backup);
+  }
+  // Initial takeover baseline plus the latest three useful rollback points.
+  assert.equal(await exists(backups[0]), true);
+  assert.equal(await exists(backups[1]), false);
+  for (const backup of backups.slice(2)) assert.equal(await exists(backup), true);
+});
+
+test('skipped deployment verification leaves recovery snapshots active', { timeout: 120_000 }, async () => {
+  const { root, home, env } = await makeRealLifecycleFixture();
+  const applied = runJsonPac(root, home, ['apply'], env);
+  assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+  assert.equal(applied.json.data.verification.state, 'skipped');
+  const registry = JSON.parse(await fs.readFile(path.join(home, '.local/state/personal-agent-control/backup-retention.json'), 'utf8'));
+  assert.equal(registry.records[0].state, 'active');
+  assert.deepEqual(applied.json.data.retention.removed, []);
+});
+
 test('failed fresh apply restores the empty runtime and skips resolver rebuild after rollback', { timeout: 120_000 }, async () => {
   const { root, home, doctor, env } = await makeRealLifecycleFixture();
   const neutral = path.join(home, '.local/share/agent-skills');

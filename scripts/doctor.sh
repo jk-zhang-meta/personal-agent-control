@@ -6,6 +6,7 @@ home=${HOME:?HOME is required}
 agents=codex,claude
 profile=
 allow_pending_codex_hook_trust=0
+resolver_degraded=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -191,7 +192,7 @@ resolver_db="$home/.cache/personal-agent-control/capabilities-v1.sqlite"
 set -- check --repo "$repo" --home "$home" --db "$resolver_db"
 [ -z "$profile" ] || set -- "$@" --profile "$profile"
 if ! HOME="$home" node "$resolver" "$@" >/dev/null 2>&1; then
-    drift "capability resolver index"
+    resolver_degraded=1
 fi
 
 if [ "$failures" -ne 0 ]; then
@@ -201,6 +202,8 @@ fi
 
 if [ "$(cat "$tmp/activation-state")" = pending-codex-hook-trust ]; then
     echo "STAGED: doctor passed structural checks for $agents; installation awaits explicit Codex hook trust"
+elif [ "$resolver_degraded" -eq 1 ]; then
+    echo "DEGRADED: structural checks passed for $agents; optional capability index is unavailable; native discovery remains available"
 else
     echo "doctor passed for $agents: rules, reviewer, APM 0.28.0 lock and hashes, Skill projections, materializer exception, native Plugins, capability index, and pinned tools are healthy"
 fi

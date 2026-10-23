@@ -1123,7 +1123,7 @@ function gitInvocation(tokens) {
       configOption = true; cursor += 1; continue;
     }
     if (token.startsWith('-')) { cursor += 1; continue; }
-    return { subcommand: token.toLowerCase(), configOption };
+    return { subcommand: token.toLowerCase(), configOption, args: tokens.slice(cursor + 1) };
   }
   return { subcommand: null, configOption };
 }
@@ -3164,7 +3164,7 @@ function approvalResponse(reason, target = null, host = 'codex') {
       // approval. Codex 0.152 parses `ask` but intentionally fails it open, so
       // Codex denies once and uses a digest-bound retry instead.
       permissionDecision: nativeAsk ? 'ask' : 'deny',
-      permissionDecisionReason: `PAC high-impact preflight required.${suffix} Reason: ${reason}. Benefit: performs the requested effect. Worst case: data loss, interruption, or an unintended external change if the target is wrong. Rollback: verify the target and recorded backup/undo path. Safer alternative: use a read-only or narrower scoped operation.${authorization ? ` If the user authorizes this exact command, prefix the unchanged command with PAC_USER_AUTHORIZED_SHA256=${authorization}.` : ''} Any material change requires a new preflight.`,
+      permissionDecisionReason: `PAC approval required: ${reason}.${suffix} Verify recovery/undo before proceeding.${authorization ? ` After user authorization, prefix the unchanged command with PAC_USER_AUTHORIZED_SHA256=${authorization}.` : ''}`,
     },
   };
 }
@@ -3176,29 +3176,45 @@ function balancedAuthorization(command) {
   return { command: exact, present: true, valid: digest(exact) === match[1].toLowerCase() };
 }
 
-function balancedCriticalDelete(command, cwd) {
-  const lexical = tokenize(command);
-  for (const segment of commandSegments(lexical.tokens)) {
-    const { index } = unwrap(segment.tokens);
-    const executable = commandName(segment.tokens[index]);
-    if (!['rm', 'remove-item'].includes(executable)) continue;
-    const args = segment.tokens.slice(index + 1);
-    const recursive = args.some((arg) => arg === '--recursive' || arg === '-Recurse' || /^-[A-Za-z]*[rR][A-Za-z]*$/u.test(arg));
-    if (!recursive) continue;
-    const targets = args.filter((arg) => !arg.startsWith('-'));
-    for (const raw of targets) {
-      const normalized = String(raw).replaceAll('\\', '/').replace(/\/+$/u, '') || '/';
-      const resolved = !/[*$?{}]/u.test(normalized) && !normalized.startsWith('$') && normalized !== '~'
-        ? path.resolve(cwd || process.cwd(), normalized) : null;
-      const projectRoot = path.resolve(cwd || process.cwd());
-      if (['/', '.', '..', '*', './*', '~', '$HOME'].includes(normalized) ||
-          resolved === projectRoot || resolved === path.dirname(projectRoot) ||
-          /(?:^|\/)\.git(?:\/|$)/iu.test(normalized) || isSyncedStorage(normalized) ||
-          /^\/(?:etc|usr|var|opt|sys|proc|dev)(?:\/|$)/u.test(normalized) ||
-          /^\/(?:root|home\/[^/]+|mnt\/[a-z])$/iu.test(normalized)) return true;
-    }
+function balancedDisposableTarget(target, cwd) {
+  const root = path.resolve(cwd || process.cwd());
+  const resolved = path.resolve(root, String(target).replaceAll('\\', '/'));
+  const relative = path.relative(root, resolved).split(path.sep).join('/');
+  // ponytail: conventional project output only; this lexical check cannot
+  // establish ownership or follow symlinks. Native sandbox/agent review remains.
+  return !BALANCED_SYSTEM_WRITE_TARGET_RE.test(resolved) && relative !== '' &&
+    !relative.startsWith('../') && relative !== '..' && !path.isAbsolute(relative) &&
+    /^(?:dist|build|target|node_modules|coverage|\.cache|\.next|\.pytest_cache|__pycache__)(?:[\/]|$)/u.test(relative) &&
+    !/(?:^|[\/])\.git(?:[\/]|$)/u.test(relative);
+}
+
+function balancedFindRoots(args) {
+  const roots = [];
+  for (const arg of args) {
+    if (['-H', '-L', '-P'].includes(arg) && !roots.length) continue;
+    if (arg.startsWith('-') || ['(', '!', ','].includes(arg)) break;
+    roots.push(arg);
   }
-  return false;
+  return roots.length ? roots : ['.'];
+}
+
+function balancedCriticalDelete(executable, args, cwd) {
+  let targets;
+  if (['rm', 'rmdir', 'unlink', 'remove-item'].includes(executable)) {
+    if (args.some((arg) => ['--help', '--version'].includes(arg))) return false;
+    targets = args.filter((arg) => !arg.startsWith('-'));
+  } else if (executable === 'find' && args.includes('-delete')) {
+    targets = balancedFindRoots(args);
+  } else if (executable === 'truncate') {
+    const size = optionValue(args, args.findIndex((arg) => arg === '-s' || arg === '--size' || arg.startsWith('--size=')), ['-s', '--size']);
+    if (size?.value !== '0') return false;
+    targets = nonOptionArgs(args, new Set(['-s', '--size', '-r', '--reference']));
+  } else if (executable === 'cp') {
+    const operands = nonOptionArgs(args);
+    if (operands.length < 2 || !['/dev/null', '/dev/zero'].includes(operands[0])) return false;
+    targets = operands.slice(1);
+  } else return false;
+  return targets.some((target) => !balancedDisposableTarget(target, cwd));
 }
 
 function soleSignalZeroKill(args) {
@@ -3309,9 +3325,12 @@ function processWrapperInner(tokens, commandIndex, executable) {
       }
       if (/^-[uCa].+/u.test(token)) { index += 1; continue; }
       if (/^--(?:unset|chdir|argv0)=/u.test(token)) { index += 1; continue; }
-      // split-string reparses a value as argv and is intentionally opaque.
+      // Inspect the literal split argv without treating its arguments as shell.
       if (['-S', '--split-string'].includes(token) || token.startsWith('--split-string=')) {
-        return { tokens: [], opaque: true };
+        const attached = token.startsWith('--split-string=');
+        const value = attached ? token.slice('--split-string='.length) : args[index + 1];
+        if (typeof value !== 'string') return { tokens: [], opaque: true };
+        return { tokens: [...tokenize(value).tokens, ...args.slice(index + (attached ? 1 : 2))], opaque: false };
       }
       if (token.startsWith('-')) return { tokens: [], opaque: true };
       break;
@@ -3349,7 +3368,7 @@ function processWrapperInner(tokens, commandIndex, executable) {
       if (/^--(?:class|classdata)=/u.test(token)) { index += 1; continue; }
       // Targeting an existing PID/PGID/UID changes another process directly.
       if (['-p', '--pid', '-P', '--pgid', '-u', '--uid'].includes(token) ||
-          /^--(?:pid|pgid|uid)=/u.test(token)) return { tokens: [], opaque: true };
+          /^--(?:pid|pgid|uid)=/u.test(token)) return { tokens: [], opaque: true, reason: 'changing another process priority' };
       if (/^-[^-]+/u.test(token)) {
         const cluster = token.slice(1);
         let consumesNext = false;
@@ -3475,7 +3494,7 @@ function balancedProcessCommand(tokens) {
       return { commandTokens, index, executable };
     }
     const inner = processWrapperInner(commandTokens, index, executable);
-    if (inner.opaque) return { commandTokens: [], index: 0, executable: '', opaque: true };
+    if (inner.opaque) return { commandTokens: [], index: 0, executable: '', opaque: true, reason: inner.reason };
     commandTokens = inner.tokens;
     if (!commandTokens.length) return { commandTokens, index: 0, executable: '', opaque: false };
   }
@@ -3499,9 +3518,8 @@ function balancedSystemWrite(target) {
 }
 
 function balancedCommandFinding(command, cwd, depth = 0, stdinScript = null) {
-  if (depth > 3) return 'nested command exceeds the bounded impact inspection depth';
+  if (depth > 3) return null; // Opaque syntax alone is not a concrete high-impact effect.
   const lexical = tokenize(String(command), { effects: true });
-  if (lexical.opaque) return 'nested substitution exceeds the bounded impact inspection depth';
   for (const script of lexical.substitutions) {
     const reason = balancedCommandFinding(script, cwd, depth + 1);
     if (reason) return reason;
@@ -3520,18 +3538,26 @@ function balancedCommandFinding(command, cwd, depth = 0, stdinScript = null) {
       }
       continue;
     }
-    const { commandTokens, index, executable, opaque = false } = balancedProcessCommand(segment.tokens);
-    if (opaque) return 'privilege, process, or system-package change';
+    const { commandTokens, index, executable, opaque = false, reason: wrapperReason } = balancedProcessCommand(segment.tokens);
+    if (wrapperReason) return wrapperReason;
+    if (opaque) continue;
     const args = commandTokens.slice(index + 1);
     // Preserve argv boundaries: a header, search pattern, or printed example
     // containing spaces/operators must not manufacture another executable/flag.
-    const effect = [executable, ...args.map((arg) => String(arg).replace(/[\s;&|<>]/gu, '\0') || '\0')].join(' ');
+    const git = executable === 'git' ? gitInvocation(commandTokens) : null;
+    const effectArgs = git?.subcommand ? [git.subcommand, ...git.args] : args;
+    const effect = [executable, ...effectArgs.map((arg) => String(arg).replace(/[\s;&|<>]/gu, '\0') || '\0')].join(' ');
     if (BALANCED_IRREVERSIBLE_RE.test(effect) ||
-        balancedCriticalDelete(commandTokens.slice(index).map(quotePosix).join(' '), cwd)) {
+        balancedCriticalDelete(executable, args, cwd)) {
       return 'irreversible or broad deletion/storage command';
     }
     if (BALANCED_SERVICE_CHANGE_RE.test(effect)) return 'service, container, infrastructure, or cluster mutation';
-    if (BALANCED_EXTERNAL_WRITE_RE.test(effect) || BALANCED_DESTRUCTIVE_GIT_RE.test(effect)) {
+    const gitOptions = git?.args?.slice(0, git.args.includes('--') ? git.args.indexOf('--') : undefined) || [];
+    // Git's non-force rm refuses tracked changes that would be lost. Agents
+    // can use that native recovery-preserving route for ordinary source removal.
+    const forcedGitRemoval = ['rm', 'checkout', 'switch'].includes(git?.subcommand) &&
+      gitOptions.some((arg) => arg === '--force' || /^-[^-]*f/u.test(arg));
+    if (BALANCED_EXTERNAL_WRITE_RE.test(effect) || BALANCED_DESTRUCTIVE_GIT_RE.test(effect) || forcedGitRemoval) {
       return 'external publication or destructive source-control operation';
     }
     if (BALANCED_PRIVILEGE_RE.test(effect) || BALANCED_SYSTEM_PACKAGE_REMOVE_RE.test(effect) ||
@@ -3542,6 +3568,20 @@ function balancedCommandFinding(command, cwd, depth = 0, stdinScript = null) {
     }
     if (BALANCED_WIDE_SCAN_RE.test(effect)) return 'filesystem-wide scan can materially affect machine responsiveness';
     if (BALANCED_EXTREME_PARALLEL_RE.test(effect)) return 'extreme parallelism can materially affect CPU, memory, or disk I/O';
+    if (executable === 'find') {
+      for (let cursor = 0; cursor < args.length; cursor += 1) {
+        if (!['-exec', '-execdir'].includes(args[cursor])) continue;
+        const end = args.findIndex((arg, offset) => offset > cursor && [';', '+'].includes(arg));
+        if (end < 0) continue;
+        const delegated = args.slice(cursor + 1, end);
+        for (const root of balancedFindRoots(args)) {
+          const command = delegated.map((arg) => quotePosix(arg.replaceAll('{}', `${root}/__pac_find_match__`))).join(' ');
+          const reason = balancedCommandFinding(command, cwd, depth + 1);
+          if (reason) return reason;
+        }
+        cursor = end;
+      }
+    }
     const pipeInput = ['|', '|&'].includes(segment.preceding) ? previousOutput : stdinScript;
     const inner = shellInner(commandTokens, index);
     if (inner?.script) {
@@ -3575,7 +3615,7 @@ function balancedSensitiveFinding(tool, input, cwd) {
     return null;
   }
   if (CONTEXT_EXECUTE_TOOL_RE.test(name) || CONTEXT_INDEX_TOOL_RE.test(name)) return null;
-  if (!/^mcp__/iu.test(name) && !KNOWN_SHELL_TOOL_RE.test(name)) return null;
+  if (!/^mcp__/iu.test(name) && !KNOWN_SHELL_TOOL_RE.test(name) && !commandShapePresent(input)) return null;
   const parsed = toolCommands(input);
   const commands = parsed.commands || [];
   for (const command of commands) {

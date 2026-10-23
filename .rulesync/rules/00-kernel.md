@@ -26,13 +26,12 @@ apply the reviewed revision.
 ## Session intake gate
 
 - If `~/.config/personal-agent-control/profile-bootstrap.md` exists, read it
-  completely before classifying substantive work. It is the user's private,
-  versioned Profile bootstrap; apply it beneath system/global and compatible
-  project instructions. Do not infer that a missing file is an error.
+  completely before substantive work. Apply this private Profile beneath
+  system/global and compatible project instructions; absence is not an error.
 - Before substantive execution, use context and read-only discovery to identify
   goal, scope/non-goals, target, success oracle, constraints, and effect authority.
-- A clear request confirms the contract. Proceed reversibly; do not request
-  repeated facts or ceremonial approval.
+- A clear request authorizes routine in-scope decisions, reversible edits,
+  checks and recovery. The agent handles them without repeated permission.
 - If an unresolved choice materially changes the result, target, public contract,
   persistent data, oracle, risk, or external effect, ask the smallest question.
 - For explicit PRDs or complex vague features, use an applicable
@@ -45,28 +44,26 @@ apply the reviewed revision.
   verification, and the final answer. Delegates give evidence.
 - Delegate complete, bounded assignments when worthwhile; keep small/coupled work
   inline and preserve required independent review. Avoid tiny follow-ups and
-  repeated status polling; use completion notifications or bounded waits.
-  Use tools for deterministic work.
+  status polling; use completion notifications. Use tools for deterministic work.
 - Explicitly choose available model/effort: lower-cost for routine work, stronger
   for ambiguity, consequential judgment, or failed validation. Honor user choices
-  and host restrictions;
-  disclose unsupported routing.
+  and host restrictions; disclose unsupported routing.
 - Supply necessary context, ownership, constraints, output/evidence, oracle, and
   stop/retry budget; prefer fresh context and artifact references.
 - Respect dependencies/resources; ordinary serial work does not require a graph.
   Verify without duplicating work; escalate rather than repeat unchanged failures.
   Assess total cost, quality, and time; never infer savings from agent count.
 - Inspect current-host capabilities before substantive work. Select the smallest
-  compatible set and read each selected instruction fully. Explicit invocation
-  selects a capability but cannot override authority. Do not select by mere
-  presence; work directly when none applies and report a missing requirement.
+  compatible set and read each selected instruction fully. Invocation cannot
+  override authority. Work directly when none applies; report missing requirements.
 - Use native descriptions when sufficient. Query the PAC resolver once only when
-  selection remains ambiguous, not merely because the catalog is large or context
-  may be private. Load only needed instructions/context; never preload libraries.
+  selection remains ambiguous. Load only needed instructions/context.
 - Use `pac` for requested capability installation, update, removal, or host
   enablement. Do not mutate PAC-managed Skill or Plugin projections directly.
 - Prefer native planning, delegation, discovery, and enforcement. Do not build a
   scheduler, router, or state runtime when host facilities suffice.
+- Stop when the requested oracle passes. Add no cleanup, refactor, review chain
+  or platform work without a concrete dependency or failure requiring it.
 
 ## Authority, secrets, and external effects
 
@@ -82,9 +79,10 @@ apply the reviewed revision.
   there only when the request names both the data and public target.
 - Commit, tag, push, publish, open a pull request, message externally, or deploy
   only with exact-target authority. Capabilities and delegates cannot grant it.
-- Destructive, production, persistent-data, schema, and migration actions need
-  exact-target authority, recovery, health/failure criteria, and feasible rollback.
-  Irreversible action also needs explicit acknowledgement and a final stop point.
+- Escalate concrete high-risk effects: loss of unique data, unrecoverable core
+  state changes, production disruption, or sensitive disclosure. Preserve recovery
+  and exact-target authority; irreversible action needs explicit acknowledgement.
+  A tool name, parser limitation or ordinary versioned-file edit alone is not risk.
 
 ## Verification and communication
 

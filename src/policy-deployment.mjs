@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { atomicWriteFile } from './atomic-file.mjs';
+import { completeManagedBackup, createManagedBackup, retainManagedBackups } from './backup-retention.mjs';
 import { PacError } from './errors.mjs';
 import { acquireProfile, hashDirectory } from './profile.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
@@ -173,11 +174,9 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
         && path.resolve(path.dirname(target), actual.link) === path.resolve(item.link);
       if (actual?.sha256 !== item.sha256 && !correctLink) changes.push(item);
     }
-    const backup = path.join(context.home, '.agent-work/backups/personal-agent-control', `policy-${Date.now()}-${crypto.randomUUID()}`);
-    await assertSafeManagedObject(context.home, backup, 'policy backup', 'directory');
-    await fs.mkdir(backup, { recursive: true, mode: 0o700 });
+    const backup = changes.length ? await createManagedBackup(context, { prefix: 'policy', mode: 'policy-only' }) : null;
     const journal = [];
-    await atomicWriteFile(path.join(backup, 'plan.json'), JSON.stringify({ mode: 'policy-only', commit, baseline, changes: changes.map(({ relativePath, before }) => ({ relativePath, before })) }, null, 2));
+    if (backup) await atomicWriteFile(path.join(backup, 'plan.json'), JSON.stringify({ mode: 'policy-only', commit, baseline, changes: changes.map(({ relativePath, before }) => ({ relativePath, before })) }, null, 2));
     try {
       for (const [index, item] of changes.entries()) {
         const target = await policyTarget(context.home, path.join(context.home, item.relativePath));
@@ -211,18 +210,26 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
       const entries = new Map(fullInstallation ? [] : state.entries.map((e) => [e.relativePath, e]));
       for (const item of planned) entries.set(item.relativePath, { relativePath: item.relativePath, sha256: item.sha256 });
       const result = { schemaVersion: 1, mode: 'policy-only', profileCommit: commit, profileRoot: current.root,
-        agents: [...new Set([...(state.agents || []), ...agents])], backup, entries: [...entries.values()] };
+        agents: [...new Set([...(state.agents || []), ...agents])], backup: backup || state.backup || null, entries: [...entries.values()] };
       const ownerFile = path.join(context.home, STATE);
-      if (await statOrNull(ownerFile)) await fs.copyFile(ownerFile, path.join(backup, 'previous-state.json'));
+      if (backup && await statOrNull(ownerFile)) await fs.copyFile(ownerFile, path.join(backup, 'previous-state.json'));
       await atomicWriteFile(ownerFile, JSON.stringify(result, null, 2));
+      let retention = { removed: [], warnings: [] };
+      if (backup) {
+        const sealed = await completeManagedBackup(context, backup, { outcome: 'complete',
+          containsUnownedOriginals: changes.some((item) => item.before && item.before.sha256 !== owned.get(item.relativePath)) });
+        retention = await retainManagedBackups(context, { protectedBackups: [backup] });
+        if (!sealed.ok) retention.warnings.push(sealed.warning);
+      }
       return { mode: 'policy-only', ok: true, profileCommit: commit, agents: result.agents,
-        backup, changed: changes.length, skills: skills.length, hooks: 'not-modified',
+        backup, retention, changed: changes.length, skills: skills.length, hooks: 'not-modified',
         packageManagers: 'not-assessed' };
     } catch (error) {
       for (const entry of [...journal].reverse()) {
         if (entry.installed) await fs.rename(entry.target, `${entry.prior || entry.staging}.failed-${crypto.randomUUID()}`);
         if (entry.moved) await fs.rename(entry.prior, entry.target);
       }
+      if (backup) await completeManagedBackup(context, backup, { outcome: 'rolled-back' });
       throw error;
     }
   });

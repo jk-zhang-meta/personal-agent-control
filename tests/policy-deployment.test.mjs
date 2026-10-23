@@ -79,7 +79,13 @@ test('policy delivery upgrades verified files, preserves unrelated state and det
     assert.match(await fs.readFile(path.join(f.home, host, 'skills/personal-environment/SKILL.md'), 'utf8'), /Version 2/);
   }
   assert.match(await fs.readFile(path.join(upgraded.backup, 'journal.json'), 'utf8'), /"moved": true/);
-  assert.equal((await synchronizePolicy(f.context, { ...options, commit: second })).changed, 0);
+  const backups = path.join(f.home, '.agent-work/backups/personal-agent-control');
+  const beforeBackups = await fs.readdir(backups);
+  const repeated = await synchronizePolicy(f.context, { ...options, commit: second });
+  assert.equal(repeated.changed, 0);
+  assert.equal(repeated.backup, null);
+  assert.deepEqual(await fs.readdir(backups), beforeBackups);
+  assert.equal((await policyStatus(f.context)).backup, upgraded.backup);
   await fs.writeFile(path.join(f.home, '.agents/skills/personal-environment/SKILL.md'), 'User change\n');
   await assert.rejects(synchronizePolicy(f.context, { ...options, commit: second }), { code: 'POLICY_DRIFT' });
   assert.equal((await policyStatus(f.context)).ok, false);

@@ -252,3 +252,29 @@ test('CodeGraph provider retirement removes only the PAC-owned entries', async (
     await fs.rm(home, { recursive: true, force: true });
   }
 });
+
+
+test('provider inspection, update, and retirement preserve following hook array tables', { skip: process.platform === 'win32' }, async () => {
+  const home = await temp('pac-provider-array-tables-');
+  const root = process.cwd();
+  const mise = path.join(home, 'mise');
+  const context = { root, home, mise, stateDir: path.join(home, 'state') };
+  const profile = { manifest: { providers: { enabled: ['codegraph'] } } };
+  const file = path.join(home, '.codex/config.toml');
+  const args = ['--cd', root, 'exec', '--', 'codegraph', 'serve', '--mcp', '--no-watch'];
+  const hooks = '[[hooks.PreToolUse]]\nmatcher = "Bash"\n\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "preserve-hook-command"\n';
+  const prefix = `[mcp_servers.codegraph]\ncommand = ${JSON.stringify(mise)}\nargs = ${JSON.stringify(args)}\nstartup_timeout_sec = 30\n\n`;
+  const text = prefix + hooks;
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, text);
+  await fs.writeFile(mise, '#!/bin/sh\necho 1.6.0\n', { mode: 0o700 });
+  try {
+    assert.equal((await providerStatus(context, profile, ['codex'], ['codex']))[0].valid, true);
+    await reconcileProviders(context, profile, ['codex'], ['codex'], 'apply', { installRuntime: false });
+    assert.equal(await fs.readFile(file, 'utf8'), text);
+    await reconcileProviders(context, { manifest: { providers: { enabled: [] } } }, ['codex'], ['codex'], 'apply', { installRuntime: false });
+    assert.equal(await fs.readFile(file, 'utf8'), hooks);
+  } finally {
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});

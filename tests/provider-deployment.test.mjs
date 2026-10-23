@@ -88,7 +88,12 @@ test('provider-only indexing grant is Profile-gated, additive, private, visible 
     const status = await providerDeploymentStatus(f.context, options);
     assert.equal(status.ok, true);
     assert.equal(status.providers[0].runtimeRoots?.valid, indexing ? true : undefined);
-    assert.equal((await synchronizeProvider(f.context, options)).changed, 0);
+    const backups = path.join(f.home, '.agent-work/backups/personal-agent-control');
+    const beforeBackups = await fs.readdir(backups);
+    const repeated = await synchronizeProvider(f.context, options);
+    assert.equal(repeated.changed, 0);
+    assert.equal(repeated.backup, null);
+    assert.deepEqual(await fs.readdir(backups), beforeBackups);
   }
 });
 

@@ -6,6 +6,23 @@ import path from 'node:path';
 
 import { stageDependencies, renderManifest } from '../src/apm.mjs';
 import { syncSkillCapabilities } from '../src/capabilities.mjs';
+import { atomicWriteFile } from '../src/atomic-file.mjs';
+
+test('atomic replacement preserves existing file permissions and ownership', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pac-atomic-metadata-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const file = path.join(root, 'config');
+  await fs.writeFile(file, 'before', { mode: 0o640 });
+  const before = await fs.stat(file);
+  await atomicWriteFile(file, 'after');
+  const after = await fs.stat(file);
+  assert.equal(after.mode, before.mode);
+  assert.equal(after.uid, before.uid);
+  assert.equal(after.gid, before.gid);
+  assert.equal(await fs.readFile(file, 'utf8'), 'after');
+  await atomicWriteFile(file, 'explicit private mode', 0o600);
+  assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
+});
 
 async function preplantOldTemporary(target, sentinel) {
   await fs.symlink(sentinel, `${target}.${process.pid}.tmp`);

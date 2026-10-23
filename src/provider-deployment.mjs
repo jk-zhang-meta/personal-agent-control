@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { atomicWriteFile } from './atomic-file.mjs';
+import { completeManagedBackup, createManagedBackup, retainManagedBackups } from './backup-retention.mjs';
 import { HOSTS } from './config.mjs';
 import { PacError } from './errors.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
@@ -73,6 +74,7 @@ export async function synchronizeProvider(context, { name, repository, commit, c
     if (!profile.manifest.providers.enabled.includes(name)) {
       throw new PacError('PROVIDER_NOT_SELECTED', `${name} is not enabled by the verified Profile commit.`);
     }
+    const previousProviders = await providerStatus(context, profile, clients, clients, [name]);
     const files = [...new Set([...await providerConfigurationFiles(context, name, clients), path.join(context.stateDir, 'owned-providers.json')])];
     const snapshots = new Map();
     for (const file of files) {
@@ -82,29 +84,33 @@ export async function synchronizeProvider(context, { name, repository, commit, c
       }
       snapshots.set(file, { before, times: before ? await fs.stat(file) : null });
     }
-    const backup = path.join(context.home, '.agent-work/backups/personal-agent-control', `provider-${Date.now()}-${crypto.randomUUID()}`);
-    await assertSafeManagedObject(context.home, backup, 'provider backup', 'directory');
-    await fs.mkdir(backup, { recursive: true, mode: 0o700 });
+    let backup = null;
+    let journalFile;
     const journal = { schemaVersion: 1, mode: 'provider-only', provider: name, clients, profileCommit: commit, state: 'prepared', entries: [] };
-    const journalFile = path.join(backup, 'journal.json');
-    for (const [index, [file, snapshot]] of [...snapshots.entries()].entries()) {
-      snapshot.prior = snapshot.before ? path.join(backup, `${index}.original`) : null;
-      if (snapshot.prior) {
-        await fs.copyFile(file, snapshot.prior, fs.constants.COPYFILE_EXCL);
-        await fs.chmod(snapshot.prior, 0o600);
-        if (sha(await fs.readFile(snapshot.prior)) !== snapshot.before.sha256 || !same(await identity(context, file), snapshot.before)) {
-          throw new PacError('PROVIDER_RACE', `Provider file changed during backup: ${file}`);
+    const prepareBackup = async () => {
+      if (backup) return;
+      backup = await createManagedBackup(context, { prefix: 'provider', mode: 'provider-only' });
+      journalFile = path.join(backup, 'journal.json');
+      for (const [index, [file, snapshot]] of [...snapshots.entries()].entries()) {
+        snapshot.prior = snapshot.before ? path.join(backup, `${index}.original`) : null;
+        if (snapshot.prior) {
+          await fs.copyFile(file, snapshot.prior, fs.constants.COPYFILE_EXCL);
+          await fs.chmod(snapshot.prior, 0o600);
+          if (sha(await fs.readFile(snapshot.prior)) !== snapshot.before.sha256 || !same(await identity(context, file), snapshot.before)) {
+            throw new PacError('PROVIDER_RACE', `Provider file changed during backup: ${file}`);
+          }
         }
+        journal.entries.push({ file, prior: snapshot.prior, before: snapshot.before,
+          atimeMs: snapshot.times?.atimeMs, mtimeMs: snapshot.times?.mtimeMs, installed: false });
       }
-      journal.entries.push({ file, prior: snapshot.prior, before: snapshot.before,
-        atimeMs: snapshot.times?.atimeMs, mtimeMs: snapshot.times?.mtimeMs, installed: false });
-    }
-    await atomicWriteFile(journalFile, `${JSON.stringify(journal, null, 2)}\n`);
+      await atomicWriteFile(journalFile, `${JSON.stringify(journal, null, 2)}\n`);
+    };
     const write = async (file, content) => {
       const snapshot = snapshots.get(file);
       if (!snapshot) throw new PacError('PROVIDER_WRITE_SCOPE', `Provider write is outside the selected files: ${file}`);
       if (!same(await identity(context, file), snapshot.before)) throw new PacError('PROVIDER_RACE', `Provider file changed after preflight: ${file}`);
       if (snapshot.before?.sha256 === sha(content)) return;
+      await prepareBackup();
       await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
       const staging = path.join(path.dirname(file), `.pac-provider-${crypto.randomUUID()}`);
       const entry = journal.entries.find((row) => row.file === file);
@@ -126,15 +132,23 @@ export async function synchronizeProvider(context, { name, repository, commit, c
       const result = await reconcileProviders(context, profile, clients, clients, 'apply', {
         names: [name], write, installRuntime: false, profileCommit: commit,
       });
+      if (!result.valid) throw new PacError('PROVIDER_VERIFY_FAILED', 'Provider reconciliation did not pass verification.');
       for (const entry of journal.entries) {
         if (!same(await identity(context, entry.file), entry.installed ? entry.after : entry.before)) {
           throw new PacError('PROVIDER_RACE', `Provider file changed during verification: ${entry.file}`);
         }
       }
       journal.state = 'complete';
-      await atomicWriteFile(journalFile, `${JSON.stringify(journal, null, 2)}\n`);
+      const retention = backup ? await (async () => {
+        await atomicWriteFile(journalFile, `${JSON.stringify(journal, null, 2)}\n`);
+        // Preserve the initial native baseline; later PAC versions may rotate.
+        const sealed = await completeManagedBackup(context, backup, { outcome: 'complete',
+          containsUnownedOriginals: previousProviders.some((p) => !p.owned) && [...snapshots.values()].some((s) => s.before) });
+        const retained = await retainManagedBackups(context, { protectedBackups: [backup] });
+        return { ...retained, warnings: [...retained.warnings, ...(sealed.ok ? [] : [sealed.warning])] };
+      })() : { removed: [], warnings: [] };
       return { mode: 'provider-only', ok: result.valid, provider: name, clients, profileCommit: commit,
-        backup, changed: journal.entries.filter((entry) => entry.installed).length, providers: result.providers };
+        backup, retention, changed: journal.entries.filter((entry) => entry.installed).length, providers: result.providers };
     } catch (error) {
       const failures = [];
       for (const entry of [...journal.entries].reverse().filter((row) => row.installed)) {
@@ -153,7 +167,10 @@ export async function synchronizeProvider(context, { name, repository, commit, c
         } catch (failure) { failures.push({ file: entry.file, code: failure.code, message: failure.message }); }
       }
       journal.state = failures.length ? 'rollback-incomplete' : 'rolled-back';
-      await atomicWriteFile(journalFile, `${JSON.stringify(journal, null, 2)}\n`);
+      if (backup) {
+        await atomicWriteFile(journalFile, `${JSON.stringify(journal, null, 2)}\n`);
+        if (!failures.length) await completeManagedBackup(context, backup, { outcome: 'rolled-back' });
+      }
       if (failures.length) throw new PacError('PROVIDER_ROLLBACK_FAILED', 'Provider sync failed and concurrent or inaccessible files require recovery from the backup.', { backup, cause: error.message, failures });
       throw error;
     }

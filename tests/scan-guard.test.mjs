@@ -513,6 +513,7 @@ test('balanced host mode lets ordinary work run and asks only for sensitive effe
     assert.equal(result?.blocked, true, JSON.stringify(command));
     assert.equal(result?.response?.hookSpecificOutput?.permissionDecision, 'deny', JSON.stringify(command));
     const feedback = result.response.hookSpecificOutput.permissionDecisionReason;
+    assert.doesNotMatch(feedback, /Benefit:|Worst case:|Safer alternative:/u);
     assert.equal(feedback.split(command).length - 1, 1, `feedback repeats command: ${JSON.stringify(command)}`);
     const token = feedback.match(/PAC_USER_AUTHORIZED_SHA256=([0-9a-f]{64})/u)?.[1];
     assert.ok(token, JSON.stringify(command));
@@ -533,6 +534,53 @@ test('balanced host mode lets ordinary work run and asks only for sensitive effe
   assert.doesNotMatch(claudeFeedback, /PAC_USER_AUTHORIZED_SHA256/u);
   assert.equal(hookDecision({ tool_name: 'Bash', cwd: project,
     tool_input: { command: 'git status --short' } }, { ...balanced, host: 'claude' }), null);
+});
+
+test('balanced host gate permits ordinary syntax and disposable output without a registry', () => {
+  const cwd = '/mnt/c/Users/fixture/OneDrive/project';
+  const options = { mode: 'balanced', home: '/home/fixture' };
+  for (const command of [
+    'rg --files src', 'find src -type f', 'cat README.md',
+    'node --test tests/unit.test.mjs', 'npm run build', 'custom-tool --version',
+    'git rm README.md', 'git rm -r src', 'git rm --cached data/results.csv',
+    'git -C subproject rm -- src/main.rs', 'git rm -- -f',
+    'git checkout --progress feature',
+    'find dist -type f -exec rm -f {} +',
+    'truncate -s 0 dist/output.log', 'cp /dev/null .cache/output.log',
+    'cp src/main.rs src/copy.rs', 'truncate -s +1G .cache/sparse.bin',
+    'env -S "node --version"', 'time --unknown-option true',
+    'rm -rf dist target node_modules .cache', 'rm -f dist/bundle.js',
+    'rm -rf /mnt/c/Users/fixture/OneDrive/project/dist',
+    'find dist -type f -delete',
+    "sh -c 'sh -c \"sh -c true\"'",
+  ]) {
+    assert.equal(hookDecision({ tool_name: 'Bash', cwd, tool_input: { command } }, options), null, command);
+  }
+  assert.equal(hookDecision({ tool_name: 'FutureTool', cwd,
+    tool_input: { command: 'custom-tool --version' } }, options), null);
+});
+
+test('balanced host gate recognizes concrete unique-data and destructive history loss', () => {
+  const cwd = '/home/fixture/project';
+  const options = { mode: 'balanced', home: '/home/fixture' };
+  for (const command of [
+    'rm -rf src', 'rm -f data/results.csv', 'rm README.md',
+    'rm -rf ../project', 'rm -rf /etc', 'rm -rf .git',
+    'find src -type f -delete', 'unlink data/results.csv',
+    'env -S "rm -rf src"', 'git reset --hard HEAD~1', 'git clean -fdx',
+    'rm -rf dist/../../unique-data', 'rm -rf /home/fixture/dist',
+    'git rm -f data/results.csv', 'git rm --force src/main.rs',
+    'git rm -rf src', 'git -C subproject rm -f README.md',
+    'git -C subproject reset --hard HEAD~1', 'git -C subproject clean -fdx',
+    'git checkout -f HEAD~1', 'git -C subproject checkout --force HEAD~1',
+    'find src -exec rm -rf {} +', "find src -execdir rm -f {} ';'",
+    'truncate -s 0 data/unique.db', 'truncate --size=0 data/unique.db',
+    'cp /dev/null data/unique.db', 'cp -f -- /dev/null data/unique.db',
+  ]) {
+    for (const tool_name of ['Bash', 'FutureTool']) {
+      assert.equal(hookDecision({ tool_name, cwd, tool_input: { command } }, options)?.approval, true, command);
+    }
+  }
 });
 
 test('balanced sensitive matching treats printed documentation and argument values as data', () => {

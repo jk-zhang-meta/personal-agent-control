@@ -277,7 +277,7 @@ async function runtimeRootsReady(context, profile, ownership) {
 function upsertCodex(text, context, provider, format, runtime) {
   const lines = text ? text.split(/\r?\n/u) : [];
   const start = providerTableStart(lines, provider);
-  const endFrom = start < 0 ? -1 : lines.findIndex((line, index) => index > start && /^\s*\[[^[]/u.test(line));
+  const endFrom = start < 0 ? -1 : lines.findIndex((line, index) => index > start && /^\s*\[/u.test(line));
   const end = endFrom < 0 ? lines.length : endFrom;
   const block = start < 0 ? codexBlock(context, provider, format) : lines.slice(start, end);
   const setLine = (name, value) => {
@@ -301,7 +301,7 @@ function removeCodex(text, provider) {
   const lines = text.split(/\r?\n/u);
   const start = providerTableStart(lines, provider);
   if (start < 0) return text;
-  const end = lines.findIndex((line, index) => index > start && /^\s*\[[^[]/u.test(line));
+  const end = lines.findIndex((line, index) => index > start && /^\s*\[/u.test(line));
   const next = end < 0 ? lines.length : end;
   return [...lines.slice(0, start), ...lines.slice(next)].join('\n').replace(/\n{3,}/gu, '\n\n');
 }
@@ -315,7 +315,7 @@ async function readCodex(context, provider, file) {
   const start = providerTableStart(lines, provider);
   const globallyDisabled = new RegExp(`^\\s*disabled_mcp_servers\\s*=\\s*\\[[^\\]]*["']${provider.name}["']`, 'mu').test(text);
   if (start < 0) return { present: globallyDisabled, valid: false, path: file };
-  const end = lines.findIndex((line, index) => index > start && /^\s*\[[^[]/u.test(line));
+  const end = lines.findIndex((line, index) => index > start && /^\s*\[/u.test(line));
   const block = lines.slice(start, end < 0 ? lines.length : end).join('\n');
   const command = tomlBinding(block, 'command')?.value;
   const args = tomlBinding(block, 'args')?.value;

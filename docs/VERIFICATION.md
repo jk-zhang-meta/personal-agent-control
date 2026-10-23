@@ -230,3 +230,47 @@ Before release or live installation of a new revision:
 
 No commit, push, publication, host replacement, or deletion is implied by a
 passing local gate; each external effect still requires its exact authority.
+
+
+## 2026-10-23 local autonomy repair
+
+Source-only candidate; no host activation, commit, push or live backup deletion.
+Focused checks ran in a host-local snapshot with Node 24.18.0:
+
+- Balanced scan guard: 24 tests and 22 additional ordinary/destructive command
+  cases passed, including Git global options, find execution and destructive
+  truncation; strict-broker regressions remain included.
+- Provider/policy/retention regressions: 24 passed. The extended retention suite
+  subsequently passed 7 cases, including failed-registration cleanup and first
+  native takeover baselines. Counts overlap and must not be added together.
+- Final apply regressions: 3 passed, covering optional-index degradation,
+  bounded completed snapshots and protection when verification is skipped.
+- Atomic replacement: 2 passed, including mode/ownership preservation and the
+  existing temporary-symlink regression. Source integrity: 6 passed.
+- Profile workspace validation, changed-module syntax, doctor ShellCheck,
+  whitespace checks and generated-adapter comparison passed. Rulesync 16.7.0
+  rendered the adapters; the kernel remains within 120 lines/900 words.
+
+The complete `mise run check` release gate was not established: the checkout's
+mise configuration is untrusted, and no trust setting was changed. A broader
+resource-managed suite was also not launched because its isolated root was not
+in the existing registry; bounded focused checks were used. These results do not
+claim native host enforcement, concurrency-safe full-install rollback, a hard
+backup disk quota, or measured latency/token savings. Unknown historical and
+incomplete backups remain protected. The required release gate above still
+applies before activation.
+
+
+### Publication gate after explicit rollout authorization
+
+The complete pinned `mise run check` subsequently passed in a host-local,
+resource-bounded candidate: 235 tests passed, 3 platform/optional cases skipped,
+zero failures; render, schema, integrity, frozen dependencies, metadata, secret
+scan and isolated installation all passed. The rollout candidate preserves the
+provider TOML array-table boundary fix and its regression test.
+
+Acceptance corrections retain the existing unsafe-path diagnostic context,
+update assertions for the reviewed concise kernel wording, and refresh an
+isolated fixture's recovery checkpoint when bounded retention has expired it.
+The latter changes the fixture, not production retention or recovery behavior.
+Native target deployment and enforcement are separate from this source gate.
