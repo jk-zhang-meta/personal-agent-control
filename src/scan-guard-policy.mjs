@@ -3566,7 +3566,11 @@ function balancedCommandFinding(command, cwd, depth = 0, stdinScript = null) {
     if (BALANCED_SYSTEM_MUTATION_RE.test(effect) || (executable === 'tee' && args.some(balancedSystemWrite))) {
       return 'system/security configuration or privileged redirection';
     }
-    if (BALANCED_WIDE_SCAN_RE.test(effect)) return 'filesystem-wide scan can materially affect machine responsiveness';
+    // This exact read-only form visits only its starting path, never descendants.
+    const rootOnlyFind = executable === 'find' && (args.length === 3 || args.length === 4) &&
+      args[1] === '-maxdepth' && args[2] === '0' &&
+      (args.length === 3 || ['-print', '-print0'].includes(args[3]));
+    if (BALANCED_WIDE_SCAN_RE.test(effect) && !rootOnlyFind) return 'filesystem-wide scan can materially affect machine responsiveness';
     if (BALANCED_EXTREME_PARALLEL_RE.test(effect)) return 'extreme parallelism can materially affect CPU, memory, or disk I/O';
     if (executable === 'find') {
       for (let cursor = 0; cursor < args.length; cursor += 1) {

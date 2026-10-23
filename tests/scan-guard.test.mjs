@@ -536,6 +536,30 @@ test('balanced host mode lets ordinary work run and asks only for sensitive effe
     tool_input: { command: 'git status --short' } }, { ...balanced, host: 'claude' }), null);
 });
 
+test('balanced host gate permits only read-only root-only find without skipping later effects', () => {
+  const cwd = '/home/fixture/project';
+  const options = { mode: 'balanced', home: '/home/fixture' };
+  for (const tool_name of ['Bash', 'exec_command']) {
+    const decision = (command) => hookDecision({ tool_name, cwd,
+      tool_input: tool_name === 'exec_command' ? { cmd: command } : { command } }, options);
+    for (const command of [
+      'find / -maxdepth 0 -print', 'find / -maxdepth 0',
+      'find /root -maxdepth 0 -print0', "find '/' -maxdepth 0 -print",
+      'timeout 5s find / -maxdepth 0 -print',
+      "sh -c 'find / -maxdepth 0 -print'",
+      'find / -maxdepth 0 -print && echo done',
+    ]) assert.equal(decision(command), null, `${tool_name}: ${command}`);
+    for (const command of [
+      'find / -name pac-test', 'find / -maxdepth 1 -print',
+      'find / -maxdepth 0 -maxdepth 9 -print',
+      'find / -maxdepth 0 -delete', 'find / -maxdepth 0 -exec rm -rf {} \\;',
+      'find / -maxdepth 0 -print && rm -rf src',
+      'find / -maxdepth 0 -print; find /',
+      'du / --max-depth 0', 'tree / -L 1',
+    ]) assert.equal(decision(command)?.approval, true, `${tool_name}: ${command}`);
+  }
+});
+
 test('balanced host gate permits ordinary syntax and disposable output without a registry', () => {
   const cwd = '/mnt/c/Users/fixture/OneDrive/project';
   const options = { mode: 'balanced', home: '/home/fixture' };
