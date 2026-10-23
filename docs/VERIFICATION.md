@@ -13,13 +13,31 @@ and recovery checks pass together. A passing unit test cannot compensate for a
 failed lock, path, Plugin, rollback, or live-host check. Optional tests must be
 identified as optional rather than silently counted as acceptance.
 
-`activation.ready` is a transaction-staging signal, not a healthy result. It
-may be true only when every ordinary invariant passes and the sole remaining
-condition is an exact, structurally verified Codex hook whose host trust state
-is `untrusted` or `modified`. `ok` remains false, strict doctor remains red, and
-deployment is incomplete until the exact current hook hash is trusted and a
-real host high-impact canary proves enforcement while ordinary-work canaries
-pass without PAC intervention.
+PAC no longer installs tool interception or gates research on validators,
+registration, reviewer workflows, approval tokens, or hook trust. Deployment
+health checks remain evidence about the installation, not prerequisites for
+independent authorized research. `activation.ready` uses the ordinary health
+invariants and `activation.pending` is empty; there is no PAC hook trust phase.
+Legacy PAC handlers must be absent after apply; unrelated hooks and permissions
+must be preserved. Historical hook-enforcement results below are superseded.
+
+### Execution-gate removal (2026-10-24)
+
+At code commit `f7bd4e0e09e3a8a022ddd5e4d1430c200553045e`:
+
+- `mise run check` passed, including render, schema, catalog, APM lock, syntax,
+  secret scanning, and isolated lifecycle checks.
+- The focused eight-file regression passed 99 tests; the additional policy,
+  Profile-bootstrap, and graph-policy run passed 24 tests.
+- Retirement coverage includes both host formats, mixed Plugin handlers,
+  multiline TOML instruction examples, four command quote forms, idempotence,
+  host scoping, and selected helpers without new installation or trust probes.
+- A read-only policy-decision fixture changed from approval/deny to no decision;
+  restoring the original policy restored its original output and SHA-256.
+- Applying the full binary diff reproduced the candidate tracked-file hash;
+  reverse application reproduced the original tracked-file hash.
+
+The follow-up documentation changes do not alter the verified code or adapters.
 
 ## State-layer invariants
 

@@ -76,34 +76,18 @@ If a non-empty `~/.codex/AGENTS.override.md` exists, Codex installation stops
 before changing its managed global file. Rename or merge that override only
 after reviewing why it exists.
 
-When the selected Profile enables the scan guard, Codex may leave its exact
-new or changed user hook in `untrusted`/`modified` state. PAC keeps the verified
-installation staged instead of rolling back unrelated Skills, but it does not
-call that state healthy. Review and accept the exact PAC `PreToolUse` entry in
-Codex `/hooks` (or, after an operator authorizes that exact key/hash, use the
-version-pinned `config/batchWrite` path used by that Codex TUI), restart the
-session, then run
-`pac doctor` and the documented deny canary. Do not copy a stale trusted hash or
-edit trust state based only on a path/name match.
+PAC installs no tool interception or research prerequisite gates. After upgrading,
+`pac apply` removes legacy PAC-marked handlers from Codex and Claude, even when
+the Profile still selects `resource-guard` and `workspace-locator`. Other host
+and Plugin hooks and native permissions are preserved. No PAC hook trust action,
+approval token, or deny canary is required. Installation/package integrity checks
+do not become prerequisites for independent authorized research.
 
-PAC policy updates use digest-named immutable runtime files, so already-open
-sessions keep executing the exact policy command they loaded. The first
-reconciliation from a legacy stable-path installation preserves that stable
-file for older sessions and moves only newly generated host configuration to a
-digest path. If the legacy file was already overwritten and an old session is
-failing its pinned digest, restore the matching stable file from the
-pre-update PAC snapshot before applying the new Core; do not point the new hook
-back at the stable path. End affected host sessions before any manual cleanup
-of retained policy revisions.
-
-For that canary, start a fresh Codex session in a disposable host-local Git
-repository and request the exact harmless command
-`find / -maxdepth 0 -print`. The expected result is a high-impact preflight
-denial rather than filesystem output; this proves that the balanced hook is
-active without risking a recursive walk if it is not. Then verify that
-`rg -n TODO src`, a bounded status command, and a normal project test pass
-without PAC intervention. Do not use a hook-trust bypass flag as proof of
-durable activation.
+Already-open host sessions may cache an old hook command: reload configuration
+or restart those sessions after retirement. Old digest-named policy files remain
+available for recovery; they are not installed as new hooks. Confirm retirement
+with `pac status`: scan-guard entries are `inactive` and activation has no pending
+hook trust actions. Do not delete unrelated Plugin hooks or edit native permissions.
 
 ## Review before apply
 
