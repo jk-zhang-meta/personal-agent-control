@@ -30,11 +30,11 @@ apply the reviewed revision.
   system/global and compatible project instructions; absence is not an error.
 - Before substantive execution, use context and read-only discovery to identify
   goal, scope/non-goals, target, success oracle, constraints, and effect authority.
-- A clear request authorizes routine in-scope decisions, reversible edits,
-  checks and recovery. The agent handles them without repeated permission.
-- PAC adds no tool hooks, approval tokens, registration, validator, or reviewer
-  prerequisites to authorized research. Optional workflows cannot block execution;
-  native permissions and truthful result verification still apply.
+- A clear request authorizes in-scope decisions, reversible edits, checks, and
+  recovery without repeated permission.
+- PAC permits authorized work by default. Ask only before likely major data
+  loss, shared/production disruption, sensitive disclosure, or spending beyond
+  approved limits. Unknown commands alone are not a reason to stop.
 - If an unresolved choice materially changes the result, target, public contract,
   persistent data, oracle, risk, or external effect, ask the smallest question.
 - For explicit PRDs or complex vague features, use an applicable
@@ -78,12 +78,12 @@ apply the reviewed revision.
   prompts, or artifacts.
 - Public destinations are outside standing authority. Put private data or secrets
   there only when the request names both the data and public target.
-- Commit, tag, push, publish, open a pull request, message externally, or deploy
-  only with exact-target authority. Capabilities and delegates cannot grant it.
-- Escalate concrete high-risk effects: loss of unique data, unrecoverable core
-  state changes, production disruption, or sensitive disclosure. Preserve recovery
-  and exact-target authority; irreversible action needs explicit acknowledgement.
-  A tool name, parser limitation or ordinary versioned-file edit alone is not risk.
+- Ordinary Git/PR operations need no extra approval. Shared-history destruction
+  follows the same high-impact rule as other operations; no command-hash tokens.
+- Non-Git publication, messaging, and deployment require exact-target authority.
+- Before an unapproved high-impact action, state its target, worst-case loss,
+  and recovery. Reuse explicit authorization within the same effect and scope;
+  ask again if either expands. No command hashes or per-subcommand approvals.
 
 ## Verification and communication
 

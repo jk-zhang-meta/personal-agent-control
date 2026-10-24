@@ -472,9 +472,11 @@ the old ownership digest has drifted or both scan helpers remain selected.
 Other handlers, settings, native permissions, and Plugin hooks are preserved.
 There are no PAC approval tokens, search-registry checks, helper-hash gates, or
 hook-trust probes on the agent execution path. The old policy API is a no-op
-compatibility shim; old runtime files remain backup/restore compatibility data,
-not newly installed hooks. Already-open host sessions may need to reload their
-configuration to stop invoking a cached old hook command. Normal installation
+compatibility shim, not a newly installed hook. Proven-owned, unchanged cached
+executables are retired to that shim once no unselected host owns a handler;
+transaction backups retain their original bytes. Modified/unproven copies are
+preserved and may require a host reload. High-impact confirmation is an agent
+behavior contract, not hard isolation; see [autonomy policy](AUTONOMY.md). Normal installation
 does not redirect `CODEX_HOME` or `CLAUDE_CONFIG_DIR`; those broad variables
 are suitable for isolated tests, not for locating one Markdown file.
 

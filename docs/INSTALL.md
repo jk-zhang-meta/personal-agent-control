@@ -83,11 +83,17 @@ and Plugin hooks and native permissions are preserved. No PAC hook trust action,
 approval token, or deny canary is required. Installation/package integrity checks
 do not become prerequisites for independent authorized research.
 
-Already-open host sessions may cache an old hook command: reload configuration
-or restart those sessions after retirement. Old digest-named policy files remain
-available for recovery; they are not installed as new hooks. Confirm retirement
+Already-open sessions may cache an old hook command. PAC retires an unchanged,
+receipt/digest-proven cached executable to its no-op compatibility shim once no
+unselected host owns a handler; transaction backups retain the original bytes.
+Modified/unproven copies are preserved and may require a configuration reload.
+No new interception hook is installed. Confirm retirement
 with `pac status`: scan-guard entries are `inactive` and activation has no pending
 hook trust actions. Do not delete unrelated Plugin hooks or edit native permissions.
+
+The [autonomy contract](AUTONOMY.md) asks the agent to confirm only concrete,
+unapproved high-impact effects and reuse authorization within the same scope.
+This is a behavior rule, not an operating-system isolation guarantee.
 
 ## Review before apply
 

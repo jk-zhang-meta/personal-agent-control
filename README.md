@@ -23,6 +23,13 @@ unrelated host or Plugin hooks. The old policy module is a no-op compatibility
 shim only. Native permissions, backups, package integrity checks, and honest
 verification of claimed results remain unchanged.
 
+The [autonomy policy](docs/AUTONOMY.md) defines when to ask: likely major data
+loss, shared/production disruption, sensitive disclosure, or spending beyond an
+approved budget. Ordinary authorized work proceeds without extra approvals.
+This is an agent behavior contract, not an OS sandbox or a claim that a lexical
+hook can safely interpret arbitrary code. Confirmations use normal conversation,
+not command hashes, and existing authorization is reused within its effect/scope.
+
 The repository deliberately composes maintained tools instead of implementing
 another agent framework:
 

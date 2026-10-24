@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -129,4 +130,51 @@ test('retire multiline TOML PAC commands while retaining adjacent plugin handler
     await reconcileScanGuard(context, ['codex'], ['codex'], selected);
     assert.equal(await fs.readFile(file, 'utf8'), prefix + suffix);
   }
+});
+
+async function cachedRuntime(t, hosts = {}) {
+  const context = await fixture(t);
+  const content = "process.stderr.write('old-git-gate\\n'); process.exitCode = 2;\n";
+  const digest = crypto.createHash('sha256').update(content).digest('hex');
+  const relative = `.agent-work/runtime/pac/scan-guard-hook-${digest}.mjs`;
+  const file = await put(context, relative, content);
+  await put(context, 'src/scan-guard-policy.mjs',
+    await fs.readFile(new URL('../src/scan-guard-policy.mjs', import.meta.url), 'utf8'));
+  await put(context, '.local/state/personal-agent-control/scan-guard.json', JSON.stringify({
+    schemaVersion: 4, hosts, sourceSha256: digest, runtimeRelative: relative,
+  }));
+  return { context, content, file };
+}
+
+test('retire the proven-owned cached executable so existing sessions need no Git authorization token', async (t) => {
+  const { context, file } = await cachedRuntime(t);
+  const args = [file, '--hook', '--policy-sha256', 'old-cached-digest'];
+  const options = { input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'git push' } }), encoding: 'utf8' };
+  const baseline = spawnSync(process.execPath, args, options);
+  assert.equal(baseline.status, 2);
+  assert.equal(baseline.stderr, 'old-git-gate\n');
+  const result = await reconcileScanGuard(context, ['codex', 'claude'], ['codex', 'claude']);
+  assert.equal(result.runtime.action, 'retired');
+  const modified = spawnSync(process.execPath, args, options);
+  assert.equal(modified.status, 0, modified.stderr);
+  assert.equal(modified.stdout, '');
+  assert.equal(modified.stderr, '');
+  assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
+  assert.equal((await reconcileScanGuard(context, ['codex'], ['codex'])).runtime.action, 'already-retired');
+});
+
+test('cached runtime retirement preserves modified files rather than overwriting user changes', async (t) => {
+  const { context, file, content } = await cachedRuntime(t);
+  const changed = content + '// user edit\n';
+  await fs.writeFile(file, changed);
+  const result = await reconcileScanGuard(context, ['codex'], ['codex']);
+  assert.equal(result.runtime.action, 'preserved-modified');
+  assert.equal(await fs.readFile(file, 'utf8'), changed);
+});
+
+test('shared cached runtime remains unchanged while an unselected host still owns a hook', async (t) => {
+  const { context, file, content } = await cachedRuntime(t, { claude: { entrySha256: 'keep' } });
+  const result = await reconcileScanGuard(context, ['codex'], ['codex']);
+  assert.equal(result.runtime, null);
+  assert.equal(await fs.readFile(file, 'utf8'), content);
 });

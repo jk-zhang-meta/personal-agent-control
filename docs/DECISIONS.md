@@ -1,5 +1,29 @@
 # Architecture Decisions
 
+## Default allow; confirm concrete high-impact effects (2026-10-24)
+
+Status: accepted; owner: explicit user approval to implement the discussed policy.
+
+Ordinary authorized work, including ordinary Git/PR operations, runs without
+extra PAC approvals. Ask through normal conversation only before unapproved
+major data loss, shared/production disruption, sensitive disclosure, or spending
+beyond the approved budget. Reuse authorization for the same effect and target
+scope; no command hashes or per-subcommand confirmations. The detailed contract
+and examples are in [AUTONOMY.md](AUTONOMY.md).
+
+Keep the old lexical hook disabled. Current Codex hooks do not implement an
+`ask` decision; pretending otherwise would let an unsupported response pass.
+This is an agent behavior contract, not OS-level isolation. Native boundaries,
+backups, and production separation remain authoritative.
+
+Retire unchanged, receipt/digest-proven cached policy executables to the no-op
+shim once no unselected host owns a handler. Preserve modified copies and
+retain original bytes in the normal transaction backup. This supersedes the
+earlier open-session-restart limitation for exact proven-owned runtime files.
+
+Oracle: autonomy contract/generated-adapter checks, cached-runtime retirement
+tests, source manifests, and an ordinary unprefixed native push dry-run.
+
 ## Remove PAC execution gates (2026-10-24)
 
 Status: accepted; owner: explicit user authorization for PAC.

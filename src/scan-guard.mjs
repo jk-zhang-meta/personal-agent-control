@@ -162,6 +162,30 @@ export async function scanGuardStatus(context, enabledHosts, scopeHosts) {
   return results;
 }
 
+async function retireCachedRuntime(context, prior) {
+  const relative = prior.runtimeRelative;
+  if (!/^\.agent-work\/runtime\/pac\/scan-guard-hook-[0-9a-f]{64}\.mjs$/u.test(relative || '')) return null;
+  const file = path.join(context.home, relative);
+  await assertSafeManagedObject(context.home, file, 'retired PAC runtime', 'file');
+  let content;
+  try { content = await fsp.readFile(file); }
+  catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+  const replacement = await fsp.readFile(path.join(context.root, 'src/scan-guard-policy.mjs'));
+  if (content.equals(replacement)) return { path: file, action: 'already-retired' };
+  const actual = crypto.createHash('sha256').update(content).digest('hex');
+  if (actual !== prior.sourceSha256 || !relative.endsWith(`-${actual}.mjs`)) {
+    return { path: file, action: 'preserved-modified' };
+  }
+  // Existing sessions cache the old command/path. Retire the proven-owned
+  // executable too, rather than leaving Git blocked until a host restart.
+  const stat = await fsp.stat(file);
+  if (!(await fsp.readFile(file)).equals(content)) {
+    throw new PacError('SCAN_GUARD_CONFIG_CHANGED', `PAC runtime changed during retirement: ${file}`);
+  }
+  await atomicWriteFile(file, replacement, stat.mode & 0o777);
+  return { path: file, action: 'retired' };
+}
+
 // Migration only. Selecting Skills, enabling hosts, and applying PAC never
 // installs a tool gate, reads a search registry, or probes native hook trust.
 export async function reconcileScanGuard(context, enabledHosts, scopeHosts) {
@@ -187,7 +211,11 @@ export async function reconcileScanGuard(context, enabledHosts, scopeHosts) {
     for (const host of new Set(scopeHosts)) delete prior.hosts[host];
     await atomicWriteFile(file, `${JSON.stringify(prior, null, 2)}\n`, 0o600);
   }
-  return { skipped: false, retired: true, hosts };
+  // A runtime can be shared by both hosts. Do not change it while an
+  // unselected host still owns an active handler.
+  const runtime = Object.keys(prior.hosts || {}).length === 0
+    ? await retireCachedRuntime(context, prior) : null;
+  return { skipped: false, retired: true, hosts, runtime };
 }
 
 export async function hasPriorScanGuardState(context, host) {

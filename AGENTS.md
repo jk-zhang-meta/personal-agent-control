@@ -24,6 +24,9 @@ locators here.
   scans or unreviewed network/update behavior.
 - Optional indexes and workflow helpers do not block authorized research.
   Keep work in scope and verify claimed results without PAC-specific ceremonies.
+- Default to execution. Ask only for concrete high-impact effects described in
+  docs/AUTONOMY.md; do not infer risk from a command name, unknown tool, or parser
+  limitation. This behavioral policy is not an OS-level isolation guarantee.
 - Keep public catalogs free of private Profile paths and secret-bearing values.
 
 ## Request scope routing
@@ -59,7 +62,10 @@ Keep a compact task ledger and receipts in the WSL-local PAC runtime, not this
 repository. Record design changes in docs/DECISIONS.md and durable evidence in
 docs/RESEARCH.md or docs/VERIFICATION.md. Use reversible edits, inspect the
 diff, run the narrow oracle first, then the full gate when tools are available.
-Do not push, publish, or change a host unless the user names the exact target.
+Ordinary Git/PR operations within the authorized repository need no extra
+approval. Non-Git publication and deployment require target authority; ask first
+for unapproved concrete high-impact effects. Native permissions and privacy
+boundaries remain authoritative.
 
 Completion means canonical source, generated adapters, catalogs, manifests,
 tests, and integrity receipts agree at one Git commit, with remaining risks

@@ -39,6 +39,19 @@ At code commit `f7bd4e0e09e3a8a022ddd5e4d1430c200553045e`:
 
 The follow-up documentation changes do not alter the verified code or adapters.
 
+### Default-allow/high-impact behavior policy (2026-10-24)
+
+The new [autonomy contract](AUTONOMY.md) permits ordinary authorized work and
+requires conversational confirmation only for concrete high-impact effects.
+Native permissions remain authoritative. Wording tests establish contract and
+adapter consistency, not proof that arbitrary destructive programs are prevented.
+
+Targeted checks passed 13 tests covering the policy contract, cached-runtime
+retirement, preserved user modifications, and unselected-host isolation. An
+ordinary native push dry-run, previously stopped by the cached old hook,
+completed without an approval flag after retiring the exact proven-owned runtime.
+Original runtime bytes remain in the rollback snapshot.
+
 ## State-layer invariants
 
 | Layer | Required invariant | Primary oracle |
