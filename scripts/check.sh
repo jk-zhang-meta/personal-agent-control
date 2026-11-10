@@ -27,6 +27,15 @@ for obsolete in agent-control lib payload/modules environments dot_local; do
     }
 done
 
+# A linked guide that was emptied by accident still satisfies every other
+# check, so require each tracked top-level document to have content.
+for document in "$repo/README.md" "$repo/AGENTS.md" "$repo"/docs/*.md; do
+    [ -s "$document" ] || {
+        echo "documentation file is empty: ${document#"$repo"/}" >&2
+        exit 1
+    }
+done
+
 node - "$repo" <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
