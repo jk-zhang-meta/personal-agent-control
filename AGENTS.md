@@ -3,7 +3,7 @@
 ## Scope and source of truth
 
 This file covers the public PAC Core repository. Canonical workflow inputs live
-under .rulesync/rules and .rulesync/agents; source modules, catalogs, payload
+under .rulesync/rules and .rulesync/subagents; source modules, catalogs, payload
 Skills, and pinned manifests are reviewed Git state. Files under generated/ and
 host projections are derived: edit their canonical source and regenerate them.
 Core is public; do not place private Profile facts, credentials, or machine-only

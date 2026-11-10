@@ -441,8 +441,11 @@ pac profile status
 ```
 
 `pac update` and `pac self-update` are aliases for the same Core update path.
-They require a clean Core worktree, run `git pull --ff-only`, install the newly
-pulled Core's locked mise graph, and reconcile its frozen dependency state.
+They require a clean Core worktree on a branch that has an upstream, run
+`git pull --ff-only`, install the newly pulled Core's locked mise graph, and
+reconcile its frozen dependency state. A detached commit or an untracked branch
+stops with `SELF_UPDATE_DETACHED` or `SELF_UPDATE_NO_UPSTREAM` and the recovery
+command before any network access.
 They do not run an unconstrained dependency upgrade and do not fetch the
 Profile's recorded branch. The active Profile remains at the same
 `lockedCommit` until `pac profile update`, `set`, `sync`, `publish`, or `init`

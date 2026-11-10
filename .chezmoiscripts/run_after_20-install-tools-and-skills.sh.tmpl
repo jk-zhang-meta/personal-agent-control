@@ -388,7 +388,9 @@ if run_pac_apply > "$pac_result"; then
 else
     pac_exit=$?
     cat "$pac_result" >&2
-    if [ -n "$outer_backup" ] && run_mise exec -- node - \
+    # A first-install rollback removes the mise binary this run installed.
+    # Without it the inner result cannot be read, so the outer restore runs.
+    if [ -n "$outer_backup" ] && [ -x "$mise" ] && run_mise exec -- node - \
         "$pac_result" "$outer_backup" <<'NODE'
 const fs = require('node:fs');
 const [file, backup] = process.argv.slice(2);

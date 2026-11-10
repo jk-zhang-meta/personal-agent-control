@@ -1,5 +1,44 @@
 # Architecture Decisions
 
+## Reject Core/Profile mismatch before mutation; name update blockers (2026-11-10)
+
+Status: accepted; owner: user-requested review of the PAC workflow.
+
+A fresh install that paired the current Profile with an older Core failed on
+`PROVIDER_UNKNOWN` only after tools, packages, and Plugins were installed, and
+then rolled all of it back. `apply` now checks Profile-selected providers
+against the Core catalog before it takes a backup. The error lists the unknown
+and declared names and the recovery.
+
+`pac update` returned a bare Git exit status on a detached Core checkout or a
+branch without an upstream. It now stops with `SELF_UPDATE_DETACHED` or
+`SELF_UPDATE_NO_UPSTREAM` and the exact recovery command, before any network
+access. Human CLI output prints a `Recovery:` line whenever an error carries
+one; JSON output is unchanged.
+
+A first-install rollback removes the mise binary that run installed. The
+Chezmoi install script no longer invokes it to read the failed result; the
+outer restore runs instead.
+
+Backup retention never pruned an apply snapshot. Sealing fingerprints the
+snapshot within a budget that was 8,192 entries and 3 seconds, while a real
+apply snapshot holds 15,000 to 35,000 entries (the Skill store alone exceeds
+12,000) and takes about 4 seconds to walk. Every seal failed, the record stayed
+`active`, and only sealed records are removal candidates; one machine reached
+60 snapshots and 13 GB. The budget is now 262,144 entries and 30 seconds per
+tree, each candidate gets its own budget, one run removes at most 8 snapshots,
+and human output shows retention warnings. Snapshots that predate this change
+stay unsealed or unregistered and are still never adopted; removing them is an
+explicit owner action.
+
+Not decided here: the public default branch lags the working line, and its
+ADR-027 (preserve Plugins from marketplaces PAC does not manage) was never
+adopted there. Both need an explicit owner decision.
+
+Oracle: `node --test tests/providers.test.mjs tests/backup-retention.test.mjs`,
+the undeclared-provider and self-update branch cases in
+`tests/pac-cli.test.mjs`, and `mise run check`.
+
 ## Default allow; confirm concrete high-impact effects (2026-10-24)
 
 Status: accepted; owner: explicit user approval to implement the discussed policy.

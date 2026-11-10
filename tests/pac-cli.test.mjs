@@ -222,6 +222,7 @@ async function directoryDigest(root) {
 async function sourceIntegrityManifest(root) {
   const files = ['catalog/capabilities.jsonl', 'catalog/taxonomy.json'];
   for (const relative of [
+    'catalog/providers.json',
     'catalog/trusted-sources.sha256',
     'src/scan-guard-policy.mjs',
     'src/scan-guard.mjs',
@@ -361,7 +362,7 @@ cp -R "$2"/. "$target"/
 
 async function makeProfileRepository({
   enabledPlugins = [], catalogPlugins = [], skillTargets = ['codex', 'claude'],
-  bootstrap = null, scanGuard = false, materializer = null,
+  bootstrap = null, scanGuard = false, materializer = null, providers = null,
 } = {}) {
   const root = await temporary('pac-profile-repository-');
   const skill = path.join(root, 'skills/profile-fixture');
@@ -471,6 +472,14 @@ async function makeProfileRepository({
       : { enabled: enabledPlugins, disabled: [] },
     ...(bootstrap === null ? {} : { bootstrap: 'bootstrap.md' }),
   };
+  if (providers !== null) {
+    Object.assign(manifest, {
+      schemaVersion: 3,
+      bootstrap: bootstrap === null ? null : 'bootstrap.md',
+      plugins: { enabled: enabledPlugins, disabled: [] },
+      providers: { enabled: providers },
+    });
+  }
   await fs.writeFile(path.join(root, 'pac-profile.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   for (const args of [
     ['init', '--quiet', '--initial-branch=main'],
@@ -2554,4 +2563,56 @@ test('self-update refuses a dirty tracked worktree before network or apply', asy
   assert.equal(untracked.ok, false);
   assert.equal(untracked.error.code, 'SELF_UPDATE_DIRTY');
   assert.deepEqual(untracked.error.details.changedPaths, ['untracked.txt']);
+});
+
+test('an undeclared Profile provider is rejected before backup or host mutation', { timeout: 120_000 }, async () => {
+  const { root, home, env } = await makeRealLifecycleFixture();
+  await fs.writeFile(path.join(root, 'catalog/providers.json'), `${JSON.stringify({ schemaVersion: 1, providers: [] })}\n`);
+  await fs.writeFile(path.join(root, 'catalog/files.sha256'), await sourceIntegrityManifest(root));
+  const profileRepository = await makeProfileRepository({ providers: ['not-declared'] });
+  const rejected = runJsonPac(root, home, [
+    'profile', 'set', profileRepository.root, 'main', profileRepository.commit,
+  ], env, 'codex');
+  assert.equal(rejected.status, 1, rejected.stderr || rejected.stdout);
+  assert.equal(rejected.json?.error?.code, 'PROVIDER_UNKNOWN');
+  assert.deepEqual(rejected.json.error.details.unknown, ['not-declared']);
+  // No rollback record means the failure preceded the transaction.
+  assert.equal(rejected.json.error.details.rollback, undefined);
+  assert.equal(await exists(path.join(home, '.agent-work/backups/personal-agent-control')), false);
+  assert.equal(await exists(path.join(home, '.config/personal-agent-control/profile.json')), false);
+  assert.equal(await exists(path.join(home, '.agents/skills/profile-fixture')), false);
+});
+
+test('self-update names a missing upstream or detached checkout before git pull', async () => {
+  const root = await temporary('pac-self-update-branch-');
+  const home = await temporary('pac-self-update-branch-home-');
+  const git = (args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  for (const args of [
+    ['init', '--quiet', '--initial-branch=main'],
+    ['config', 'user.name', 'PAC Test'],
+    ['config', 'user.email', 'pac@example.invalid'],
+  ]) assert.equal(git(args).status, 0);
+  await fs.writeFile(path.join(root, 'tracked.txt'), 'clean\n');
+  assert.equal(git(['add', 'tracked.txt']).status, 0);
+  assert.equal(git(['commit', '--quiet', '-m', 'fixture']).status, 0);
+  const update = (flags = ['--json']) => spawnSync(path.join(repo, 'bin/pac'), [...flags, '--home', home, 'self-update'], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: home, PAC_NODE: process.execPath, PAC_ROOT: root },
+  });
+
+  const noUpstream = update();
+  assert.equal(noUpstream.status, 1, noUpstream.stderr);
+  const missing = JSON.parse(noUpstream.stdout).error;
+  assert.equal(missing.code, 'SELF_UPDATE_NO_UPSTREAM');
+  assert.equal(missing.details.branch, 'main');
+
+  assert.equal(git(['checkout', '--quiet', '--detach']).status, 0);
+  const detached = update();
+  assert.equal(detached.status, 1, detached.stderr);
+  assert.equal(JSON.parse(detached.stdout).error.code, 'SELF_UPDATE_DETACHED');
+
+  // The human form must show the recovery step, not only the error code.
+  const human = update([]);
+  assert.equal(human.status, 1);
+  assert.match(human.stderr, /^PAC SELF_UPDATE_DETACHED: .+\nRecovery: Choose the branch to follow/u);
 });

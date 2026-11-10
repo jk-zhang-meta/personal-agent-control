@@ -52,6 +52,15 @@ index.
   store.
 - The managed `CLAUDE.md` uses the same optional PAC-owned Profile bootstrap
   path; larger private context is not imported eagerly.
+- Claude also loads `CLAUDE.md` and `.claude/CLAUDE.md` from every ancestor of
+  the working directory. Under WSL, a project below `/mnt/c/Users/NAME`
+  therefore also loads the Windows home's `.claude/CLAUDE.md`. When Windows has
+  its own PAC installation, each such session receives a second kernel, and one
+  from an older Core revision can contradict the current rules. PAC does not
+  edit host settings: add the Windows file to `claudeMdExcludes` in the WSL
+  `~/.claude/settings.json`, for example
+  `"claudeMdExcludes": ["/mnt/c/Users/*/.claude/CLAUDE.md"]`, and keep both
+  installations on the same Core revision.
 
 The host-facing physical catalog is neither host's discovery root. It lives at
 `~/.local/share/agent-skills/.agents/skills` and is derived from frozen Core

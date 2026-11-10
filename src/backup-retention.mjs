@@ -8,6 +8,11 @@ import { assertSafeManagedObject } from './path-safety.mjs';
 const FILE = 'backup-retention.json';
 const MARKER = '.pac-backup.json';
 const MAX_RECORDS = 4096;
+// A real apply snapshot holds tens of thousands of entries: the Skill store
+// alone exceeds 12,000. A budget below that never seals, so nothing is pruned.
+const MAX_TREE_ENTRIES = 262144;
+const TREE_DEADLINE_MS = 30000;
+const MAX_REMOVALS_PER_RUN = 8;
 const rootFor = (context) => path.join(context.home, '.agent-work/backups/personal-agent-control');
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
@@ -36,13 +41,13 @@ async function writeRegistry(context, registry) {
   await atomicWriteFile(file, `${JSON.stringify(registry, null, 2)}\n`);
 }
 
-function budget() { return { entries: 0, deadline: Date.now() + 3000 }; }
+function budget() { return { entries: 0, deadline: Date.now() + TREE_DEADLINE_MS }; }
 
 // ponytail: bounded lstat identities under the PAC lock; oversized trees stay protected.
 async function fingerprint(directory, limits = budget()) {
   const rows = [];
   const walk = async (file, relative) => {
-    if (++limits.entries > 8192 || Date.now() > limits.deadline) fail('Backup fingerprint budget exceeded.');
+    if (++limits.entries > MAX_TREE_ENTRIES || Date.now() > limits.deadline) fail('Backup fingerprint budget exceeded.');
     const stat = await fs.lstat(file);
     const row = { path: relative, dev: stat.dev, ino: stat.ino, mode: stat.mode, uid: stat.uid, gid: stat.gid,
       size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs };
@@ -51,7 +56,7 @@ async function fingerprint(directory, limits = budget()) {
       const handle = await fs.opendir(file);
       try {
         for await (const entry of handle) {
-          if (names.length + limits.entries >= 8192 || Date.now() > limits.deadline) fail('Backup directory budget exceeded.');
+          if (names.length + limits.entries >= MAX_TREE_ENTRIES || Date.now() > limits.deadline) fail('Backup directory budget exceeded.');
           names.push(entry.name);
         }
       } finally { await handle.close().catch((e) => { if (e.code !== 'ERR_DIR_CLOSED') throw e; }); }
@@ -171,18 +176,18 @@ export async function retainManagedBackups(context, { keepPerMode = 3, protected
     }
     const candidates = registry.records.filter((r) => !keep.has(r.name) && !r.pinned && r.containsUnownedOriginals === false
       && ['complete', 'rolled-back'].includes(r.state) && /^[a-f0-9]{64}$/u.test(r.fingerprint || '')
-      && !protectedPaths.has(path.join(rootFor(context), r.name))).slice(0, 32);
-    const limits = budget();
-    // Verify the whole bounded batch before mutating any candidate.
+      && !protectedPaths.has(path.join(rootFor(context), r.name))).slice(0, MAX_REMOVALS_PER_RUN);
+    // Verify the whole bounded batch before mutating any candidate. Each tree
+    // gets its own budget; a shared one would starve the later candidates.
     for (const record of candidates) {
       const backup = await ownedDirectory(context, record);
-      if (await fingerprint(backup, limits) !== record.fingerprint) fail(`Backup changed; preserved ${record.name}.`);
+      if (await fingerprint(backup) !== record.fingerprint) fail(`Backup changed; preserved ${record.name}.`);
     }
     for (const record of candidates) {
       record.state = 'deleting';
       await writeRegistry(context, registry);
       const backup = await ownedDirectory(context, record);
-      if (await fingerprint(backup, limits) !== record.fingerprint) fail(`Backup changed; preserved ${record.name}.`);
+      if (await fingerprint(backup) !== record.fingerprint) fail(`Backup changed; preserved ${record.name}.`);
       await fs.rm(backup, { recursive: true });
       registry.records = registry.records.filter((r) => r !== record);
       await writeRegistry(context, registry);

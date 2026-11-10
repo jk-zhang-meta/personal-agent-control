@@ -89,10 +89,14 @@ function human(command, data) {
       ? `PAC Profile: ${data.profile.state} (${data.profile.lockedCommit || 'unknown revision'})`
       : 'PAC Profile: not configured';
   }
+  // Retention is advisory, so its failures never fail the command; show them
+  // here or snapshots accumulate without any visible signal.
+  const retention = data?.retention?.warnings?.length
+    ? `\nBackup retention needs attention: ${data.retention.warnings.join('; ')}` : '';
   if (data?.receipt && data.verification?.state === 'staged') {
-    return `PAC ${command} staged, but not yet healthy: ${data.verification.output}\nReceipt: ${data.receipt}\nBackup: ${data.backup}`;
+    return `PAC ${command} staged, but not yet healthy: ${data.verification.output}\nReceipt: ${data.receipt}\nBackup: ${data.backup}${retention}`;
   }
-  if (data?.receipt) return `PAC ${command} complete.\nReceipt: ${data.receipt}\nBackup: ${data.backup}`;
+  if (data?.receipt) return `PAC ${command} complete.\nReceipt: ${data.receipt}\nBackup: ${data.backup}${retention}`;
   if (data?.output) return data.output;
   return `PAC ${command} complete.`;
 }
@@ -124,7 +128,8 @@ export async function main(argv = process.argv.slice(2)) {
         error: { code: failure.code, message: failure.message, details: failure.details },
       }, null, 2)}\n`);
     } else {
-      process.stderr.write(`PAC ${failure.code}: ${failure.message}\n`);
+      const recovery = typeof failure.details?.recovery === 'string' ? `Recovery: ${failure.details.recovery}\n` : '';
+      process.stderr.write(`PAC ${failure.code}: ${failure.message}\n${recovery}`);
     }
     return failure.exitCode;
   }

@@ -96,7 +96,7 @@ test('retention rejects symlinked backup roots and caps oversized snapshot trees
   const originalOpendir = fs.opendir;
   t.mock.method(fs, 'opendir', async file => {
     if (file !== backup) return originalOpendir(file);
-    return { async *[Symbol.asyncIterator]() { for (let i = 0; i < 8193; i++) yield { name: `entry-${i}` }; }, async close() {} };
+    return { async *[Symbol.asyncIterator]() { for (let i = 0; i < 262145; i++) yield { name: `entry-${i}` }; }, async close() {} };
   });
   const sealed = await completeManagedBackup(f.context, backup, { outcome: 'complete', containsUnownedOriginals: false });
   assert.equal(sealed.ok, false);
@@ -164,4 +164,23 @@ test('native takeover baseline uses per-host and provider ownership rather than 
   await fs.writeFile(path.join(f.context.stateDir, 'scan-guard.json'), JSON.stringify({ schemaVersion: 1, hosts: { claude: { entrySha256: 'a'.repeat(64) } } }));
   assert.equal(await hasUnownedNativeBaseline(f.context, ['claude'], profile), false);
   assert.equal(await hasUnownedNativeBaseline(f.context, ['codex'], profile), false);
+});
+
+test('a snapshot the size of a real apply backup is sealed and later pruned', async t => {
+  const f = await fixture(t);
+  const large = await f.create({ outcome: null });
+  // 10,000 files: above the former 8,192-entry budget, which no real apply snapshot fits.
+  for (let tree = 0; tree < 20; tree++) {
+    const directory = path.join(large, `tree-${tree}`);
+    await fs.mkdir(directory);
+    await Promise.all(Array.from({ length: 500 }, (_, index) => fs.writeFile(path.join(directory, `file-${index}`), '')));
+  }
+  assert.deepEqual(
+    await completeManagedBackup(f.context, large, { outcome: 'complete', containsUnownedOriginals: false }),
+    { ok: true },
+  );
+  for (let index = 0; index < 3; index++) await f.create();
+  const result = await retainManagedBackups(f.context);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.removed, [large]);
 });

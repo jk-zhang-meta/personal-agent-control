@@ -35,7 +35,7 @@ import { verifyCanonicalPayload } from './integrity.mjs';
 import { hostAdapterStatus, reconcileHostAdapters } from './host-adapters.mjs';
 import { scanGuardStatus, reconcileScanGuard } from './scan-guard.mjs';
 import { policyStatus, synchronizePolicy } from './policy-deployment.mjs';
-import { providerStatus, reconcileProviders } from './providers.mjs';
+import { assertProfileProvidersKnown, providerStatus, reconcileProviders } from './providers.mjs';
 import { providerDeploymentStatus, synchronizeProvider } from './provider-deployment.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { profileBootstrapStatus, reconcileProfileBootstrap } from './profile-bootstrap.mjs';
@@ -450,6 +450,7 @@ async function applyUnlocked(context, options = {}) {
   const effectivePlugins = effectivePluginNames(config, profile);
   const unknownPlugins = effectivePlugins.filter((name) => !knownPlugins.some((entry) => entry.name === name));
   if (unknownPlugins.length) throw new PacError('PLUGIN_UNKNOWN', `Unknown Plugin(s): ${unknownPlugins.join(', ')}`);
+  await assertProfileProvidersKnown(context, profile);
   // Reject already-installed Plugins outside PAC's catalog before APM or host
   // projections are touched. A late rejection would require rollback while a
   // host may be loading a projected Skill.
@@ -1315,6 +1316,28 @@ async function selfUpdate(context, options) {
       });
     }
     const before = (await run('git', ['-C', context.root, 'rev-parse', 'HEAD'], { errorCode: 'SELF_UPDATE_FAILED' })).stdout.trim();
+    // `git pull --ff-only` needs a branch with an upstream. Name the missing
+    // piece instead of surfacing Git's exit status.
+    const branch = await run('git', ['-C', context.root, 'symbolic-ref', '--quiet', '--short', 'HEAD'], {
+      errorCode: 'SELF_UPDATE_FAILED',
+    }).then((result) => result.stdout.trim(), () => '');
+    if (!branch) {
+      throw new PacError('SELF_UPDATE_DETACHED', `PAC Core is checked out at a detached commit (${before.slice(0, 12)}), so there is no branch to fast-forward.`, {
+        root: context.root,
+        head: before,
+        recovery: `Choose the branch to follow, then retry: git -C ${context.root} switch BRANCH`,
+      });
+    }
+    const upstream = await run('git', ['-C', context.root, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', `${branch}@{upstream}`], {
+      errorCode: 'SELF_UPDATE_FAILED',
+    }).then((result) => result.stdout.trim(), () => '');
+    if (!upstream) {
+      throw new PacError('SELF_UPDATE_NO_UPSTREAM', `PAC Core branch ${branch} has no upstream to fast-forward from.`, {
+        root: context.root,
+        branch,
+        recovery: `Set the upstream, then retry: git -C ${context.root} branch --set-upstream-to=REMOTE/BRANCH ${branch}`,
+      });
+    }
     await run('git', ['-C', context.root, 'pull', '--ff-only'], { errorCode: 'SELF_UPDATE_FAILED' });
     const after = (await run('git', ['-C', context.root, 'rev-parse', 'HEAD'], { errorCode: 'SELF_UPDATE_FAILED' })).stdout.trim();
     try {

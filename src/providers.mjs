@@ -99,7 +99,20 @@ function selectedNames(profile) {
 function assertSelectedKnown(selected, providers) {
   const known = new Set(providers.map((provider) => provider.name));
   const unknown = [...selected].filter((name) => !known.has(name));
-  if (unknown.length) throw new PacError('PROVIDER_UNKNOWN', `Unknown provider(s): ${unknown.join(', ')}`);
+  if (unknown.length) {
+    throw new PacError('PROVIDER_UNKNOWN', `Unknown provider(s): ${unknown.join(', ')}`, {
+      unknown,
+      known: [...known].sort(),
+      recovery: 'This Core revision does not declare the selected provider(s). Update PAC Core to a revision that does, or remove them from providers.enabled in the Profile.',
+    });
+  }
+}
+
+// A Profile may be newer than this Core. Callers use this before taking a
+// backup so an undeclared provider is rejected without touching host state.
+export async function assertProfileProvidersKnown(context, profile) {
+  const selected = selectedNames(profile);
+  if (selected.size) assertSelectedKnown(selected, await catalog(context));
 }
 
 function providerConfigPath(context, relative) {

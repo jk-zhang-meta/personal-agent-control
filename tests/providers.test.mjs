@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { providerStatus, reconcileProviders } from '../src/providers.mjs';
+import { assertProfileProvidersKnown, providerStatus, reconcileProviders } from '../src/providers.mjs';
 import { rebuildIndex, checkIndex } from '../payload/skills/capability-resolver/scripts/lib/index.mjs';
 
 test('the actual Core provider catalog rebuilds the resolver index', async () => {
@@ -277,4 +277,21 @@ test('provider inspection, update, and retirement preserve following hook array 
   } finally {
     await fs.rm(home, { recursive: true, force: true });
   }
+});
+
+test('an undeclared Profile provider is rejected with the Core catalog and a recovery hint', async () => {
+  const context = { root: process.cwd() };
+  await assert.rejects(
+    assertProfileProvidersKnown(context, { manifest: { providers: { enabled: ['codegraph', 'not-declared'] } } }),
+    (error) => {
+      assert.equal(error.code, 'PROVIDER_UNKNOWN');
+      assert.deepEqual(error.details.unknown, ['not-declared']);
+      assert.ok(error.details.known.includes('codegraph'));
+      assert.match(error.details.recovery, /Update PAC Core/u);
+      return true;
+    },
+  );
+  await assertProfileProvidersKnown(context, { manifest: { providers: { enabled: ['codegraph', 'playwright'] } } });
+  // No selection never reads the catalog, so a Core without one stays valid.
+  await assertProfileProvidersKnown({ root: path.join(os.tmpdir(), 'pac-no-such-core') }, null);
 });

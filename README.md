@@ -215,30 +215,11 @@ Codex reads the filtered `~/.agents/skills` projection natively; Claude reads
 its filtered `~/.claude/skills` projection. Both resolve to the same physical
 trees, and no catalogued copies are created under `~/.codex/skills`. PAC
 declares native Plugin desired state but leaves host manifests, MCP servers,
-runtime data, and caches in their native locations. When the active Profile
-selects both `resource-guard` and `workspace-locator`, the one deliberate
-exception is a marked `PreToolUse` impact-guard fragment in each enabled host
-config. Selecting neither leaves the seam inactive; selecting only one fails
-closed. PAC owns only that fragment, preserves all other host fields, snapshots
-it before mutation, and fails closed on removal or drift. Host-specific matchers
-cover command and high-I/O surfaces without launching the hook for harmless
-control/UI calls. The deployed `balanced` mode lets normal diagnosis, search,
-tests, installs, project edits, local commits, and bounded network reads run;
-only materially high-impact deletion, service/security/infrastructure changes,
-external publication, filesystem-wide scans, or extreme parallelism require
-preflight. Exact user authorization is bound to the unchanged shell command.
-Claude uses its native `ask` decision so an approved tool call resumes without
-command rewriting. Codex currently denies once and binds the approved retry to
-the unchanged command with a digest because its native `ask` path is not an
-enforceable stop. Both hosts use the same impact classifier.
-The host sandbox remains the filesystem-authority boundary. Authentication,
-sessions, and history are never redirected into this repository.
-
-Codex keeps user-hook trust as a separate host-owned decision. An apply may
-therefore report a structurally valid installation as staged while the exact
-PAC hook hash awaits review. `pac status` and `pac doctor` stay unhealthy until
-Codex reports that entry trusted; start a fresh session and run the deny canary
-after accepting it. PAC never interprets staged as active protection.
+runtime data, and caches in their native locations. It installs no tool hook:
+`pac apply` only retires PAC-marked scan-guard handlers left by earlier
+revisions and preserves every other host field, handler, and Plugin hook. The
+host sandbox and native permissions remain the authority boundary.
+Authentication, sessions, and history are never redirected into this repository.
 
 Each host links to one neutral runtime copy of a standalone Skill. Immutable
 Profile checkouts and package acquisition caches remain separate; Plugin caches
@@ -279,7 +260,9 @@ remain in Git for inspection or retry.
 
 `pac update` and `pac self-update` are the same clean-worktree-only Core update
 path: fast-forward Core, install its pinned tools and frozen dependencies, then
-reconcile Runtime. They retain the active Profile's `lockedCommit`; use an
+reconcile Runtime. The Core checkout must be on a branch that has an upstream;
+a detached commit or an untracked branch stops with the recovery command before
+any network access. They retain the active Profile's `lockedCommit`; use an
 explicit Profile command to move it. A successful Core fast-forward is not
 reset if a later install or apply step fails.
 
@@ -600,6 +583,4 @@ dependency tree is present.
 
 The existing monolithic repository history contains private profile data and
 must not be made public. A public release is created from a fresh, allowlisted
-Core history only after content, secret, provenance, and license review. This
-README describes the intended split; it does not assert that either GitHub
-repository has already been published.
+Core history only after content, secret, provenance, and license review.
