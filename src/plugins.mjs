@@ -58,6 +58,26 @@ export async function pluginCatalog(context, profile = null) {
   return entries;
 }
 
+// The filtered catalog directory is removed in a finally block, which a killed
+// process never reaches. Sweep leftovers a day old; nothing that recent run
+// still uses them.
+const STALE_CATALOG_MS = 24 * 60 * 60 * 1000;
+export async function removeStalePluginCatalogs(context, now = Date.now()) {
+  let names;
+  try { names = await fs.readdir(context.stateDir); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const removed = [];
+  for (const name of names) {
+    if (!/^plugin-catalog-[A-Za-z0-9]{6}$/u.test(name)) continue;
+    const directory = path.join(context.stateDir, name);
+    const stat = await fs.lstat(directory).catch(() => null);
+    if (!stat?.isDirectory() || now - stat.mtimeMs < STALE_CATALOG_MS) continue;
+    await fs.rm(directory, { recursive: true, force: true });
+    removed.push(directory);
+  }
+  return removed;
+}
+
 async function filteredCatalog(context, enabled, host, profile = null) {
   const known = await pluginCatalog(context, profile);
   const selected = known.filter((entry) =>
@@ -107,6 +127,7 @@ export async function reconcilePlugins(context, config, hosts, mode = 'apply', p
   const override = process.env.PAC_PLUGIN_RECONCILER;
   const executable = override || 'sh';
   const results = [];
+  if (mode === 'apply') await removeStalePluginCatalogs(context);
   const enabled = [...new Set([
     ...config.plugins.enabled,
     ...(profile?.manifest?.plugins?.enabled ?? []),

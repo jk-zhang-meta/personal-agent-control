@@ -6,6 +6,8 @@ import { PacError } from './errors.mjs';
 import { assertRealDirectory } from './path-safety.mjs';
 import { atomicWriteFile } from './atomic-file.mjs';
 
+// The one place Node code names the pinned APM release; scripts/check.sh
+// requires mise.toml and scripts/doctor.sh to agree with it.
 const APM_VERSION = '0.28.0';
 
 function unquote(value) {

@@ -139,6 +139,17 @@ const toolVersions = Object.fromEntries(tools.map(([name, version]) => [name, ve
 if (toolVersions.apm !== '0.28.0' || toolVersions.skills !== '1.5.22') {
   throw new Error('tool catalog must pin APM 0.28.0 and Skills 1.5.22');
 }
+// The APM release is named in mise.toml, in src/apm.mjs and in doctor.sh. An
+// upgrade that misses one of them must fail here, not at install time.
+const apmPins = {
+  'mise.toml': read('mise.toml').match(/^apm = "([^"]+)"$/mu)?.[1],
+  'src/apm.mjs': read('src/apm.mjs').match(/^const APM_VERSION = '([^']+)';$/mu)?.[1],
+};
+const doctorApm = new Set([...read('scripts/doctor.sh').matchAll(/(?:APM |apm\/|actual !== ')(\d+\.\d+\.\d+)/gu)].map((match) => match[1]));
+if (!apmPins['mise.toml'] || apmPins['mise.toml'] !== apmPins['src/apm.mjs']
+    || doctorApm.size !== 1 || !doctorApm.has(apmPins['mise.toml'])) {
+  throw new Error(`APM release pins disagree: ${JSON.stringify(apmPins)}, doctor.sh ${[...doctorApm].join(', ')}`);
+}
 
 const manifest = read('packages/skills/apm.yml');
 if (manifest.includes('ppt-master')) throw new Error('ppt-master must stay outside the APM lock');

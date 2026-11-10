@@ -405,7 +405,7 @@ async function upgradeLatest(provider) {
   if (provider.versionPolicy !== 'latest' || process.env.PAC_PROVIDER_NO_UPGRADE === '1') {
     return { skipped: true, reason: provider.versionPolicy === 'latest' ? 'PAC_PROVIDER_NO_UPGRADE' : 'pinned' };
   }
-  return await run('codegraph', ['upgrade'], { errorCode: 'PROVIDER_UPGRADE_FAILED' });
+  return await run(provider.versionCommand, ['upgrade'], { errorCode: 'PROVIDER_UPGRADE_FAILED' });
 }
 
 async function providerVersion(context, provider) {

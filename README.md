@@ -541,7 +541,8 @@ embedded Skills provide explicit per-host targets.
 
 The Profile locator and resolved commit are local machine state, while every
 accepted revision is cached under an immutable commit path. Personal machine
-and account facts belong here; public `context-mode` remains in Core.
+and account facts belong here, as does every Plugin provider: the Core Plugin
+catalog is empty.
 
 `pac profile remove` removes active Profile contributions but retains immutable
 checkouts and transaction backups for rollback; it is not a secure-erasure

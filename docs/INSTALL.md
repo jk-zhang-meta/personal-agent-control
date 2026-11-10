@@ -180,8 +180,8 @@ publishing it. Both paths pass normal reconciliation and verification.
 `catalog/plugins.tsv` separately declares the native packages that cannot be
 flattened safely. PAC keeps one pinned source checkout per marketplace and asks
 the Codex and Claude native Plugin CLIs to create their own required projections.
-The public Core declares `context-mode`; a private Configuration Profile may
-append `automated-rebuttal-workflow` or another reviewed native package. Draw.io
+The public Core declares no Plugin of its own; a private Configuration Profile
+appends each reviewed native package, such as `context-mode`. Draw.io
 is installed as the shared standalone Skill; the prior native Plugin is removed
 once through the reviewed migration catalog. PAC audits only the marketplaces
 it manages. A Plugin from any other marketplace is preserved and reported as
@@ -280,8 +280,8 @@ manifest version. A later `pac plugin add|remove` upgrades a v1 workspace
 manifest to v2 before committing it.
 
 Set `bootstrap` to `null` and omit `bootstrap.md` to remove the private
-always-on layer. Keep it short when enabled: the common Core kernel reads its
-PAC-owned projection at session start. Larger private material belongs in
+always-on layer. Keep it short when enabled: PAC writes its owned projection
+after the kernel in each host's global instruction file. Larger private material belongs in
 `context/` and is loaded only when a `context:<id>` row in
 `catalog/capabilities.jsonl` matches, for example:
 

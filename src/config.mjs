@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { APM_VERSION } from './apm.mjs';
 import { PacError } from './errors.mjs';
 import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mjs';
 import { atomicWriteFile } from './atomic-file.mjs';
@@ -55,8 +56,8 @@ export function resolveContext(options = {}) {
     ? path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData/Local'), 'mise')
     : path.join(home, '.local/share/mise');
   const apmCandidates = [
-    path.join(miseDataDir, 'installs/apm/0.28.0/apm.exe'),
-    path.join(miseDataDir, 'installs/apm/0.28.0/apm'),
+    path.join(miseDataDir, `installs/apm/${APM_VERSION}/apm.exe`),
+    path.join(miseDataDir, `installs/apm/${APM_VERSION}/apm`),
     path.join(miseDataDir, 'shims/apm.exe'),
     path.join(miseDataDir, 'shims/apm.cmd'),
     path.join(miseDataDir, 'shims/apm'),

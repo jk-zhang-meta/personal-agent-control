@@ -179,15 +179,27 @@ export async function retainManagedBackups(context, { keepPerMode = 3, protected
       && !protectedPaths.has(path.join(rootFor(context), r.name))).slice(0, MAX_REMOVALS_PER_RUN);
     // Verify the whole bounded batch before mutating any candidate. Each tree
     // gets its own budget; a shared one would starve the later candidates.
+    // A candidate that changed or cannot be verified is preserved and reported;
+    // it must not stop the others, or one altered snapshot would end pruning
+    // for good.
+    const verified = [];
     for (const record of candidates) {
-      const backup = await ownedDirectory(context, record);
-      if (await fingerprint(backup) !== record.fingerprint) fail(`Backup changed; preserved ${record.name}.`);
+      try {
+        const backup = await ownedDirectory(context, record);
+        if (await fingerprint(backup) !== record.fingerprint) fail(`Backup changed; preserved ${record.name}.`);
+        verified.push(record);
+      } catch (error) { result.warnings.push(error.message); }
     }
-    for (const record of candidates) {
+    for (const record of verified) {
+      const backup = await ownedDirectory(context, record);
+      // Re-check before recording intent: a registry left in `deleting` blocks
+      // every later run until someone reviews it.
+      if (await fingerprint(backup) !== record.fingerprint) {
+        result.warnings.push(`Backup changed; preserved ${record.name}.`);
+        continue;
+      }
       record.state = 'deleting';
       await writeRegistry(context, registry);
-      const backup = await ownedDirectory(context, record);
-      if (await fingerprint(backup) !== record.fingerprint) fail(`Backup changed; preserved ${record.name}.`);
       await fs.rm(backup, { recursive: true });
       registry.records = registry.records.filter((r) => r !== record);
       await writeRegistry(context, registry);

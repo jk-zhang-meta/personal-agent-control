@@ -6,7 +6,7 @@ import {
 } from './config.mjs';
 import {
   readManifestDependencies, readLock, renderManifest, stageDependencies,
-  installFrozen, apmVersion, verifyRuntimeContent,
+  installFrozen, apmVersion, verifyRuntimeContent, APM_VERSION,
 } from './apm.mjs';
 import {
   withLock, createBackup, augmentBackup, readOwnedSkills, reconcileProjections, discoverApmSkills,
@@ -690,7 +690,7 @@ async function status(context, options = {}) {
   const runtimeMatchesDesired = identity(canonicalLock) === identity(runtimeLock);
   let version;
   try { version = await apmVersion(context); }
-  catch (error) { version = { expected: '0.28.0', actual: null, matches: false, error: error.message }; }
+  catch (error) { version = { expected: APM_VERSION, actual: null, matches: false, error: error.message }; }
   let apmSkills = provisionalSkills(canonicalLock).filter((entry) => entry.engine === 'apm');
   try { apmSkills = await discoverApmSkills(neutral, canonicalLock); }
   catch (error) { if (!['SKILL_INVALID', 'SKILL_DUPLICATE_NAME'].includes(error.code)) throw error; }

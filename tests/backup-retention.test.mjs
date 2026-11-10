@@ -184,3 +184,19 @@ test('a snapshot the size of a real apply backup is sealed and later pruned', as
   assert.deepEqual(result.warnings, []);
   assert.deepEqual(result.removed, [large]);
 });
+
+test('one changed snapshot is preserved without stopping the pruning of the others', async t => {
+  const f = await fixture(t);
+  const changed = await f.create();
+  const prunable = await f.create();
+  for (let index = 0; index < 3; index++) await f.create();
+  await fs.appendFile(path.join(changed, 'original'), 'concurrent edit');
+  const result = await retainManagedBackups(f.context);
+  assert.deepEqual(result.removed, [prunable]);
+  assert.match(result.warnings.join('\n'), /changed/u);
+  await fs.access(changed);
+  const registry = JSON.parse(await fs.readFile(f.registry, 'utf8'));
+  assert.equal(registry.records.some((record) => record.state === 'deleting'), false);
+  // The altered snapshot must not turn the next run into an "interrupted" stop.
+  assert.doesNotMatch((await retainManagedBackups(f.context)).warnings.join('\n'), /Interrupted/u);
+});
