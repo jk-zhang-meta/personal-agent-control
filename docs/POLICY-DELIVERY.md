@@ -2,7 +2,7 @@
 
 `pac policy sync PROFILE_REPOSITORY COMMIT BASELINE [codex,claude,agy,grok]`
 delivers the selected Profile's embedded Skills, Core's two embedded Skills,
-and bootstrap/kernel instructions. Both revisions are full immutable Profile
+and the kernel instruction files, each followed by the Profile bootstrap. Both revisions are full immutable Profile
 commit IDs. Run `pac --json policy status` to verify the installed file hashes.
 
 This path serves machines that lack PAC's complete package/tool environment.

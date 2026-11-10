@@ -2,8 +2,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { atomicWriteFile } from './atomic-file.mjs';
 import { run } from './exec.mjs';
 import { PacError } from './errors.mjs';
+import { composeInstructions, readInstalledBootstrap } from './instruction-composition.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { atomicWrite } from './state.mjs';
 
@@ -17,6 +19,8 @@ const ADAPTERS = {
     ['generated/claude/agents/independent-reviewer.md', '.claude/agents/independent-reviewer.md'],
   ],
 };
+// The global instruction file of each host carries the Profile bootstrap.
+const INSTRUCTION_TARGETS = new Set(['.codex/AGENTS.md', '.claude/CLAUDE.md']);
 
 function digest(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
@@ -65,33 +69,59 @@ async function readOwnership(context) {
 }
 
 async function expectedEntries(context, host) {
+  const bootstrap = await readInstalledBootstrap(context);
   return await Promise.all(ADAPTERS[host].map(async ([sourceRelative, targetRelative]) => {
     const source = path.join(context.root, sourceRelative);
     const target = path.join(context.home, targetRelative);
-    const content = await fs.readFile(source);
-    return { source, target, targetRelative, sha256: digest(content) };
+    const canonical = await fs.readFile(source);
+    if (!INSTRUCTION_TARGETS.has(targetRelative)) {
+      return { source, target, targetRelative, sha256: digest(canonical) };
+    }
+    const content = composeInstructions(canonical, bootstrap);
+    return {
+      source, target, targetRelative, sha256: digest(content), content, kernelSha256: digest(canonical),
+    };
   }));
+}
+
+function withoutContent({ content, kernelSha256, ...entry }) {
+  return entry;
+}
+
+// The outer Chezmoi transaction renders the adapters before `pac apply`
+// installs a Profile bootstrap, so a first installation that seeds a Profile
+// leaves the bare kernel in place. Nested Chezmoi cannot run there. Complete
+// the file directly, but only when its bytes are exactly that bare kernel:
+// anything else is user content and stays fail-closed.
+async function completeAdoptedInstructions(context, host, entries) {
+  for (const entry of entries) {
+    if (!entry.content || entry.sha256 === entry.kernelSha256) continue;
+    const actual = await inspectEntry(context, host, entry);
+    if (actual.state === 'drift' && actual.actualSha256 === entry.kernelSha256) {
+      await atomicWriteFile(entry.target, entry.content, 0o600);
+    }
+  }
 }
 
 async function inspectEntry(context, host, entry) {
   await assertSafeManagedObject(context.home, entry.target, `${host} adapter`, 'file');
   try {
     const stat = await fs.lstat(entry.target);
-    if (!stat.isFile() || stat.isSymbolicLink()) return { ...entry, state: 'collision', valid: false };
+    if (!stat.isFile() || stat.isSymbolicLink()) return { ...withoutContent(entry), state: 'collision', valid: false };
     const actualSha256 = digest(await fs.readFile(entry.target));
     return {
-      ...entry,
+      ...withoutContent(entry),
       actualSha256,
       state: actualSha256 === entry.sha256 ? 'managed' : 'drift',
       valid: actualSha256 === entry.sha256,
     };
   } catch (error) {
-    if (error.code === 'ENOENT') return { ...entry, state: 'missing', valid: false };
+    if (error.code === 'ENOENT') return { ...withoutContent(entry), state: 'missing', valid: false };
     throw error;
   }
 }
 
-async function applyAdapter(context, host, entries) {
+async function applyAdapter(context, host, entries, priorOwned = []) {
   const chezmoiCandidates = [
     path.join(context.home, '.local/bin/chezmoi.exe'),
     path.join(context.home, '.local/bin/chezmoi'),
@@ -108,9 +138,16 @@ async function applyAdapter(context, host, entries) {
   // missing PAC-owned adapter as a conflict and refuses to restore it. Force
   // is safe only when every present entry already equals the current canonical
   // bytes; a modified or colliding entry remains fail-closed.
+  //
+  // The same holds for an instruction file PAC completed outside Chezmoi (see
+  // completeAdoptedInstructions): when its bytes are exactly the digest PAC
+  // last recorded as owned, replacing it loses nothing.
   const inspected = await Promise.all(entries.map((entry) => inspectEntry(context, host, entry)));
-  const recoverMissing = inspected.some((entry) => entry.state === 'missing')
-    && inspected.every((entry) => entry.state === 'missing' || entry.state === 'managed');
+  const ownedDigest = new Map(priorOwned.map((item) => [item.targetRelative, item.sha256]));
+  const recorded = (entry) => entry.state === 'drift'
+    && ownedDigest.get(entry.targetRelative) === entry.actualSha256;
+  const replaceRecorded = (inspected.some((entry) => entry.state === 'missing') || inspected.some(recorded))
+    && inspected.every((entry) => entry.state === 'missing' || entry.state === 'managed' || recorded(entry));
   const selected = {
     agents: host,
     codex: host === 'codex',
@@ -126,7 +163,7 @@ async function applyAdapter(context, host, entries) {
     '--destination', context.home,
     '--override-data', JSON.stringify({ pac: selected }),
     '--refresh-externals=never',
-    '--no-tty', recoverMissing ? '--force' : '--error-on-conflict',
+    '--no-tty', replaceRecorded ? '--force' : '--error-on-conflict',
     'apply', '--exclude', 'externals', '--parent-dirs',
     ...entries.map((entry) => entry.target),
   ], { cwd: context.root, errorCode: 'HOST_ADAPTER_APPLY_FAILED' });
@@ -176,7 +213,8 @@ export async function reconcileHostAdapters(context, enabledHosts, scopeHosts) {
       await Promise.all(entries.map((entry) => (
         assertSafeManagedObject(context.home, entry.target, `${host} adapter`, 'file')
       )));
-      if (process.env.PAC_HOST_ADAPTER_MODE !== 'adopt') await applyAdapter(context, host, entries);
+      if (process.env.PAC_HOST_ADAPTER_MODE === 'adopt') await completeAdoptedInstructions(context, host, entries);
+      else await applyAdapter(context, host, entries, ownership.hosts[host]);
       const inspected = await Promise.all(entries.map((entry) => inspectEntry(context, host, entry)));
       const invalid = inspected.find((entry) => !entry.valid);
       if (invalid) {

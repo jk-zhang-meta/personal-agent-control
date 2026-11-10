@@ -5,6 +5,7 @@ import path from 'node:path';
 import { atomicWriteFile } from './atomic-file.mjs';
 import { completeManagedBackup, createManagedBackup, retainManagedBackups } from './backup-retention.mjs';
 import { PacError } from './errors.mjs';
+import { composeInstructions } from './instruction-composition.mjs';
 import { acquireProfile, hashDirectory } from './profile.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
@@ -20,7 +21,7 @@ const SKILL_ROOTS = {
 };
 const STATE = '.local/state/personal-agent-control/policy-deployment.json';
 const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
-const bridge = '# Personal Agent Control\n\nRead `~/.config/personal-agent-control/profile-bootstrap.md` before substantive work.\nFollow the shared kernel in `~/.codex/AGENTS.md` or `~/.claude/CLAUDE.md`.\nUse the skills exposed by this host. Native permission settings remain authoritative.\n';
+const bridge = '# Personal Agent Control\n\nBefore substantive work, read and follow the shared kernel and private Profile in `~/.codex/AGENTS.md` or `~/.claude/CLAUDE.md`.\nUse the skills exposed by this host. Native permission settings remain authoritative.\n';
 
 async function statOrNull(file) {
   try { return await fs.lstat(file); }
@@ -144,9 +145,19 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
     };
     if (!fullInstallation) {
       if (current.bootstrap) await file('.config/personal-agent-control/profile-bootstrap.md', current.bootstrap, previous.bootstrap || current.bootstrap);
-      // Compatibility clients may discover either shared kernel.
-      await file('.codex/AGENTS.md', path.join(context.root, 'generated/codex/AGENTS.md'));
-      await file('.claude/CLAUDE.md', path.join(context.root, 'generated/claude/CLAUDE.md'));
+      // Compatibility clients may discover either shared kernel. Each carries
+      // the bootstrap, as a full installation's instruction file does.
+      const [bootstrap, priorBootstrap] = await Promise.all([current.bootstrap, previous.bootstrap]
+        .map((source) => (source ? fs.readFile(source) : null)));
+      for (const [relativePath, generated] of [
+        ['.codex/AGENTS.md', 'generated/codex/AGENTS.md'],
+        ['.claude/CLAUDE.md', 'generated/claude/CLAUDE.md'],
+      ]) {
+        const kernel = await fs.readFile(path.join(context.root, generated));
+        const content = composeInstructions(kernel, bootstrap);
+        planned.push({ relativePath, kind: 'file', content, sha256: sha(content),
+          baseline: sha(composeInstructions(kernel, priorBootstrap)) });
+      }
     }
     if (agents.includes('agy')) planned.push({ relativePath: '.gemini/antigravity-cli/rules/personal-agent-control.md', kind: 'file', content: `---\ntrigger: always_on\n---\n\n${bridge}`, sha256: sha(`---\ntrigger: always_on\n---\n\n${bridge}`) });
     if (agents.includes('agy')) {

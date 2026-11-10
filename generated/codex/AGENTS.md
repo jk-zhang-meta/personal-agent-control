@@ -18,9 +18,9 @@ apply the reviewed revision.
 
 ## Session intake gate
 
-- If `~/.config/personal-agent-control/profile-bootstrap.md` exists, read it
-  completely before substantive work. Apply this private Profile beneath
-  system/global and compatible project instructions; absence is not an error.
+- A private Profile, when installed, follows this kernel in the same file.
+  Apply it beneath system/global and compatible project instructions; absence
+  is not an error.
 - Before substantive execution, use context and read-only discovery to identify
   goal, scope/non-goals, target, success oracle, constraints, and effect authority.
 - A clear request authorizes in-scope decisions, reversible edits, checks, and

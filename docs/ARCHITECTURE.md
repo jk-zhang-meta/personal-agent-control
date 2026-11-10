@@ -74,10 +74,10 @@ adaptive human-reviewability contract. It names no installed Skill, Plugin,
 domain, model, or host API.
 
 Generic communication defaults that safely apply to every user remain in the
-Core rules. The compiled kernel contains one stable conditional instruction to
-read `~/.config/personal-agent-control/profile-bootstrap.md` when present. PAC
-installs that short private bootstrap from the locked Profile with digest-based
-ownership; larger interests, machine facts, storage routes, and credential
+Core rules. PAC installs the short private bootstrap from the locked Profile at
+`~/.config/personal-agent-control/profile-bootstrap.md` with digest-based
+ownership and writes the same bytes after the kernel in each host's global
+instruction file, so no host depends on a model-initiated read; larger interests, machine facts, storage routes, and credential
 locators remain progressively loaded Profile context or Skills. A Profile
 cannot contribute top-level Hooks, scripts, or Rulesync rules.
 Explicitly locked Skills may contain invoked helper scripts, and enabled native

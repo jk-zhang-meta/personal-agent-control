@@ -71,9 +71,19 @@ test('policy delivery upgrades verified files, preserves unrelated state and det
   const installed = await synchronizePolicy(f.context, options);
   assert.equal(installed.ok, true);
   assert.equal((await policyStatus(f.context)).ok, true);
+  const kernels = [['.codex/AGENTS.md', 'generated/codex/AGENTS.md'], ['.claude/CLAUDE.md', 'generated/claude/CLAUDE.md']];
+  for (const [installedPath, generated] of kernels) {
+    assert.equal(
+      await fs.readFile(path.join(f.home, installedPath), 'utf8'),
+      `${await fs.readFile(path.join(f.root, generated), 'utf8')}\n# Bootstrap 1\n`,
+    );
+  }
   const second = await f.commit(2);
   const upgraded = await synchronizePolicy(f.context, { ...options, commit: second });
   assert.equal(upgraded.ok, true);
+  for (const [installedPath] of kernels) {
+    assert.match(await fs.readFile(path.join(f.home, installedPath), 'utf8'), /\n\n# Bootstrap 2\n$/u);
+  }
   assert.equal(await fs.readFile(unrelated, 'utf8'), '{"customPreference":true}\n');
   for (const host of ['.agents', '.codex', '.claude', '.grok', '.gemini/antigravity-cli', '.gemini/config']) {
     assert.match(await fs.readFile(path.join(f.home, host, 'skills/personal-environment/SKILL.md'), 'utf8'), /Version 2/);

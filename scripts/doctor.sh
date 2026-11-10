@@ -45,6 +45,19 @@ check_file() {
     fi
 }
 
+# A global instruction file is the generated kernel followed by the installed
+# Profile bootstrap, exactly as composeInstructions builds it.
+check_instructions() {
+    kernel=$1 installed=$2
+    bootstrap="$home/.config/personal-agent-control/profile-bootstrap.md"
+    if [ -f "$bootstrap" ] && [ ! -L "$bootstrap" ]; then
+        { cat "$kernel"; printf '\n'; cat "$bootstrap"; } > "$tmp/expected-instructions"
+        check_file "$tmp/expected-instructions" "$installed"
+    else
+        check_file "$kernel" "$installed"
+    fi
+}
+
 pac_source="$repo/bin/pac"
 pac="$home/.local/bin/pac"
 [ -x "$pac_source" ] || drift "PAC executable is missing: $pac_source"
@@ -140,14 +153,14 @@ fi
 # an unsafe host-directory symlink merely to report additional drift.
 if [ "$status_paths_valid" -eq 1 ] && has_agent codex; then
     [ ! -s "$home/.codex/AGENTS.override.md" ] || drift "$home/.codex/AGENTS.override.md shadows managed instructions"
-    check_file "$repo/generated/codex/AGENTS.md" "$home/.codex/AGENTS.md"
+    check_instructions "$repo/generated/codex/AGENTS.md" "$home/.codex/AGENTS.md"
     check_file "$repo/generated/codex/agents/independent-reviewer.toml" \
         "$home/.codex/agents/independent-reviewer.toml"
     [ ! -e "$home/.codex/agents/pac-reviewer.toml" ] && \
         [ ! -L "$home/.codex/agents/pac-reviewer.toml" ] || drift "legacy Codex reviewer remains"
 fi
 if [ "$status_paths_valid" -eq 1 ] && has_agent claude; then
-    check_file "$repo/generated/claude/CLAUDE.md" "$home/.claude/CLAUDE.md"
+    check_instructions "$repo/generated/claude/CLAUDE.md" "$home/.claude/CLAUDE.md"
     check_file "$repo/generated/claude/agents/independent-reviewer.md" \
         "$home/.claude/agents/independent-reviewer.md"
     [ ! -e "$home/.claude/agents/pac-reviewer.md" ] && \

@@ -68,8 +68,8 @@ concise native descriptions, while thin domain routes may compose leaves that
 repeated evaluation shows often apply together. Future specialist packs are
 enabled at project or Profile scope instead of expanding the always-on kernel.
 The Profile may declare one short `bootstrap.md`, portable providers, and
-wildcard Skill targets; the Core kernel reads only its
-PAC-owned projection. A Profile cannot add top-level Hooks, scripts, or Rulesync
+wildcard Skill targets; PAC writes its owned
+projection of that bootstrap after the kernel in each host's instruction file. A Profile cannot add top-level Hooks, scripts, or Rulesync
 rules, so it cannot replace the common operating contract.
 Explicitly locked Skills may include helper scripts invoked as part of that
 capability, and enabled native Plugins may expose reviewed Hook/MCP/App surfaces.
@@ -174,9 +174,9 @@ update, verification, selective-host, and recovery commands are in
 ## Resulting host layout
 
 ```text
-~/.codex/AGENTS.md                    # Codex adapter (Chezmoi)
+~/.codex/AGENTS.md                    # Codex adapter: kernel, then Profile bootstrap
 ~/.codex/agents/independent-reviewer.toml  # native read-only reviewer
-~/.claude/CLAUDE.md                   # Claude adapter (Chezmoi)
+~/.claude/CLAUDE.md                   # Claude adapter: kernel, then Profile bootstrap
 ~/.claude/agents/independent-reviewer.md   # native read-only reviewer
 
 ~/.local/share/agent-skills/.agents/skills/<name>/

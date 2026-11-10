@@ -11,7 +11,7 @@ The system treats these mechanisms as different types:
 | Type | Loading guarantee | Intended use |
 |---|---:|---|
 | always-on instruction | deterministic at session or scope load | authority, safety, routing, completion |
-| Profile bootstrap | model-mediated on every host: the kernel asks the agent to read it | short private preferences |
+| Profile bootstrap | deterministic: PAC writes it after the kernel in each host's global instruction file | short private preferences |
 | path-scoped rule | deterministic only for matching paths | language, directory, test, architecture facts |
 | native Skill | automatic trigger is model-mediated; explicit invocation is deterministic | detailed reusable method |
 | routed context module | loaded on demand after metadata routing | private facts too large or narrow for bootstrap |
@@ -39,9 +39,8 @@ index.
 - A Skill is excluded from implicit invocation with
   `policy.allow_implicit_invocation: false` in its `agents/openai.yaml`;
   explicit `$skill` invocation still works.
-- The managed `AGENTS.md` contains one generic instruction to read
-  `~/.config/personal-agent-control/profile-bootstrap.md` when a Profile
-  declares it; the Profile cannot replace the rest of the Core kernel.
+- The managed `AGENTS.md` is the Core kernel followed by the Profile bootstrap
+  when a Profile declares one; the Profile cannot replace the kernel.
 
 ### Claude Code
 
@@ -53,8 +52,8 @@ index.
 - This system installs native Claude instructions and a reviewer definition,
   then creates one symlink per Claude-compatible Skill to the shared physical
   store.
-- The managed `CLAUDE.md` uses the same optional PAC-owned Profile bootstrap
-  path; larger private context is not imported eagerly.
+- The managed `CLAUDE.md` is composed the same way as the Codex file; larger
+  private context is not imported eagerly.
 - A Skill is excluded from implicit invocation, and from the description
   listing, with `disable-model-invocation: true` in its frontmatter.
 - Claude Code 2.1.277 and later read a project's `AGENTS.md` directly when no

@@ -1,0 +1,3 @@
+{{- /* Keep these bytes identical to composeInstructions in src/instruction-composition.mjs. */ -}}
+{{- $bootstrap := joinPath .chezmoi.destDir ".config/personal-agent-control/profile-bootstrap.md" -}}
+{{- if stat $bootstrap -}}{{ "\n" }}{{ include $bootstrap }}{{- end -}}

@@ -1613,3 +1613,33 @@ catalog and prior ownership still reserve their marketplace identities;
 unexpected Plugins there, malformed inventory, source/version drift and unsafe
 paths remain blocking. Backups, rollback and post-apply verification remain
 required. PAC does not claim to validate or manage external Plugins.
+
+## ADR-035: Compose the Profile bootstrap into every host's instruction file
+
+Decision date: 2026-11-10.
+
+The kernel used to ask the agent to read
+`~/.config/personal-agent-control/profile-bootstrap.md`. A request in prose is
+honored only when the model chooses to act on it, so the private Profile was
+the one always-on layer without a loading guarantee. Host-specific includes
+would close the gap on some hosts only.
+
+PAC now writes the bootstrap after the kernel in each host's global
+instruction file: the kernel bytes, one newline, the bootstrap bytes. The rule
+is implemented once in `src/instruction-composition.mjs` and mirrored by the
+Chezmoi partial `pac-profile-bootstrap.tmpl` and by `scripts/doctor.sh`; full
+installations and policy-only delivery both use it. The kernel line that
+requested the read now states that the Profile follows in the same file.
+
+The bootstrap file and its digest ownership are unchanged and remain the
+single source for the composed bytes. Core still verifies each installed
+instruction file byte for byte, against the composition instead of the bare
+generated file. A Profile still cannot change the kernel, and a host without a
+Profile receives the bare kernel.
+
+The outer Chezmoi transaction renders adapters before `pac apply` installs a
+bootstrap, so a first installation that seeds a Profile leaves the bare
+kernel. `pac apply` then completes the file itself, only when its bytes are
+exactly that kernel. Chezmoi afterwards holds a stale record for the file, so
+the adapter apply forces replacement when the present bytes equal the digest
+PAC last recorded as owned; any other content still fails closed.
