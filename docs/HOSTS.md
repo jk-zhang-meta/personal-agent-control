@@ -74,6 +74,16 @@ index.
   `~/.claude/settings.json`, for example
   `"claudeMdExcludes": ["/mnt/c/Users/*/.claude/CLAUDE.md"]`, and keep both
   installations on the same Core revision.
+- That ancestor file has a second effect. Because Claude reads a project's
+  `AGENTS.md` only when no `CLAUDE.md` exists in the working directory or above
+  it, a Windows-home `.claude/CLAUDE.md` turns off every project `AGENTS.md`
+  below `/mnt/c/Users/NAME`. Observed on 2026-11-11 with Claude Code 2.1.322: a
+  session under such a path loaded both kernels and no ancestor `AGENTS.md`.
+  To load project `AGENTS.md` files whatever `CLAUDE.md` files exist, set
+  `"pluginConfigs": {"cc-plugin-agents-md@builtin": {"options":
+  {"instructionFiles": "claude-md-and-agents-md"}}}` in
+  `~/.claude/settings.json`. Whether `claudeMdExcludes` alone restores the
+  fallback has not been tested.
 
 The host-facing physical catalog is neither host's discovery root. It lives at
 `~/.local/share/agent-skills/.agents/skills` and is derived from frozen Core
@@ -117,6 +127,25 @@ future re-enable restores strict collision and unmanaged-capability checks.
 Selecting a disabled host for status or doctor does not audit or activate its
 native surface. A mutating command may still use that scope to retire only
 state proven by PAC's prior ownership manifests.
+
+## Compatibility clients, as observed
+
+Grok and Antigravity receive [policy-only delivery](POLICY-DELIVERY.md), but
+both also read other hosts' files, so what they load is wider than what PAC
+writes for them. Measured on 2026-11-11 on one WSL host that has a full Codex
+and Claude installation:
+
+| Client | Instructions loaded | Skills discovered | Evidence |
+|---|---|---|---|
+| Grok 1.0.70 | `~/.grok/rules/personal-agent-control.md` and, through its Claude compatibility, `~/.claude/CLAUDE.md` | 59: the `~/.grok/skills` links plus every Claude Skill and Plugin Skill | `grok inspect`, which is deterministic and has `--json` |
+| Antigravity CLI 1.5.5 | the bridge rules, the kernel text and the project `AGENTS.md` | the package-managed Skills as well as the policy-delivered ones | the agent's own answer to `agy -p`; the CLI has no inspection command, so this is weaker evidence |
+
+`grok inspect` also lists Claude's enabled Plugins with their hooks and MCP
+servers. The Profile bootstrap reaches these clients only where it is composed
+into an instruction file they read (ADR-035); on a host still running an
+earlier Core they get the kernel and a prose pointer to the bootstrap. After a
+delivery, check a client with its own inspection command instead of inferring
+from the directories PAC wrote.
 
 ## Future adapter candidates
 
