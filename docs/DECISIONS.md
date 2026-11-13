@@ -1643,3 +1643,28 @@ kernel. `pac apply` then completes the file itself, only when its bytes are
 exactly that kernel. Chezmoi afterwards holds a stale record for the file, so
 the adapter apply forces replacement when the present bytes equal the digest
 PAC last recorded as owned; any other content still fails closed.
+
+## ADR-036: Give compatibility hosts every Skill a full installation owns
+
+Decision date: 2026-11-13.
+
+Policy delivery gave Grok and Antigravity only the Profile's embedded Skills
+and Core's two payload Skills. On a host with a full installation, Skills that
+`pac apply` installed from APM packages (Core's and the Profile's) existed in
+the neutral store but never reached those hosts, so a change to such a Skill
+reached Codex and Claude only.
+
+On a full installation, policy delivery now also links each Skill listed in
+the owned Skill map and present as a directory in the neutral store into every
+selected compatibility Skill root. A name that is not a plain Skill name is
+ignored. The links follow the store, so a later `pac apply` updates them
+without another delivery. Policy delivery records only those links, never
+the neutral store directories, which `pac apply` owns. An existing entry for
+such a Skill that PAC does not own is preserved and reported under
+`preserved` instead of failing the whole delivery, even when its content
+equals the store or it is a dangling link, so a later store update cannot replace someone else's
+copy; only an existing link to the same store Skill is adopted. Edits to
+content PAC already owns still fail closed. Policy-only homes without a full
+installation are unchanged. Removing a Skill from the installation does not
+yet remove its compatibility link, and the next delivery drops that link from
+policy ownership.

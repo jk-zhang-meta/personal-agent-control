@@ -116,7 +116,8 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
     const previous = await acquireProfile(context, { repository, ref: baseline, expectedCommit: baseline });
     const current = await acquireProfile(context, { repository, ref: commit, expectedCommit: commit });
     const state = await readState(context);
-    const fullInstallation = (await readOwnedSkillMap(context)).size > 0;
+    const ownedSkills = await readOwnedSkillMap(context);
+    const fullInstallation = ownedSkills.size > 0;
     const owned = new Map(state.entries.map((e) => [e.relativePath, e.sha256]));
     const oldSkills = new Map(previous.skills.map((s) => [s.name, s.contentSha256]));
     const skills = current.skills.map((s) => ({ name: s.name, source: s.root, sha256: s.contentSha256, baseline: oldSkills.get(s.name) }));
@@ -127,12 +128,25 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
     }
     const planned = [];
     const neutral = '.local/share/agent-skills/.agents/skills';
+    if (fullInstallation) {
+      // A full installation also holds Skills that `pac apply` installed from
+      // APM packages. Expose each one it owns to the compatibility hosts.
+      const known = new Set(skills.map((s) => s.name));
+      for (const entry of ownedSkills.values()) {
+        const name = entry.physicalName || entry.id;
+        if (known.has(name) || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(name)) continue;
+        const installed = await identity(context.home, path.join(context.home, neutral, name));
+        if (installed?.kind !== 'directory') continue;
+        known.add(name);
+        skills.push({ name, sha256: installed.sha256, baseline: installed.sha256, installed: true });
+      }
+    }
     for (const skill of skills) {
-      if (fullInstallation) {
+      if (fullInstallation && !skill.installed) {
         const installed = await identity(context.home, path.join(context.home, neutral, skill.name));
         if (installed?.sha256 !== skill.sha256) throw new PacError('POLICY_APPLY_REQUIRED',
           'Update the existing managed installation with pac apply before projecting compatibility hosts.');
-      } else planned.push({ relativePath: `${neutral}/${skill.name}`, kind: 'directory', ...skill });
+      } else if (!skill.installed) planned.push({ relativePath: `${neutral}/${skill.name}`, kind: 'directory', ...skill });
       const selected = fullInstallation ? agents.filter((a) => a !== 'codex' && a !== 'claude') : agents;
       for (const root of [...new Set(selected.flatMap((a) => SKILL_ROOTS[a]))]) {
         if (await compatibilityRootIsNeutral(context.home, root, neutral)) continue;
@@ -172,10 +186,26 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
       if (!(await statOrNull(path.join(context.home, relativePath))) || owned.has(relativePath)) planned.push({ relativePath, kind: 'file', content: bridge, sha256: sha(bridge) });
     }
     const changes = [];
-    for (const item of planned) {
+    const preserved = [];
+    for (const item of [...planned]) {
       const target = await policyTarget(context.home, path.join(context.home, item.relativePath));
       item.target = target;
-      const actual = await identity(context.home, target);
+      const foreign = item.installed && !owned.has(item.relativePath);
+      let actual;
+      try { actual = await identity(context.home, target); }
+      catch (error) {
+        // A dangling link of someone else's resolves nowhere: keep it too.
+        if (!foreign || error.code !== 'ENOENT') throw error;
+        actual = { kind: 'dangling' };
+      }
+      // Someone else's entry for an installed Skill is left alone and reported,
+      // unless it is already a link to that Skill in the neutral store.
+      if (actual && foreign
+          && !(actual.kind === 'link' && path.resolve(path.dirname(target), actual.link) === path.resolve(item.link))) {
+        preserved.push(item.relativePath);
+        planned.splice(planned.indexOf(item), 1);
+        continue;
+      }
       if (actual && actual.sha256 !== item.sha256 && actual.sha256 !== item.baseline && actual.sha256 !== owned.get(item.relativePath)) {
         throw new PacError('POLICY_DRIFT', `Preserving modified or unrelated policy content: ${target}`);
       }
@@ -233,7 +263,7 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
         if (!sealed.ok) retention.warnings.push(sealed.warning);
       }
       return { mode: 'policy-only', ok: true, profileCommit: commit, agents: result.agents,
-        backup, retention, changed: changes.length, skills: skills.length, hooks: 'not-modified',
+        backup, retention, changed: changes.length, skills: skills.length, preserved, hooks: 'not-modified',
         packageManagers: 'not-assessed' };
     } catch (error) {
       for (const entry of [...journal].reverse()) {

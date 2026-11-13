@@ -14,6 +14,13 @@ The ordinary `pac apply` route remains the owner of complete installations.
 When a full installation is present, update it with `pac apply` first. Policy
 delivery then verifies its neutral Skills and adds only compatibility views;
 it does not take ownership of the full installation's existing projections.
+Those views also cover every other Skill the installation owns in its neutral
+store, including Skills `pac apply` installed from APM packages, as links to
+that store. An existing entry for such a Skill that PAC does not own is left
+in place and reported under `preserved`, even when its content is identical
+or it is a dangling link;
+only an existing link to that Skill in the store is adopted. The store itself
+stays owned by `pac apply`.
 Codex/Claude remain the full PAC host adapters. Grok and Antigravity support
 here means native policy/Skill discovery, not a new full host adapter.
 

@@ -226,3 +226,81 @@ test('rules alias rejects other destinations and nested symlinks before writing'
     });
   }
 });
+
+test('policy delivery exposes every installed Skill of a full installation and keeps foreign copies', async (t) => {
+  const f = await fixture(t);
+  const first = await f.commit(1);
+  const options = { repository: f.repository, baseline: first, commit: first };
+  await synchronizePolicy(f.context, options);
+  const neutral = path.join(f.home, '.local/share/agent-skills/.agents/skills');
+  const packaged = path.join(neutral, 'packaged/SKILL.md');
+  await fs.mkdir(path.dirname(packaged), { recursive: true });
+  await fs.writeFile(packaged, '---\nname: packaged\ndescription: fixture\n---\nVersion 1\n');
+  await fs.mkdir(f.context.stateDir, { recursive: true });
+  await fs.writeFile(path.join(f.context.stateDir, 'owned-skill-map.json'), JSON.stringify({
+    schemaVersion: 1,
+    skills: [
+      { id: 'personal-environment', physicalName: 'personal-environment', engine: 'profile' },
+      { id: 'packaged-id', physicalName: 'packaged', engine: 'profile-apm' },
+      { id: 'escape', physicalName: '../escape', engine: 'apm' },
+      { id: 'not-installed', physicalName: 'not-installed', engine: 'apm' },
+      { id: 'twin', physicalName: 'twin', engine: 'apm' },
+      { id: 'twin-dangling', physicalName: 'twin-dangling', engine: 'apm' },
+    ],
+  }));
+  // A name that climbs out of the store must not be followed even when its target exists.
+  const outside = path.join(neutral, '../escape/SKILL.md');
+  await fs.mkdir(path.dirname(outside), { recursive: true });
+  await fs.writeFile(outside, '---\nname: escape\ndescription: fixture\n---\n');
+  // A Skill both delivered from the Profile and owned by the installation is linked once.
+  await fs.rm(path.join(f.home, '.grok/skills/personal-environment'), { recursive: true });
+  const foreign = path.join(f.home, '.gemini/config/skills/packaged/SKILL.md');
+  await fs.mkdir(path.dirname(foreign), { recursive: true });
+  await fs.writeFile(foreign, 'Mine\n');
+  // A real copy equal to the store is someone else's too; a link into the store is adopted.
+  const equalCopy = path.join(f.home, '.gemini/config/skills/twin');
+  const twin = path.join(neutral, 'twin');
+  for (const dir of [equalCopy, twin]) {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'SKILL.md'), '---\nname: twin\ndescription: fixture\n---\n');
+  }
+  await fs.symlink(twin, path.join(f.home, '.grok/skills/twin'), process.platform === 'win32' ? 'junction' : 'dir');
+  await fs.symlink(path.join(f.home, 'missing'), path.join(f.home, '.grok/skills/twin-dangling'), process.platform === 'win32' ? 'junction' : 'dir');
+  for (const name of ['twin-dangling']) {
+    await fs.mkdir(path.join(neutral, name), { recursive: true });
+    await fs.writeFile(path.join(neutral, name, 'SKILL.md'), `---\nname: ${name}\ndescription: fixture\n---\n`);
+  }
+
+  const synced = await synchronizePolicy(f.context, options);
+  assert.equal(synced.ok, true);
+  assert.deepEqual(synced.preserved.sort(), ['.gemini/config/skills/packaged', '.gemini/config/skills/twin',
+    '.grok/skills/twin-dangling']);
+  assert.equal(await fs.readlink(path.join(f.home, '.grok/skills/twin-dangling')), path.join(f.home, 'missing'));
+  assert.equal((await fs.lstat(equalCopy)).isDirectory(), true);
+  for (const root of ['.grok/skills', '.gemini/antigravity-cli/skills']) {
+    const link = path.join(f.home, root, 'packaged');
+    assert.equal(path.resolve(path.dirname(link), await fs.readlink(link)), path.join(neutral, 'packaged'));
+  }
+  assert.equal(await fs.readFile(foreign, 'utf8'), 'Mine\n');
+  for (const root of ['.grok/skills', '.gemini/antigravity-cli/skills', '.gemini/config/skills']) {
+    await assert.rejects(fs.lstat(path.join(f.home, root, 'not-installed')));
+  }
+  await assert.rejects(fs.lstat(path.join(f.home, '.grok/escape')));
+  assert.match(await fs.readFile(path.join(f.home, '.grok/skills/personal-environment/SKILL.md'), 'utf8'), /Version 1/);
+  let status = await policyStatus(f.context);
+  assert.equal(status.ok, true);
+  assert.equal(status.entries.some((e) => e.relativePath === '.grok/skills/packaged'), true);
+  assert.equal(status.entries.some((e) => e.relativePath === '.gemini/config/skills/packaged'), false);
+  assert.equal(status.entries.some((e) => e.relativePath === '.gemini/config/skills/twin'), false);
+  assert.equal(status.entries.some((e) => e.relativePath === '.grok/skills/twin'), true);
+  // The neutral store belongs to `pac apply`, not to policy delivery.
+  assert.equal(status.entries.some((e) => e.relativePath.startsWith('.local/share/')), false);
+
+  // The links follow `pac apply` installing a newer version.
+  await fs.writeFile(packaged, '---\nname: packaged\ndescription: fixture\n---\nVersion 2\n');
+  const again = await synchronizePolicy(f.context, options);
+  assert.equal(again.changed, 0);
+  assert.match(await fs.readFile(path.join(f.home, '.grok/skills/packaged/SKILL.md'), 'utf8'), /Version 2/);
+  status = await policyStatus(f.context);
+  assert.equal(status.ok, true);
+});
