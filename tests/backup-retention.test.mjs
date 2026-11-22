@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { abandonManagedBackup, completeManagedBackup, createManagedBackup, finishManagedBackup, outerBackupProof, registerManagedBackup, retainManagedBackups, retireOuterBackup } from '../src/backup-retention.mjs';
-import { createBackup } from '../src/state.mjs';
+import { createBackup, withLock } from '../src/state.mjs';
 import { hasUnownedNativeBaseline } from '../src/commands.mjs';
 
 async function fixture(t) {
@@ -17,6 +17,13 @@ async function fixture(t) {
     const backup = await createManagedBackup(context, { mode, prefix: mode });
     await fs.writeFile(path.join(backup, 'original'), 'fixture rollback content');
     if (outcome) assert.deepEqual(await completeManagedBackup(context, backup, { outcome, containsUnownedOriginals }), { ok: true });
+    if (mode === 'apply' && outcome === 'complete') {
+      const receipts = path.join(context.stateDir, 'receipts');
+      await fs.mkdir(receipts, { recursive: true });
+      await fs.writeFile(path.join(receipts, path.basename(backup) + '.json'), JSON.stringify({
+        operation: 'apply', backup, verification: { healthy: true, state: 'healthy' },
+      }));
+    }
     return backup;
   };
   return { context, create, registry: path.join(context.stateDir, 'backup-retention.json') };
@@ -46,19 +53,44 @@ test('transaction-only retires the new successful baseline and clears its pointe
   const f = await fixture(t);
   const previous = await f.create({ containsUnownedOriginals: true });
   const pure = await f.create();
+  const degraded = await f.create();
+  for (const [name, backup, state] of [['good', pure, 'healthy'], ['bad', degraded, 'degraded']]) {
+    await fs.writeFile(path.join(f.context.stateDir, 'receipts', name + '.json'), JSON.stringify({
+      operation: 'apply', backup, verification: { state, healthy: state === 'healthy' },
+    }));
+  }
   const active = await f.create({ outcome: null });
   const profile = { manifest: { backupRetention: 'transaction-only' } };
   for (const mode of ['apply', 'policy-only', 'provider-only']) {
     const current = await f.create({ mode, outcome: null });
     if (mode === 'apply') await fs.writeFile(path.join(f.context.stateDir, 'last-backup'), current + '\n');
     if (mode === 'policy-only') await fs.writeFile(path.join(f.context.stateDir, 'policy-deployment.json'), JSON.stringify({ backup: current, extra: true }));
-    assert.deepEqual(await finishManagedBackup(f.context, current, profile, true), { removed: [current], warnings: [] });
+    const result = await withLock(f.context, async () => ({
+      backup: current, retention: await finishManagedBackup(f.context, current, profile, true),
+    }));
+    assert.deepEqual(result.retention, { removed: [current], warnings: [] });
     await assert.rejects(fs.access(current), { code: 'ENOENT' });
   }
   await assert.rejects(fs.access(path.join(f.context.stateDir, 'last-backup')), { code: 'ENOENT' });
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(f.context.stateDir, 'policy-deployment.json'))), { backup: null, extra: true });
   assert.deepEqual(await retainManagedBackups(f.context, { keepPerMode: 0 }), { removed: [pure], warnings: [] });
-  await fs.access(previous); await fs.access(active);
+  await fs.access(previous); await fs.access(active); await fs.access(degraded);
+});
+
+test('failed enclosing receipt and lost transaction lock retain even a sealed transient checkpoint', async t => {
+  const f = await fixture(t);
+  for (const failure of ['receipt', 'lock']) {
+    const backup = await f.create({ outcome: null });
+    await assert.rejects(withLock(f.context, async () => {
+      const retention = await finishManagedBackup(f.context, backup, { manifest: { backupRetention: 'transaction-only' } }, false);
+      if (failure === 'receipt') throw new Error('enclosing receipt failed');
+      const owner = path.join(f.context.stateDir, 'pac.lock/owner.json');
+      await fs.writeFile(owner, JSON.stringify({ token: 'different' }));
+      return { backup, retention };
+    }));
+    await fs.access(backup);
+    assert.equal(JSON.parse(await fs.readFile(f.registry)).records.find(r => r.name === path.basename(backup)).state, 'awaiting-commit');
+  }
 });
 
 test('only the current successful Chezmoi outer snapshot with the verified identity can be retired', async t => {
@@ -216,6 +248,9 @@ test('a snapshot the size of a real apply backup is sealed and later pruned', as
     { ok: true },
   );
   for (let index = 0; index < 3; index++) await f.create();
+  await fs.writeFile(path.join(f.context.stateDir, 'receipts/large.json'), JSON.stringify({
+    operation: 'apply', backup: large, verification: { healthy: true, state: 'healthy' },
+  }));
   const result = await retainManagedBackups(f.context);
   assert.deepEqual(result.warnings, []);
   assert.deepEqual(result.removed, [large]);

@@ -5,7 +5,7 @@ import { PacError } from './errors.mjs';
 import { HOSTS, hostSkillDirectory } from './config.mjs';
 import { assertSafeManagedObject, assertSafeManagedPath } from './path-safety.mjs';
 import { atomicWriteFile } from './atomic-file.mjs';
-import { abandonManagedBackup, registerManagedBackup } from './backup-retention.mjs';
+import { abandonManagedBackup, registerManagedBackup, retireAfterCommit } from './backup-retention.mjs';
 import { hasPriorScanGuardState, scanGuardManagedPaths } from './scan-guard.mjs';
 import { hashDirectory } from './profile.mjs';
 
@@ -147,8 +147,11 @@ export async function acquireLock(context, options = {}) {
 
 export async function withLock(context, callback, options = {}) {
   const release = await acquireLock(context, options);
-  try { return await callback(); }
+  let result;
+  try { result = await callback(); }
   finally { await release(); }
+  await retireAfterCommit(context, result, acquireLock);
+  return result;
 }
 
 export async function readOwnedSkills(context) {

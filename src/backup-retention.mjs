@@ -13,6 +13,7 @@ const MAX_RECORDS = 4096;
 const MAX_TREE_ENTRIES = 262144;
 const TREE_DEADLINE_MS = 30000;
 const MAX_REMOVALS_PER_RUN = 8;
+const pendingRetirement = Symbol('pending snapshot retirement');
 const rootFor = (context) => path.join(context.home, '.agent-work/backups/personal-agent-control');
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');
@@ -134,7 +135,7 @@ export async function abandonManagedBackup(context, backup) {
 // Sealing is advisory: failure preserves an active snapshot and cannot undo a successful install.
 export async function completeManagedBackup(context, backup, { outcome, containsUnownedOriginals = true } = {}) {
   try {
-    if (!['complete', 'rolled-back'].includes(outcome)) fail('Backup outcome is not terminal.');
+    if (!['complete', 'rolled-back', 'awaiting-commit'].includes(outcome)) fail('Invalid backup outcome.');
     const registry = await readRegistry(context);
     const record = registry.records.find((r) => path.join(rootFor(context), r.name) === backup);
     if (!record || record.state !== 'active') fail('Backup is not an active registered snapshot.');
@@ -151,6 +152,32 @@ export async function completeManagedBackup(context, backup, { outcome, contains
 // Call under the PAC lock only after authoritative deployment/rollback success.
 export async function retainManagedBackups(context, { keepPerMode = 3, protectedBackups = [] } = {}) {
   return pruneSnapshots(context, keepPerMode, protectedBackups, null);
+}
+
+async function healthyApplyReceipts(context) {
+  const directory = path.join(context.stateDir, 'receipts');
+  const healthy = new Set();
+  const unverified = new Set();
+  await assertSafeManagedObject(context.home, directory, 'PAC receipts', 'directory');
+  let handle;
+  try { handle = await fs.opendir(directory); }
+  catch (error) { if (error.code === 'ENOENT') return healthy; throw error; }
+  let scanned = 0;
+  for await (const entry of handle) {
+    if (++scanned > MAX_RECORDS) break;
+    if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+    const file = path.join(directory, entry.name);
+    await assertSafeManagedObject(context.home, file, 'PAC receipt', 'file');
+    if ((await fs.stat(file)).size > 128 * 1024) continue;
+    let receipt;
+    try { receipt = JSON.parse(await fs.readFile(file, 'utf8')); }
+    catch (error) { if (error instanceof SyntaxError) continue; throw error; }
+    if (receipt?.operation !== 'apply' || !receipt.backup) continue;
+    if (receipt.verification?.healthy === true && receipt.verification.state === 'healthy') healthy.add(receipt.backup);
+    else unverified.add(receipt.backup);
+  }
+  for (const backup of unverified) healthy.delete(backup);
+  return healthy;
 }
 
 async function pruneSnapshots(context, keepPerMode, protectedBackups, completedTransaction) {
@@ -180,8 +207,10 @@ async function pruneSnapshots(context, keepPerMode, protectedBackups, completedT
       records.filter((r) => ['complete', 'rolled-back'].includes(r.state) && r.fingerprint)
         .slice(0, keepPerMode).forEach((r) => keep.add(r.name));
     }
-    const candidates = registry.records.filter((r) => !r.pinned &&
-      (completedTransaction ? path.join(rootFor(context), r.name) === completedTransaction && r.state === 'complete'
+    const healthy = completedTransaction ? null : await healthyApplyReceipts(context);
+    const candidates = registry.records.filter((r) => !r.pinned
+      && (!healthy || r.mode !== 'apply' || healthy.has(path.join(rootFor(context), r.name))) &&
+      (completedTransaction ? path.join(rootFor(context), r.name) === completedTransaction && r.state === 'awaiting-commit'
         : !keep.has(r.name) && r.containsUnownedOriginals === false
           && (r.state === 'complete' || (keepPerMode > 0 && r.state === 'rolled-back')))
       && /^[a-f0-9]{64}$/u.test(r.fingerprint || '')
@@ -226,12 +255,27 @@ async function pruneSnapshots(context, keepPerMode, protectedBackups, completedT
 // Only the freshly sealed result of this successful operation can use its
 // Profile's transaction-only override. Historical prune never takes this path.
 export async function finishManagedBackup(context, backup, profile, containsUnownedOriginals) {
-  const sealed = await completeManagedBackup(context, backup, { outcome: 'complete', containsUnownedOriginals });
-  if (!sealed.ok) return { removed: [], warnings: [sealed.warning] };
   const transient = profile?.manifest?.backupRetention === 'transaction-only';
-  const result = await pruneSnapshots(context, 3, transient ? [] : [backup], transient ? backup : null);
-  if (transient && !result.removed.includes(backup) && !result.warnings.length) result.warnings.push('Transaction snapshot remains protected.');
-  return result;
+  const sealed = await completeManagedBackup(context, backup, { outcome: transient ? 'awaiting-commit' : 'complete', containsUnownedOriginals });
+  if (!sealed.ok) return { removed: [], warnings: [sealed.warning] };
+  if (transient) return { removed: [], warnings: [], [pendingRetirement]: backup };
+  return await retainManagedBackups(context, { protectedBackups: [backup] });
+}
+
+// The owner calls this after its callback, receipt and lock release have all
+// succeeded. A fresh lock serializes pointer changes with other PAC commands.
+export async function retireAfterCommit(context, result, acquire) {
+  const backup = result?.retention?.[pendingRetirement];
+  if (!backup) return;
+  delete result.retention[pendingRetirement];
+  try {
+    const release = await acquire(context);
+    try {
+      result.retention = await pruneSnapshots(context, 3, [], backup);
+      if (result.retention.removed.includes(backup)) result.backup = null;
+      else if (!result.retention.warnings.length) result.retention.warnings.push('Transaction snapshot remains protected.');
+    } finally { await release(); }
+  } catch (error) { result.retention.warnings.push(error.message); }
 }
 
 // Chezmoi takes its snapshot before Node is installed. Its own still-held
