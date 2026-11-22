@@ -54,7 +54,7 @@ export async function providerDeploymentStatus(context, { name, clients = HOSTS 
   validateSelection(context, name, clients);
   await verifyCanonicalPayload(context);
   await providerConfigurationFiles(context, name, clients);
-  const providers = await providerStatus(context, { manifest: { providers: { enabled: [name] } } }, clients, clients, [name]);
+  const providers = await providerStatus(context, { manifest: { providers: { enabled: [name] } } }, clients, clients, [name], { deployedBinding: true });
   return { mode: 'provider-only', ok: providers.length === clients.length && providers.every((entry) => entry.valid && entry.owned),
     provider: name, clients, providers };
 }

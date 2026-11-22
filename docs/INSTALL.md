@@ -195,6 +195,12 @@ any project working directory and avoids relying on a machine-specific
 `/usr/local` wrapper or an unrelated global installation. `--no-watch` is
 intentional: PAC cannot safely assume that a WSL `/mnt` watcher is cheap, and
 the MCP caller must provide an explicit project path for a semantic query.
+When the verified Profile ships a `workspace-locator` Skill with
+`scripts/codegraph-mcp.mjs`, PAC starts that adapter in the client's working
+directory and passes it the pinned upstream command and arguments. It uses
+the Skill from the exact Profile checkout, including on provider-only clients.
+Each client selected by the Skill receives the adapter at reconciliation.
+Earlier Profiles continue to launch the upstream command directly.
 The reviewed CodeGraph pin is 1.6.0. After a pin advance, check each registered
 project with `codegraph status` and run one bounded `codegraph index` when the
 status reports that a rebuild is required; 1.6.0 includes graph-drift and WAL

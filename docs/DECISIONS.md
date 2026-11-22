@@ -1689,3 +1689,12 @@ and version for each selected host before mutation. A new pin requires a new
 cache version and includes all enabled hosts sharing the source. Claude updates
 the user-scoped installation through its native update command so project
 installations can retain their existing version.
+
+
+## Preserve the client working directory for Profile-managed CodeGraph
+
+The optional adapter ships inside the digest-verified workspace-locator Skill.
+PAC launches it before the pinned upstream command changes into the Core
+checkout. This gives the adapter the client's original working directory and
+keeps provider-only delivery independent of host Skill projections. PAC uses
+the stored native binding to detect local changes during an adapter revision.

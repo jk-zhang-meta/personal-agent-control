@@ -8,7 +8,7 @@ import test from 'node:test';
 import { providerDeploymentStatus, synchronizeProvider } from '../src/provider-deployment.mjs';
 import { PROVIDER_CLIENTS, reconcileProviders } from '../src/providers.mjs';
 import { HOSTS } from '../src/config.mjs';
-import { hashDirectory } from '../src/profile.mjs';
+import { acquireProfile, hashDirectory } from '../src/profile.mjs';
 
 const paths = { codex: '.codex/config.toml', claude: '.claude.json', agy: '.gemini/config/mcp_config.json', grok: '.grok/config.toml' };
 const original = { codex: '# mcp_servers = { playwright = { command = "comment only" } }\nmodel = "keep"\n[mcp_servers.other]\ncommand = "keep"\nargs = []\n',
@@ -48,7 +48,7 @@ async function fixture(t, enabled = ['playwright'], indexing = false) {
   await fs.writeFile(mise, '#!/bin/sh\ncase "$*" in\n "exec -- codegraph --version") echo 1.6.0 ;;\n "exec -- playwright-mcp --version") echo "Version 0.0.83" ;;\n *) exit 42 ;;\nesac\n', { mode: 0o700 });
   const context = { root: process.cwd(), home, stateDir: path.join(home, '.local/state/personal-agent-control'), mise, platform: 'darwin', isWsl: false };
   const options = { name: 'playwright', repository, commit: git('rev-parse', 'HEAD'), clients: [...PROVIDER_CLIENTS] };
-  return { home, context, options, profile: { manifest }, file: (client) => path.join(home, paths[client]), owner: path.join(context.stateDir, 'owned-providers.json') };
+  return { home, context, options, git, profile: { manifest }, file: (client) => path.join(home, paths[client]), owner: path.join(context.stateDir, 'owned-providers.json') };
 }
 
 const runtimeRoots = home => ['project-index', 'resource'].map(name => path.join(home, '.agent-work/runtime/pac', name));
@@ -95,6 +95,59 @@ test('provider-only indexing grant is Profile-gated, additive, private, visible 
     assert.equal(repeated.backup, null);
     assert.deepEqual(await fs.readdir(backups), beforeBackups);
   }
+});
+
+test('four native clients migrate a recorded upstream binding to the verified Profile adapter', async t => {
+  const f = await fixture(t, ['codegraph'], true);
+  const old = { ...f.options, name: 'codegraph' };
+  await synchronizeProvider(f.context, old);
+  const ownership = JSON.parse(await fs.readFile(f.owner, 'utf8'));
+  const upstream = ownership.providers.codegraph.grok;
+  // Old PAC versions recorded config ownership before recording the argv.
+  ownership.providers.codegraph.grok = { config: upstream.config };
+  await fs.writeFile(f.owner, JSON.stringify(ownership));
+  const skill = f.profile.manifest.skills[0];
+  const directory = path.join(old.repository, skill.path);
+  const relative = 'scripts/codegraph-mcp.mjs';
+  await fs.mkdir(path.join(directory, 'scripts'));
+  await fs.writeFile(path.join(directory, relative),
+    'process.stdout.write(JSON.stringify({cwd:process.cwd(),args:process.argv.slice(2)}))');
+  skill.contentSha256 = await hashDirectory(directory);
+  await fs.writeFile(path.join(old.repository, 'pac-profile.json'), JSON.stringify(f.profile.manifest));
+  f.git('add', '.');
+  f.git('commit', '--quiet', '-m', 'Ship the indexing adapter');
+  const next = { ...old, commit: f.git('rev-parse', 'HEAD') };
+  const before = await fs.readFile(f.file('grok'), 'utf8');
+  await fs.writeFile(f.file('grok'), before.replace('--no-watch', '--watch'));
+  await assert.rejects(synchronizeProvider(f.context, next), { code: 'PROVIDER_DRIFT' });
+  assert.deepEqual(JSON.parse(await fs.readFile(f.owner, 'utf8')), ownership);
+  await fs.writeFile(f.file('grok'), before);
+
+  const verified = await acquireProfile(f.context, { repository: next.repository, ref: next.commit, expectedCommit: next.commit });
+  await reconcileProviders(f.context, verified, HOSTS, HOSTS, 'apply', { installRuntime: false });
+  const full = JSON.parse(await fs.readFile(f.owner, 'utf8')).providers.codegraph;
+  assert.equal(full.codex.profileCommit, next.commit);
+  assert.equal(full.agy.profileCommit, old.commit);
+  await synchronizeProvider(f.context, next);
+  await reconcileProviders(f.context, verified, HOSTS, HOSTS, 'apply', { installRuntime: false });
+  assert.equal((await providerDeploymentStatus(f.context, next)).ok, true);
+  const bindings = JSON.parse(await fs.readFile(f.owner, 'utf8')).providers.codegraph;
+  for (const host of PROVIDER_CLIENTS) {
+    const { command, args } = bindings[host];
+    assert.equal(command, process.execPath);
+    assert.ok(args[0].startsWith(f.home + path.sep) && args[0].endsWith(path.join(skill.path, relative)));
+    const actual = JSON.parse(execFileSync(command, args, { cwd: f.home, encoding: 'utf8', timeout: 5000 }));
+    assert.deepEqual(actual, { cwd: f.home, args: [upstream.command, ...upstream.args] });
+  }
+  // Standalone status can verify the stored adapter even without an active full Profile.
+  const bridge = bindings.codex.args[0];
+  await fs.rename(bridge, bridge + '.hidden');
+  assert.equal((await providerDeploymentStatus(f.context, next)).ok, false);
+  await fs.rename(bridge + '.hidden', bridge);
+  assert.equal((await synchronizeProvider(f.context, next)).changed, 0);
+  await synchronizeProvider(f.context, old);
+  assert.equal((await providerDeploymentStatus(f.context, old)).ok, true);
+  assert.deepEqual(JSON.parse(await fs.readFile(f.owner, 'utf8')).providers.codegraph.grok, upstream);
 });
 
 test('indexing roots reject ambiguous config, unsafe directories and out-of-scope ownership', async t => {

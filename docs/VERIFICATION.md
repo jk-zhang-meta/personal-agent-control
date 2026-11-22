@@ -133,6 +133,10 @@ be edited as an authoring surface.
   explicit disables, unmanaged conflicts, owned drift, read-only status,
   idempotence, symlink rejection, version-check bypass rejection, late failure
   rollback with metadata, and preservation of concurrent native edits.
+  The CodeGraph migration fixture launches each client's binding from a
+  different directory than Core, checks the forwarded upstream arguments, and
+  exercises full reconciliation, provider-only sync, and return to an older
+  Profile. Standalone status detects a missing adapter.
   Native client discovery and an actual MCP handshake must also pass before
   claiming a deployed provider works.
 

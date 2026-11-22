@@ -138,6 +138,30 @@ function expectedCommand(context, provider) {
   return provider.command === 'mise' ? context.mise || provider.command : provider.command;
 }
 
+const CODEGRAPH_ADAPTER = 'scripts/codegraph-mcp.mjs';
+
+async function codegraphBinding(context, provider, bridge) {
+  const stat = await fs.lstat(bridge).catch(error => {
+    if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+    return null;
+  });
+  if (!stat) return provider;
+  if (!stat.isFile()) throw new PacError('PROFILE_CONTENT_INVALID', 'CodeGraph Profile adapter must be a regular file.');
+  return { ...provider, command: process.execPath, args: [
+    bridge, expectedCommand(context, provider), ...expandedArgs(context, provider),
+  ] };
+}
+
+// Provider-only clients use the vendored Skill in the verified Profile checkout.
+async function profileBindings(context, profile, provider) {
+  if (provider.name !== 'codegraph' || !profile?.root) return {};
+  const skill = profile.manifest.skills?.find(entry => entry.name === 'workspace-locator');
+  if (!skill) return {};
+  const binding = await codegraphBinding(context, provider, path.join(profile.root, skill.path, CODEGRAPH_ADAPTER));
+  const hosts = skill.targets.includes('*') ? PROVIDER_CLIENTS : skill.targets;
+  return Object.fromEntries(hosts.map(host => [host, binding]));
+}
+
 function ownedBinding(provider, ownership, host) {
   const owned = ownership.providers[provider.name]?.[host];
   if (!owned || !Object.hasOwn(owned, 'command')) return provider;
@@ -429,7 +453,7 @@ async function providerVersion(context, provider) {
   };
 }
 
-export async function providerStatus(context, profile, enabledHosts, scopeHosts, names) {
+export async function providerStatus(context, profile, enabledHosts, scopeHosts, names, { deployedBinding = false } = {}) {
   const selected = selectedNames(profile);
   const ownership = await readOwnership(context);
   if (selected.size === 0 && Object.keys(ownership.providers).length === 0) return [];
@@ -442,12 +466,19 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
     const active = PROVIDER_CLIENTS.some((host) => scopeHosts.includes(host)
       && enabledHosts.includes(host) && provider.hosts[host] && selected.has(provider.name));
     if (active) provider = await resolveWslPlaywright(context, provider);
+    const bindings = active ? await profileBindings(context, profile, provider) : {};
     const version = active ? await providerVersion(context, provider) : null;
     for (const host of PROVIDER_CLIENTS) {
       if (!scopeHosts.includes(host) || !provider.hosts[host]) continue;
       const hostActive = enabledHosts.includes(host) && selected.has(provider.name);
       const file = providerConfigPath(context, provider.hosts[host].config);
-      const inspectedProvider = hostActive ? provider : ownedBinding(provider, ownership, host);
+      let inspectedProvider = hostActive ? bindings[host] || provider : ownedBinding(provider, ownership, host);
+      if (hostActive && deployedBinding && provider.name === 'codegraph') {
+        const bridge = ownership.providers.codegraph?.[host]?.args?.[0];
+        if (bridge && path.isAbsolute(bridge) && bridge.endsWith(path.join('workspace-locator', CODEGRAPH_ADAPTER))) {
+          inspectedProvider = await codegraphBinding(context, provider, bridge);
+        }
+      }
       const inspected = await inspect(context, inspectedProvider, host, file);
       const runtimeRoots = host === 'codex' && provider.name === 'codegraph'
         ? await runtimeRootsReady(context, profile, ownership) : null;
@@ -482,10 +513,11 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
     const activeHosts = PROVIDER_CLIENTS.filter((host) => scopeHosts.includes(host)
       && enabledHosts.includes(host) && provider.hosts[host] && selected.has(provider.name));
     if (activeHosts.length) provider = await resolveWslPlaywright(context, provider);
+    const bindings = activeHosts.length ? await profileBindings(context, profile, provider) : {};
     for (const host of activeHosts) {
       const file = providerConfigPath(context, provider.hosts[host].config);
       const owned = ownership.providers[provider.name]?.[host];
-      const inspected = await inspect(context, owned ? ownedBinding(provider, ownership, host) : provider, host, file);
+      const inspected = await inspect(context, owned ? ownedBinding(provider, ownership, host) : bindings[host] || provider, host, file);
       // An already matching entry is safe to adopt; conflicting native config is not.
       if (inspected.present && !inspected.valid) {
         throw new PacError(owned ? 'PROVIDER_DRIFT' : 'PROVIDER_CONFLICT', `Refusing to replace ${owned ? 'modified' : 'unmanaged'} ${provider.name} configuration for ${host}.`, inspected);
@@ -503,22 +535,24 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
       if (!scopeHosts.includes(host) || !provider.hosts[host]) continue;
       const file = providerConfigPath(context, provider.hosts[host].config);
       if (activeHosts.includes(host)) {
+        const binding = bindings[host] || provider;
         const hostRuntime = host === 'codex' && provider.name === 'codegraph' ? runtime : null;
         if (mode === 'apply') {
           if (hostRuntime?.wanted) for (const root of hostRuntime.required) await privateRuntimeDirectory(context, root, true);
           const format = provider.hosts[host].format;
-          if (format.endsWith('-toml')) await applyCodex(context, provider, file, format, write, hostRuntime);
-          else await applyClaude(context, provider, file, format, write);
+          if (format.endsWith('-toml')) await applyCodex(context, binding, file, format, write, hostRuntime);
+          else await applyClaude(context, binding, file, format, write);
         }
-        const inspected = await inspect(context, provider, host, file);
+        const inspected = await inspect(context, binding, host, file);
         if (!inspected.valid) throw new PacError('PROVIDER_CONFIG_INVALID', `${provider.name} was not configured for ${host}.`, inspected);
         if (hostRuntime?.wanted && !(await runtimeRootsReady(context, profile, ownership))?.valid) {
           throw new PacError('PROVIDER_CONFIG_INVALID', 'Codex indexing runtime roots are not ready.');
         }
+        const appliedCommit = profileCommit || (provider.name === 'codegraph' && profile?.lockedCommit);
         ownership.providers[provider.name] = { ...(ownership.providers[provider.name] || {}), [host]: {
           ...(ownership.providers[provider.name]?.[host] || {}),
-          config: provider.hosts[host].config, command: expectedCommand(context, provider), args: expandedArgs(context, provider),
-          ...(profileCommit ? { profileCommit } : {}),
+          config: provider.hosts[host].config, command: expectedCommand(context, binding), args: expandedArgs(context, binding),
+          ...(appliedCommit ? { profileCommit: appliedCommit } : {}),
         } };
         results.push({ provider: provider.name, host, action: mode === 'apply' ? 'applied' : 'checked', upgrade, version });
       } else if (ownership.providers[provider.name]?.[host]) {
