@@ -143,6 +143,10 @@ test('four native clients migrate a recorded upstream binding to the verified Pr
   const bridge = bindings.codex.args[0];
   await fs.rename(bridge, bridge + '.hidden');
   assert.equal((await providerDeploymentStatus(f.context, next)).ok, false);
+  const deployed = await fs.readFile(f.file('grok'), 'utf8');
+  await fs.writeFile(f.file('grok'), before);
+  assert.equal((await providerDeploymentStatus(f.context, { ...next, clients: ['grok'] })).ok, false);
+  await fs.writeFile(f.file('grok'), deployed);
   await fs.rename(bridge + '.hidden', bridge);
   assert.equal((await synchronizeProvider(f.context, next)).changed, 0);
   await synchronizeProvider(f.context, old);

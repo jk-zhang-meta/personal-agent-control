@@ -473,10 +473,15 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
       const hostActive = enabledHosts.includes(host) && selected.has(provider.name);
       const file = providerConfigPath(context, provider.hosts[host].config);
       let inspectedProvider = hostActive ? bindings[host] || provider : ownedBinding(provider, ownership, host);
+      let bindingReady = true;
       if (hostActive && deployedBinding && provider.name === 'codegraph') {
-        const bridge = ownership.providers.codegraph?.[host]?.args?.[0];
+        const recorded = ownedBinding(provider, ownership, host);
+        const bridge = recorded.args[0];
         if (bridge && path.isAbsolute(bridge) && bridge.endsWith(path.join('workspace-locator', CODEGRAPH_ADAPTER))) {
-          inspectedProvider = await codegraphBinding(context, provider, bridge);
+          inspectedProvider = recorded;
+          const expected = await codegraphBinding(context, provider, bridge);
+          bindingReady = expected !== provider && expectedCommand(context, recorded) === expectedCommand(context, expected)
+            && expectedArgs(context, recorded) === expectedArgs(context, expected);
         }
       }
       const inspected = await inspect(context, inspectedProvider, host, file);
@@ -490,7 +495,7 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
         profileCommit: ownership.providers[provider.name]?.[host]?.profileCommit || null,
         version,
         ...(runtimeRoots ? { runtimeRoots } : {}),
-        valid: hostActive ? inspected.valid && version.matches && runtimeRoots?.valid !== false : owned ? !inspected.present : true,
+        valid: hostActive ? inspected.valid && bindingReady && version.matches && runtimeRoots?.valid !== false : owned ? !inspected.present : true,
       });
     }
   }
