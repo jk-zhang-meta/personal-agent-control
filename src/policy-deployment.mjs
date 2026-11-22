@@ -6,6 +6,7 @@ import { atomicWriteFile } from './atomic-file.mjs';
 import { completeManagedBackup, createManagedBackup, retainManagedBackups } from './backup-retention.mjs';
 import { PacError } from './errors.mjs';
 import { composeInstructions } from './instruction-composition.mjs';
+import { statuslineChanges, statuslineSkill } from './statusline.mjs';
 import { acquireProfile, hashDirectory } from './profile.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
@@ -186,6 +187,13 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
       if (!(await statOrNull(path.join(context.home, relativePath))) || owned.has(relativePath)) planned.push({ relativePath, kind: 'file', content: bridge, sha256: sha(bridge) });
     }
     const changes = [];
+    const footer = statuslineSkill(current);
+    if (footer || statuslineSkill(previous)) {
+      for (const update of await statuslineChanges(context, path.join(context.home, neutral), agents, footer)) {
+        planned.push({ relativePath: update.relativePath, kind: 'file', content: update.content,
+          sha256: sha(update.content), baseline: sha(update.source), partialConfig: true });
+      }
+    }
     const preserved = [];
     for (const item of [...planned]) {
       const target = await policyTarget(context.home, path.join(context.home, item.relativePath));
@@ -249,7 +257,9 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
         if ((await identity(context.home, path.join(context.home, item.relativePath)))?.sha256 !== item.sha256) throw new PacError('POLICY_VERIFY_FAILED', `Policy verification failed: ${item.relativePath}`);
       }
       const entries = new Map(fullInstallation ? [] : state.entries.map((e) => [e.relativePath, e]));
-      for (const item of planned) entries.set(item.relativePath, { relativePath: item.relativePath, sha256: item.sha256 });
+      for (const item of planned) {
+        if (!item.partialConfig) entries.set(item.relativePath, { relativePath: item.relativePath, sha256: item.sha256 });
+      }
       const result = { schemaVersion: 1, mode: 'policy-only', profileCommit: commit, profileRoot: current.root,
         agents: [...new Set([...(state.agents || []), ...agents])], backup: backup || state.backup || null, entries: [...entries.values()] };
       const ownerFile = path.join(context.home, STATE);

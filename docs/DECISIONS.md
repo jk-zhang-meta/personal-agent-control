@@ -1668,3 +1668,13 @@ content PAC already owns still fail closed. Policy-only homes without a full
 installation are unchanged. Removing a Skill from the installation does not
 yet remove its compatibility link, and the next delivery drops that link from
 policy ownership.
+# Profile-selected native status lines
+
+An embedded `personal-statusline` Skill opts a locked Profile into native
+footer configuration. The Profile supplies four Python renderers under
+`scripts/`, named for Codex, Claude, agy and Grok. Core owns the binding to
+each native configuration file. Full installation includes agy and Grok when
+all primary hosts are in scope. Policy sync follows its explicit client list.
+The merge requires Python 3.11 or newer and preserves unrelated native settings
+and custom footer commands. Reapplying the Profile adopts the conventional
+per-client statusline scripts and uses the installed, digest-verified Skill.

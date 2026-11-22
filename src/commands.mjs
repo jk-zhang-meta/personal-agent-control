@@ -35,6 +35,8 @@ import { verifyCanonicalPayload } from './integrity.mjs';
 import { hostAdapterStatus, reconcileHostAdapters } from './host-adapters.mjs';
 import { scanGuardStatus, reconcileScanGuard } from './scan-guard.mjs';
 import { policyStatus, synchronizePolicy } from './policy-deployment.mjs';
+import { statuslineChanges, statuslineSkill } from './statusline.mjs';
+import { atomicWriteFile } from './atomic-file.mjs';
 import { assertProfileProvidersKnown, providerStatus, reconcileProviders } from './providers.mjs';
 import { providerDeploymentStatus, synchronizeProvider } from './provider-deployment.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
@@ -428,9 +430,13 @@ async function applyUnlocked(context, options = {}) {
   const sourceIntegrity = await verifyCanonicalPayload(context);
   const profileResolution = await resolveProfileForApply(context, options.profileRequest);
   const profile = profileResolution.profile;
+  const footer = statuslineSkill(profile);
+  const previousFooter = profileResolution.descriptorAction === 'keep' ? footer : statuslineSkill(await loadActiveProfile(context));
   const scope = scopedHosts(options);
   const enabled = effectiveEnabledHosts(machine);
   const scopedEnabledHosts = enabled.filter((host) => scope.includes(host));
+  const footerHosts = footer || previousFooter
+    ? [...scopedEnabledHosts, ...(scope.length === HOSTS.length ? ['agy', 'grok'] : [])] : [];
   const effectiveConfig = configForEnabledHosts(config, enabled);
   const neutral = skillStore(context, config);
   const provenCleanupHosts = [];
@@ -479,6 +485,7 @@ async function applyUnlocked(context, options = {}) {
     );
   await augmentBackup(context, backup, provisional, {
     activeHosts: scopedEnabledHosts,
+    statuslineHosts: footerHosts,
     pluginEntries: knownPlugins,
     desiredPlugins: effectivePlugins,
   });
@@ -519,6 +526,8 @@ async function applyUnlocked(context, options = {}) {
     ]);
     const adapters = await reconcileHostAdapters(context, enabled, reconciliationScope);
     const providers = await reconcileProviders(context, effectiveProfile, enabled, reconciliationScope, 'apply');
+    const footerChanges = await statuslineChanges(context, path.join(neutral, '.agents/skills'), footerHosts, footer);
+    for (const change of footerChanges) await atomicWriteFile(change.file, change.content);
     const projections = await reconcileProjections(context, effectiveConfig, neutral, desired, enabled, reconciliationScope);
     const retiredLegacyCodexSkills = await retireLegacyCodexSkillDuplicates(
       context, neutral, desired, enabled, reconciliationScope,
@@ -552,6 +561,7 @@ async function applyUnlocked(context, options = {}) {
     return {
       backup, receipt, retention, hosts: scopedEnabledHosts, neutralSkillStore: neutral, skills: desired,
       materializers, profileSkills, retiredProfileSkills, retiredLegacyCodexSkills,
+      statuslineChanged: footerChanges.map(change => change.relativePath),
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
       bootstrap, profileApm, adapters, scanGuard, providers, projections, plugins, resolver, verification, sourceIntegrity,
     };

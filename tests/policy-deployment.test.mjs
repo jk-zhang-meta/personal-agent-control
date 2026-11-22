@@ -57,9 +57,43 @@ async function fixture(t) {
     git('commit', '--quiet', '-m', `Fixture ${version}`);
     return git('rev-parse', 'HEAD');
   };
-  return { home, root, repository, commit, context: { home, root,
+  return { home, root, repository, commit, git, context: { home, root,
     stateDir: path.join(home, '.local/state/personal-agent-control') } };
 }
+
+test('Profile footer installation preserves user config and converges for four clients', async (t) => {
+  const f = await fixture(t);
+  const baseline = await f.commit(1);
+  const name = 'personal-statusline';
+  const skill = path.join(f.repository, 'skills', name);
+  await fs.mkdir(path.join(skill, 'scripts'), { recursive: true });
+  await fs.writeFile(path.join(skill, 'SKILL.md'), '---\nname: personal-statusline\ndescription: fixture\n---\n');
+  for (const host of ['codex', 'claude', 'agy', 'grok']) {
+    await fs.writeFile(path.join(skill, 'scripts', host + '.py'), "print('fixture')\n");
+  }
+  const manifest = path.join(f.repository, 'pac-profile.json');
+  const profile = JSON.parse(await fs.readFile(manifest));
+  profile.skills.push({ name, path: 'skills/' + name, contentSha256: await hashDirectory(skill), targets: ['codex', 'claude'] });
+  await fs.writeFile(manifest, JSON.stringify(profile));
+  f.git('add', '.');
+  f.git('commit', '-qm', 'Add footer');
+  const commit = f.git('rev-parse', 'HEAD');
+  await fs.mkdir(path.join(f.root, 'scripts'));
+  await fs.copyFile(new URL('../scripts/statusline-config.py', import.meta.url), path.join(f.root, 'scripts/statusline-config.py'));
+  const grok = path.join(f.home, '.grok/config.toml');
+  await fs.mkdir(path.dirname(grok));
+  await fs.writeFile(grok, '[ui.status_line]\ntype = "command"\ncommand = "my-footer"\n');
+  const options = { repository: f.repository, commit, baseline };
+  await synchronizePolicy(f.context, options);
+  for (const [file, expected] of [
+    ['.codex/config.toml', 'scripts/codex.py'], ['.claude/settings.json', 'scripts/claude.py'],
+    ['.gemini/antigravity-cli/settings.json', 'scripts/agy.py'], ['.grok/config.toml', 'my-footer'],
+  ]) assert.ok((await fs.readFile(path.join(f.home, file), 'utf8')).includes(expected));
+  assert.equal((await synchronizePolicy(f.context, options)).changed, 0);
+  await fs.writeFile(grok, '[other]\nvalue = 42\n');
+  await synchronizePolicy(f.context, { ...options, agents: ['grok'] });
+  assert.match(await fs.readFile(grok, 'utf8'), /value = 42[\s\S]+scripts\/grok.py/);
+});
 
 test('policy delivery upgrades verified files, preserves unrelated state and detects drift', async (t) => {
   const f = await fixture(t);

@@ -461,6 +461,8 @@ const BACKUP_REGULAR_FILES = new Set([
   '.agent-work/runtime/pac/scan-guard-hook.mjs',
   '.local/share/agent-skills/apm.lock.yaml',
   '.codex/config.toml',
+  '.grok/config.toml',
+  '.gemini/antigravity-cli/settings.json',
   '.codex/hooks.json',
   '.codex/AGENTS.md',
   '.codex/agents/independent-reviewer.toml',
@@ -805,6 +807,8 @@ function desiredStateBackupPaths(desiredSkills, options = {}) {
   if (options.context) {
     for (const relative of scanGuardManagedPaths(options.context, [...activeHosts])) paths.add(relative);
   }
+  if (options.statuslineHosts?.includes('agy')) paths.add('.gemini/antigravity-cli/settings.json');
+  if (options.statuslineHosts?.includes('grok')) paths.add('.grok/config.toml');
 
   for (const skill of desiredSkills) {
     assertSafeName(skill.id);
