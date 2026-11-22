@@ -508,7 +508,16 @@ adapter-ownership manifest,
 preventing a failed update from leaving the next reconciliation on a newer
 state baseline than the files in HOME.
 
-The latest path is recorded privately at:
+Profiles using schema 4 can set `backupRetention` to `transaction-only`.
+A verified deployment keeps its rollback snapshot through the transaction
+and then removes that specific snapshot, including native configuration
+captured before the change. Failed or unverified deployments preserve their
+recovery state. The default for earlier schemas and the schema 4 value
+`standard` retain rollback history. Run `pac backup prune` to remove up to
+eight unchanged, sealed historical PAC snapshots per call. Pinned, active,
+referenced, unregistered and original-bearing snapshots remain protected.
+
+The latest retained apply backup path is recorded privately at:
 
 ```text
 ~/.local/state/personal-agent-control/last-backup

@@ -108,6 +108,22 @@ finish_transaction() {
             transaction_safe=false
         fi
     fi
+    if [ "$result" -eq 0 ] && [ -n "$outer_backup" ] && [ -n "${pac_result:-}" ]; then
+        if ! run_mise exec -- node --input-type=module - "$source_dir" "$home" "$outer_backup" "$outer_token" "$pac_result" <<'NODE'
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+const [source, home, backup, token, result] = process.argv.slice(2);
+const { data } = JSON.parse(await fs.readFile(result, 'utf8'));
+if (data?.outerProof && data.backup === backup) {
+    const { retireOuterBackup } = await import(pathToFileURL(path.join(source, 'src/backup-retention.mjs')));
+    await retireOuterBackup({ home, stateDir: path.join(home, '.local/state/personal-agent-control') }, backup, token, data.outerProof);
+}
+NODE
+        then
+            echo "PAC outer backup retention needs attention: $outer_backup" >&2
+        fi
+    fi
     [ -z "${pac_result:-}" ] || rm -f -- "$pac_result"
     [ -z "${migration_tmp:-}" ] || rm -f -- "$migration_tmp"
     if [ -n "$outer_backup" ] && [ "$transaction_safe" = true ]; then

@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { atomicWriteFile } from './atomic-file.mjs';
-import { completeManagedBackup, createManagedBackup, retainManagedBackups } from './backup-retention.mjs';
+import { completeManagedBackup, createManagedBackup, finishManagedBackup } from './backup-retention.mjs';
 import { PacError } from './errors.mjs';
 import { composeInstructions } from './instruction-composition.mjs';
 import { statuslineChanges, statuslineSkill } from './statusline.mjs';
@@ -277,13 +277,11 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
       await atomicWriteFile(ownerFile, JSON.stringify(result, null, 2));
       let retention = { removed: [], warnings: [] };
       if (backup) {
-        const sealed = await completeManagedBackup(context, backup, { outcome: 'complete',
-          containsUnownedOriginals: changes.some((item) => item.before && item.before.sha256 !== owned.get(item.relativePath)) });
-        retention = await retainManagedBackups(context, { protectedBackups: [backup] });
-        if (!sealed.ok) retention.warnings.push(sealed.warning);
+        retention = await finishManagedBackup(context, backup, current,
+          changes.some((item) => item.before && item.before.sha256 !== owned.get(item.relativePath)));
       }
       return { mode: 'policy-only', ok: true, profileCommit: commit, agents: result.agents,
-        backup, retention, changed: changes.length, skills: skills.length, preserved, hooks: 'not-modified',
+        backup: retention.removed.includes(backup) ? null : backup, retention, changed: changes.length, skills: skills.length, preserved, hooks: 'not-modified',
         packageManagers: 'not-assessed' };
     } catch (error) {
       for (const entry of [...journal].reverse()) {

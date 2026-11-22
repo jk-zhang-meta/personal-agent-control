@@ -919,13 +919,14 @@ function readProfileManifest(profile) {
     throw new Error(`Profile manifest must be a regular file: ${file}`);
   }
   const manifest = readJson(file);
-  if (!isPlainObject(manifest) || ![1, 2, 3].includes(manifest.schemaVersion)
+  if (!isPlainObject(manifest) || ![1, 2, 3, 4].includes(manifest.schemaVersion)
+      || (manifest.schemaVersion === 4 && !['standard', 'transaction-only'].includes(manifest.backupRetention))
       || !Array.isArray(manifest.skills)
       || !isPlainObject(manifest.plugins) || !Array.isArray(manifest.plugins.enabled)
       || (manifest.schemaVersion >= 2 && !Array.isArray(manifest.plugins.disabled))
-      || (manifest.schemaVersion === 3
+      || (manifest.schemaVersion >= 3
         && (!isPlainObject(manifest.providers) || !Array.isArray(manifest.providers.enabled)))) {
-    throw new Error('pac-profile.json must use schemaVersion 1, 2, or 3 and declare its overlays');
+    throw new Error('pac-profile.json must use schemaVersion 1, 2, 3, or 4 and declare its overlays');
   }
   const skillNames = new Set();
   const skills = manifest.skills.map((skill) => {

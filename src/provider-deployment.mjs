@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { atomicWriteFile } from './atomic-file.mjs';
-import { completeManagedBackup, createManagedBackup, retainManagedBackups } from './backup-retention.mjs';
+import { completeManagedBackup, createManagedBackup, finishManagedBackup } from './backup-retention.mjs';
 import { HOSTS } from './config.mjs';
 import { PacError } from './errors.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
@@ -142,13 +142,11 @@ export async function synchronizeProvider(context, { name, repository, commit, c
       const retention = backup ? await (async () => {
         await atomicWriteFile(journalFile, `${JSON.stringify(journal, null, 2)}\n`);
         // Preserve the initial native baseline; later PAC versions may rotate.
-        const sealed = await completeManagedBackup(context, backup, { outcome: 'complete',
-          containsUnownedOriginals: previousProviders.some((p) => !p.owned) && [...snapshots.values()].some((s) => s.before) });
-        const retained = await retainManagedBackups(context, { protectedBackups: [backup] });
-        return { ...retained, warnings: [...retained.warnings, ...(sealed.ok ? [] : [sealed.warning])] };
+        return await finishManagedBackup(context, backup, profile,
+          previousProviders.some((p) => !p.owned) && [...snapshots.values()].some((s) => s.before));
       })() : { removed: [], warnings: [] };
       return { mode: 'provider-only', ok: result.valid, provider: name, clients, profileCommit: commit,
-        backup, retention, changed: journal.entries.filter((entry) => entry.installed).length, providers: result.providers };
+        backup: retention.removed.includes(backup) ? null : backup, retention, changed: journal.entries.filter((entry) => entry.installed).length, providers: result.providers };
     } catch (error) {
       const failures = [];
       for (const entry of [...journal.entries].reverse().filter((row) => row.installed)) {

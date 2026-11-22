@@ -320,10 +320,15 @@ async function readManifest(root) {
     exactObject(manifest, MANIFEST_KEYS_V2, 'PROFILE_MANIFEST_INVALID', 'pac-profile.json');
   } else if (manifest.schemaVersion === 3) {
     exactObject(manifest, MANIFEST_KEYS_V3, 'PROFILE_MANIFEST_INVALID', 'pac-profile.json');
+  } else if (manifest.schemaVersion === 4) {
+    exactObject(manifest, [...MANIFEST_KEYS_V3, 'backupRetention'], 'PROFILE_MANIFEST_INVALID', 'pac-profile.json');
+    if (!['standard', 'transaction-only'].includes(manifest.backupRetention)) {
+      throw new PacError('PROFILE_MANIFEST_INVALID', 'backupRetention must be standard or transaction-only.');
+    }
   } else {
     throw new PacError(
       'PROFILE_MANIFEST_INVALID',
-      'pac-profile.json must use schemaVersion 1, 2, or 3.',
+      'pac-profile.json must use schemaVersion 1, 2, 3, or 4.',
     );
   }
   if (!Array.isArray(manifest.skills)) {
@@ -363,8 +368,8 @@ async function readManifest(root) {
     );
   }
 
-  const providers = manifest.schemaVersion === 3 ? manifest.providers : { enabled: [] };
-  if (manifest.schemaVersion === 3) {
+  const providers = manifest.schemaVersion >= 3 ? manifest.providers : { enabled: [] };
+  if (manifest.schemaVersion >= 3) {
     exactObject(providers, PROVIDER_KEYS, 'PROFILE_MANIFEST_INVALID', 'pac-profile.json providers');
     if (!Array.isArray(providers.enabled)
         || providers.enabled.some((name) => typeof name !== 'string' || !SKILL_NAME_PATTERN.test(name))
@@ -399,7 +404,7 @@ async function readManifest(root) {
         `Profile Skill ${skill.name} contentSha256 must be a 64-character hexadecimal digest.`,
       );
     }
-    const allowedTargets = manifest.schemaVersion === 3 ? [...PROFILE_HOSTS, '*'] : PROFILE_HOSTS;
+    const allowedTargets = manifest.schemaVersion >= 3 ? [...PROFILE_HOSTS, '*'] : PROFILE_HOSTS;
     if (!Array.isArray(skill.targets) || skill.targets.length === 0
         || new Set(skill.targets).size !== skill.targets.length
         || skill.targets.some((target) => !allowedTargets.includes(target))
@@ -418,6 +423,7 @@ async function readManifest(root) {
   }
   return {
     schemaVersion: manifest.schemaVersion,
+    ...(manifest.schemaVersion === 4 ? { backupRetention: manifest.backupRetention } : {}),
     bootstrap,
     skills: normalizedSkills,
     plugins: {

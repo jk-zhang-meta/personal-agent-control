@@ -150,12 +150,17 @@ export async function completeManagedBackup(context, backup, { outcome, contains
 
 // Call under the PAC lock only after authoritative deployment/rollback success.
 export async function retainManagedBackups(context, { keepPerMode = 3, protectedBackups = [] } = {}) {
+  return pruneSnapshots(context, keepPerMode, protectedBackups, null);
+}
+
+async function pruneSnapshots(context, keepPerMode, protectedBackups, completedTransaction) {
   const result = { removed: [], warnings: [] };
   try {
-    if (!Number.isInteger(keepPerMode) || keepPerMode < 1 || keepPerMode > 100) fail('Invalid backup retention count.');
+    if (!Number.isInteger(keepPerMode) || keepPerMode < 0 || keepPerMode > 100) fail('Invalid backup retention count.');
     const registry = await readRegistry(context);
     if (registry.records.some((r) => r.state === 'deleting')) fail('Interrupted backup removal requires review.');
     const protectedPaths = new Set(protectedBackups.map((p) => path.resolve(p)));
+    const matchingPointers = [];
     for (const file of ['last-backup', 'policy-deployment.json']) {
       const pointer = path.join(context.stateDir, file);
       await assertSafeManagedObject(context.home, pointer, 'backup pointer', 'file');
@@ -163,7 +168,8 @@ export async function retainManagedBackups(context, { keepPerMode = 3, protected
         if ((await fs.stat(pointer)).size > 1024 * 1024) fail('Backup pointer exceeds its bound.');
         const text = await fs.readFile(pointer, 'utf8');
         const value = file.endsWith('.json') ? JSON.parse(text).backup : text.trim();
-        if (value) protectedPaths.add(path.resolve(value));
+        if (value && path.resolve(value) === completedTransaction) matchingPointers.push({ file, pointer, text });
+        else if (value) protectedPaths.add(path.resolve(value));
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
     }
     const keep = new Set();
@@ -174,8 +180,11 @@ export async function retainManagedBackups(context, { keepPerMode = 3, protected
       records.filter((r) => ['complete', 'rolled-back'].includes(r.state) && r.fingerprint)
         .slice(0, keepPerMode).forEach((r) => keep.add(r.name));
     }
-    const candidates = registry.records.filter((r) => !keep.has(r.name) && !r.pinned && r.containsUnownedOriginals === false
-      && ['complete', 'rolled-back'].includes(r.state) && /^[a-f0-9]{64}$/u.test(r.fingerprint || '')
+    const candidates = registry.records.filter((r) => !r.pinned &&
+      (completedTransaction ? path.join(rootFor(context), r.name) === completedTransaction && r.state === 'complete'
+        : !keep.has(r.name) && r.containsUnownedOriginals === false
+          && (r.state === 'complete' || (keepPerMode > 0 && r.state === 'rolled-back')))
+      && /^[a-f0-9]{64}$/u.test(r.fingerprint || '')
       && !protectedPaths.has(path.join(rootFor(context), r.name))).slice(0, MAX_REMOVALS_PER_RUN);
     // Verify the whole bounded batch before mutating any candidate. Each tree
     // gets its own budget; a shared one would starve the later candidates.
@@ -198,6 +207,11 @@ export async function retainManagedBackups(context, { keepPerMode = 3, protected
         result.warnings.push(`Backup changed; preserved ${record.name}.`);
         continue;
       }
+      for (const { file, pointer, text } of matchingPointers) {
+        if (await fs.readFile(pointer, 'utf8') !== text) fail('Backup pointer changed before cleanup.');
+        if (file === 'last-backup') await fs.unlink(pointer);
+        else await atomicWriteFile(pointer, JSON.stringify({ ...JSON.parse(text), backup: null }, null, 2));
+      }
       record.state = 'deleting';
       await writeRegistry(context, registry);
       await fs.rm(backup, { recursive: true });
@@ -207,4 +221,34 @@ export async function retainManagedBackups(context, { keepPerMode = 3, protected
     }
   } catch (error) { result.warnings.push(error.message); }
   return result;
+}
+
+// Only the freshly sealed result of this successful operation can use its
+// Profile's transaction-only override. Historical prune never takes this path.
+export async function finishManagedBackup(context, backup, profile, containsUnownedOriginals) {
+  const sealed = await completeManagedBackup(context, backup, { outcome: 'complete', containsUnownedOriginals });
+  if (!sealed.ok) return { removed: [], warnings: [sealed.warning] };
+  const transient = profile?.manifest?.backupRetention === 'transaction-only';
+  const result = await pruneSnapshots(context, 3, transient ? [] : [backup], transient ? backup : null);
+  if (transient && !result.removed.includes(backup) && !result.warnings.length) result.warnings.push('Transaction snapshot remains protected.');
+  return result;
+}
+
+// Chezmoi takes its snapshot before Node is installed. Its own still-held
+// transaction lock and a token written at creation bind the two shell phases.
+export async function outerBackupProof(context, backup, token) {
+  if (path.dirname(backup) !== rootFor(context) || !/^[a-zA-Z0-9]+$/u.test(token || '')) fail('Invalid outer backup identity.');
+  const marker = path.join(backup, '.pac-outer-token');
+  await assertSafeManagedObject(context.home, marker, 'current outer snapshot', 'file');
+  if (await fs.readFile(marker, 'utf8') !== token + '\n') fail('Outer backup token changed.');
+  return await fingerprint(backup);
+}
+
+export async function retireOuterBackup(context, backup, token, proof) {
+  if (await outerBackupProof(context, backup, token) !== proof) fail('Outer backup changed after verification.');
+  const last = path.join(context.stateDir, 'last-backup');
+  await assertSafeManagedObject(context.home, last, 'outer backup pointer', 'file');
+  if (await fs.readFile(last, 'utf8') !== backup + '\n') fail('Outer backup pointer changed.');
+  await fs.unlink(last);
+  await fs.rm(backup, { recursive: true });
 }

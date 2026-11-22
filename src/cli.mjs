@@ -13,6 +13,7 @@ Core:
   status                       Report drift and pinned-engine state
   doctor                       Run authoritative checks
   rollback [BACKUP]            Restore the latest or named PAC snapshot
+  backup prune                 Remove up to eight verified, unreferenced pure PAC snapshots
   update                       Update PAC and pinned engines, then reconcile
   self-update                  Alias for the Core update path
 
@@ -53,8 +54,11 @@ function parse(argv) {
 }
 
 function human(command, data) {
-  if (command === 'provider') return `PAC provider ${data.provider}: ${data.ok ? 'verified' : 'needs attention'} (${data.clients.join(', ')}).${data.backup ? `\nBackup: ${data.backup}` : ''}`;
-  if (command === 'policy') return `PAC policy: ${data.ok ? 'verified' : 'needs attention'} (policy files only; native hooks and package managers unchanged).`;
+  const retention = data?.retention?.warnings?.length
+    ? `\nBackup retention needs attention: ${data.retention.warnings.join('; ')}` : '';
+  if (command === 'backup') return [`Removed ${data.removed.length} verified PAC snapshots.`, ...data.warnings].join('\n');
+  if (command === 'provider') return `PAC provider ${data.provider}: ${data.ok ? 'verified' : 'needs attention'} (${data.clients.join(', ')}).${data.backup ? `\nBackup: ${data.backup}` : ''}${retention}`;
+  if (command === 'policy') return `PAC policy: ${data.ok ? 'verified' : 'needs attention'} (policy files only; native hooks and package managers unchanged).${retention}`;
   if (command === 'status') {
     const drift = data.projections.filter((entry) => !entry.valid).length;
     const scanGuard = !data.scanGuard?.length || data.scanGuard.every((entry) => entry.state === 'inactive')
@@ -91,12 +95,10 @@ function human(command, data) {
   }
   // Retention is advisory, so its failures never fail the command; show them
   // here or snapshots accumulate without any visible signal.
-  const retention = data?.retention?.warnings?.length
-    ? `\nBackup retention needs attention: ${data.retention.warnings.join('; ')}` : '';
   if (data?.receipt && data.verification?.state === 'staged') {
     return `PAC ${command} staged, but not yet healthy: ${data.verification.output}\nReceipt: ${data.receipt}\nBackup: ${data.backup}${retention}`;
   }
-  if (data?.receipt) return `PAC ${command} complete.\nReceipt: ${data.receipt}\nBackup: ${data.backup}${retention}`;
+  if (data?.receipt) return `PAC ${command} complete.\nReceipt: ${data.receipt}${data.backup ? `\nBackup: ${data.backup}` : ''}${retention}`;
   if (data?.output) return data.output;
   return `PAC ${command} complete.`;
 }

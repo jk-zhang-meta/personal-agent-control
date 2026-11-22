@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { abandonManagedBackup, completeManagedBackup, createManagedBackup, registerManagedBackup, retainManagedBackups } from '../src/backup-retention.mjs';
+import { abandonManagedBackup, completeManagedBackup, createManagedBackup, finishManagedBackup, outerBackupProof, registerManagedBackup, retainManagedBackups, retireOuterBackup } from '../src/backup-retention.mjs';
 import { createBackup } from '../src/state.mjs';
 import { hasUnownedNativeBaseline } from '../src/commands.mjs';
 
@@ -40,6 +40,42 @@ test('retention bounds terminal snapshots per mode while retaining originals, ac
     else await fs.access(row.backup);
   }
   for (const backup of [original, active, unknown]) await fs.access(backup);
+});
+
+test('transaction-only retires the new successful baseline and clears its pointer; prune preserves historical originals', async t => {
+  const f = await fixture(t);
+  const previous = await f.create({ containsUnownedOriginals: true });
+  const pure = await f.create();
+  const active = await f.create({ outcome: null });
+  const profile = { manifest: { backupRetention: 'transaction-only' } };
+  for (const mode of ['apply', 'policy-only', 'provider-only']) {
+    const current = await f.create({ mode, outcome: null });
+    if (mode === 'apply') await fs.writeFile(path.join(f.context.stateDir, 'last-backup'), current + '\n');
+    if (mode === 'policy-only') await fs.writeFile(path.join(f.context.stateDir, 'policy-deployment.json'), JSON.stringify({ backup: current, extra: true }));
+    assert.deepEqual(await finishManagedBackup(f.context, current, profile, true), { removed: [current], warnings: [] });
+    await assert.rejects(fs.access(current), { code: 'ENOENT' });
+  }
+  await assert.rejects(fs.access(path.join(f.context.stateDir, 'last-backup')), { code: 'ENOENT' });
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(f.context.stateDir, 'policy-deployment.json'))), { backup: null, extra: true });
+  assert.deepEqual(await retainManagedBackups(f.context, { keepPerMode: 0 }), { removed: [pure], warnings: [] });
+  await fs.access(previous); await fs.access(active);
+});
+
+test('only the current successful Chezmoi outer snapshot with the verified identity can be retired', async t => {
+  const f = await fixture(t);
+  const backup = path.join(f.context.home, '.agent-work/backups/personal-agent-control/outer-fixture');
+  await fs.mkdir(backup, { recursive: true });
+  await fs.mkdir(f.context.stateDir, { recursive: true });
+  const pointer = path.join(f.context.stateDir, 'last-backup');
+  await fs.writeFile(pointer, backup + '\n');
+  await fs.writeFile(path.join(backup, '.pac-outer-token'), 'fixture\n');
+  const proof = await outerBackupProof(f.context, backup, 'fixture');
+  await assert.rejects(retireOuterBackup(f.context, backup, 'other', proof), /token/);
+  await fs.writeFile(path.join(backup, 'extra'), 'modified');
+  await assert.rejects(retireOuterBackup(f.context, backup, 'fixture', proof), /changed/);
+  const updated = await outerBackupProof(f.context, backup, 'fixture');
+  await retireOuterBackup(f.context, backup, 'fixture', updated);
+  await assert.rejects(fs.access(backup), { code: 'ENOENT' });
 });
 
 test('pointers, pinned snapshots, changed snapshots and incomplete rollback evidence remain protected', async t => {

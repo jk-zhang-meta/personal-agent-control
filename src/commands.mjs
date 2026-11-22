@@ -30,7 +30,7 @@ import {
 } from './capabilities.mjs';
 import { run } from './exec.mjs';
 import { PacError, usage } from './errors.mjs';
-import { completeManagedBackup, retainManagedBackups } from './backup-retention.mjs';
+import { finishManagedBackup, outerBackupProof, retainManagedBackups } from './backup-retention.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
 import { hostAdapterStatus, reconcileHostAdapters } from './host-adapters.mjs';
 import { scanGuardStatus, reconcileScanGuard } from './scan-guard.mjs';
@@ -549,23 +549,29 @@ async function applyUnlocked(context, options = {}) {
       verification.healthy = false;
       if (verification.state === 'healthy') verification.state = 'degraded';
     }
+    const transient = profile?.manifest.backupRetention === 'transaction-only' && verification.healthy;
     const receipt = await writeReceipt(context, {
-      operation: 'apply', backup, hosts: scopedEnabledHosts, enabledHosts: enabled,
+      operation: 'apply', ...(transient ? { transactionBackup: backup, backupRetention: 'transaction-only' } : { backup }),
+      hosts: scopedEnabledHosts, enabledHosts: enabled,
       neutralSkillStore: neutral, skills: desired, plugins: effectivePlugins,
       providers: providers.providers,
       verification: { state: verification.state, healthy: verification.healthy },
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
     });
     let retention = { removed: [], warnings: [] };
+    let outerProof;
+    if (options.precreatedBackupKind === 'chezmoi-outer' && transient) {
+      try { outerProof = await outerBackupProof(context, backup, process.env.PAC_CHEZMOI_TOKEN); }
+      catch (error) { retention.warnings.push(error.message); }
+    }
     if (options.precreatedBackupKind !== 'chezmoi-outer'
         && ['healthy', 'degraded'].includes(verification.state) && !verification.skipped) {
-      const sealed = await completeManagedBackup(context, backup, { outcome: 'complete',
-        containsUnownedOriginals: priorOwnedMap.size === 0 || unownedNativeBaseline });
-      retention = await retainManagedBackups(context, { protectedBackups: [backup] });
-      if (!sealed.ok) retention.warnings.push(sealed.warning);
+      retention = await finishManagedBackup(context, backup, verification.healthy ? profile : null,
+        priorOwnedMap.size === 0 || unownedNativeBaseline);
     }
     return {
-      backup, receipt, retention, hosts: scopedEnabledHosts, neutralSkillStore: neutral, skills: desired,
+      backup: retention.removed.includes(backup) ? null : backup, receipt, retention, hosts: scopedEnabledHosts, neutralSkillStore: neutral, skills: desired,
+      ...(outerProof ? { outerProof } : {}),
       materializers, profileSkills, retiredProfileSkills, retiredLegacyCodexSkills,
       statuslineChanged: footerChanges,
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
@@ -1430,6 +1436,10 @@ export async function executeCommand(context, command, args, options = {}) {
     case 'status': if (args.length) throw usage('pac status accepts no arguments.'); return await status(context, options);
     case 'doctor': if (args.length) throw usage('pac doctor accepts no arguments.'); return await doctor(context, options);
     case 'rollback': return await rollback(context, args);
+    case 'backup': {
+      if (args.length !== 1 || args[0] !== 'prune') throw usage('Usage: pac backup prune');
+      return await withLock(context, () => retainManagedBackups(context, { keepPerMode: 0 }));
+    }
     case 'update': if (args.length) throw usage('pac update accepts no arguments.'); return await selfUpdate(context, options);
     case 'self-update': if (args.length) throw usage('pac self-update accepts no arguments.'); return await selfUpdate(context, options);
     case 'skill': return await skillCommand(context, args.shift(), args, options);

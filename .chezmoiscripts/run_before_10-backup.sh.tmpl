@@ -394,8 +394,11 @@ pac_assert_safe_ancestors "$home" "$transaction_rel" "Chezmoi transaction marker
     exit 1
 }
 
-mkdir -p "$backup/home"
+mkdir -p "$backup_root"
+mkdir "$backup"
 backup_owned=true
+mkdir "$backup/home"
+printf '%s\n' "$outer_token" > "$backup/.pac-outer-token"
 pac_assert_real_directory "$backup/home" "backup home"
 cut -f1 "$paths_sorted" > "$manifest"
 while IFS="$(printf '\t')" read -r rel kind; do

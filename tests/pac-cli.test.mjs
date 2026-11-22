@@ -362,7 +362,7 @@ cp -R "$2"/. "$target"/
 
 async function makeProfileRepository({
   enabledPlugins = [], catalogPlugins = [], skillTargets = ['codex', 'claude'],
-  bootstrap = null, scanGuard = false, materializer = null, providers = null,
+  bootstrap = null, scanGuard = false, materializer = null, providers = null, backupRetention = null,
 } = {}) {
   const root = await temporary('pac-profile-repository-');
   const skill = path.join(root, 'skills/profile-fixture');
@@ -480,6 +480,7 @@ async function makeProfileRepository({
       providers: { enabled: providers },
     });
   }
+  if (backupRetention !== null) Object.assign(manifest, { schemaVersion: 4, backupRetention });
   await fs.writeFile(path.join(root, 'pac-profile.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   for (const args of [
     ['init', '--quiet', '--initial-branch=main'],
@@ -1263,6 +1264,20 @@ test('Profile set, cached replay, status, and remove converge through the PAC tr
   assert.equal(await exists(path.join(home, '.agents/skills/profile-fixture')), false);
   assert.equal(await exists(path.join(home, '.local/share/agent-skills/.agents/skills/profile-fixture')), false);
   assert.equal(await exists(path.join(home, '.config/personal-agent-control/profile.json')), false);
+});
+
+test('transaction-only Profile discards the verified full apply checkpoint and keeps failed rollback evidence', { timeout: 120_000 }, async () => {
+  const { root, home, env, doctor } = await makeRealLifecycleFixture();
+  const profile = await makeProfileRepository({ providers: [], backupRetention: 'transaction-only' });
+  const verified = { ...env, PAC_SKIP_POST_DOCTOR: '0', PAC_DOCTOR: '/bin/true' };
+  const attached = runJsonPac(root, home, ['profile', 'set', profile.root, 'main', profile.commit], verified, 'codex');
+  assert.equal(attached.status, 0, attached.stderr || attached.stdout);
+  assert.equal(attached.json.data.backup, null);
+  assert.equal(attached.json.data.retention.removed.length, 1);
+  assert.equal(await exists(attached.json.data.retention.removed[0]), false);
+  const failed = runJsonPac(root, home, ['apply'], { ...verified, PAC_DOCTOR: doctor }, 'codex');
+  assert.equal(failed.json.error.details.rollback.succeeded, true);
+  assert.ok(await exists(failed.json.error.details.rollback.backup));
 });
 
 test('Profile ppt-master replaces only an unchanged prior explicit pin', { timeout: 120_000 }, async () => {
