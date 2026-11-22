@@ -201,6 +201,10 @@ directory and passes it the pinned upstream command and arguments. It uses
 the Skill from the exact Profile checkout, including on provider-only clients.
 Each client selected by the Skill receives the adapter at reconciliation.
 Earlier Profiles continue to launch the upstream command directly.
+When that Profile selects CodeGraph and targets all clients, a full `pac apply`
+or Profile update also installs the adapter for initialized agy and Grok
+installations. A host-scoped apply updates only the requested native host.
+Use the provider-only command for an independent compatibility-client install.
 The reviewed CodeGraph pin is 1.6.0. After a pin advance, check each registered
 project with `codegraph status` and run one bounded `codegraph index` when the
 status reports that a rebuild is required; 1.6.0 includes graph-drift and WAL

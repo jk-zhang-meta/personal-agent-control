@@ -139,6 +139,10 @@ function expectedCommand(context, provider) {
 }
 
 const CODEGRAPH_ADAPTER = 'scripts/codegraph-mcp.mjs';
+const COMPATIBILITY_INSTALL_MARKERS = {
+  agy: ['.gemini/antigravity-cli/bin', '.gemini/antigravity-cli/installation_id'],
+  grok: ['.grok/bin', '.grok/version.json'],
+};
 
 async function codegraphBinding(context, provider, bridge) {
   const stat = await fs.lstat(bridge).catch(error => {
@@ -160,6 +164,40 @@ async function profileBindings(context, profile, provider) {
   const binding = await codegraphBinding(context, provider, path.join(profile.root, skill.path, CODEGRAPH_ADAPTER));
   const hosts = skill.targets.includes('*') ? PROVIDER_CLIENTS : skill.targets;
   return Object.fromEntries(hosts.map(host => [host, binding]));
+}
+
+// Full Profile application can enable the vendored bridge on native
+// compatibility clients. Provider-only deployments remain independently owned
+// until they are selected by a full application.
+export async function defaultCodegraphClients(context, profile) {
+  const owned = (await readOwnership(context)).providers.codegraph || {};
+  const scope = Object.keys(COMPATIBILITY_INSTALL_MARKERS).filter(host => owned[host]?.defaultManaged === true);
+  const requested = selectedNames(profile).has('codegraph')
+    && profile?.manifest.skills?.some(skill => skill.name === 'workspace-locator' && skill.targets.includes('*'));
+  if (!requested && scope.length === 0) return {};
+  const provider = (await catalog(context)).find(entry => entry.name === 'codegraph');
+  if (!provider) throw new PacError('PROVIDER_UNKNOWN', 'The default CodeGraph provider is absent from the Core catalog.');
+  const bindings = requested ? await profileBindings(context, profile, provider) : {};
+  const enabled = [];
+  for (const [host, nativeMarkers] of Object.entries(COMPATIBILITY_INSTALL_MARKERS)) {
+    if (!provider.hosts[host] || !bindings[host] || bindings[host] === provider) continue;
+    // Grok's footer also creates config.toml, so its presence alone cannot
+    // establish native installation. A provider-only binding also suffices.
+    const roots = nativeMarkers.map(marker => path.join(context.home, marker));
+    if (host === 'agy' || owned[host]) roots.push(providerConfigPath(context, provider.hosts[host].config));
+    for (const filename of roots) {
+      const state = await fs.lstat(filename).catch(error => {
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+        return null;
+      });
+      if (state && (state.isFile() || state.isDirectory())) {
+        enabled.push(host);
+        break;
+      }
+    }
+  }
+  const included = [...new Set([...scope, ...enabled])];
+  return { scope: included, enabled, configPaths: included.map(host => provider.hosts[host].config) };
 }
 
 function ownedBinding(provider, ownership, host) {
@@ -453,7 +491,7 @@ async function providerVersion(context, provider) {
   };
 }
 
-export async function providerStatus(context, profile, enabledHosts, scopeHosts, names, { deployedBinding = false } = {}) {
+export async function providerStatus(context, profile, enabledHosts, scopeHosts, names, { deployedBinding = false, defaultCodegraph = {} } = {}) {
   const selected = selectedNames(profile);
   const ownership = await readOwnership(context);
   if (selected.size === 0 && Object.keys(ownership.providers).length === 0) return [];
@@ -463,14 +501,17 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
   const results = [];
   for (let provider of providers) {
     if (names && !names.includes(provider.name)) continue;
-    const active = PROVIDER_CLIENTS.some((host) => scopeHosts.includes(host)
-      && enabledHosts.includes(host) && provider.hosts[host] && selected.has(provider.name));
+    const extras = provider.name === 'codegraph' ? defaultCodegraph : {};
+    const scoped = [...scopeHosts, ...(extras.scope || [])];
+    const enabled = [...enabledHosts, ...(extras.enabled || [])];
+    const active = PROVIDER_CLIENTS.some((host) => scoped.includes(host)
+      && enabled.includes(host) && provider.hosts[host] && selected.has(provider.name));
     if (active) provider = await resolveWslPlaywright(context, provider);
     const bindings = active ? await profileBindings(context, profile, provider) : {};
     const version = active ? await providerVersion(context, provider) : null;
     for (const host of PROVIDER_CLIENTS) {
-      if (!scopeHosts.includes(host) || !provider.hosts[host]) continue;
-      const hostActive = enabledHosts.includes(host) && selected.has(provider.name);
+      if (!scoped.includes(host) || !provider.hosts[host]) continue;
+      const hostActive = enabled.includes(host) && selected.has(provider.name);
       const file = providerConfigPath(context, provider.hosts[host].config);
       let inspectedProvider = hostActive ? bindings[host] || provider : ownedBinding(provider, ownership, host);
       let bindingReady = true;
@@ -503,7 +544,7 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
 }
 
 export async function reconcileProviders(context, profile, enabledHosts, scopeHosts, mode = 'apply', options = {}) {
-  const { names, write = atomicWriteFile, installRuntime = true, profileCommit } = options;
+  const { names, write = atomicWriteFile, installRuntime = true, profileCommit, defaultCodegraph = {} } = options;
   const selected = selectedNames(profile);
   const ownership = await readOwnership(context);
   if (selected.size === 0 && Object.keys(ownership.providers).length === 0) return { valid: true, providers: [] };
@@ -515,8 +556,11 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
   const results = [];
   for (let provider of providers) {
     if (names && !names.includes(provider.name)) continue;
-    const activeHosts = PROVIDER_CLIENTS.filter((host) => scopeHosts.includes(host)
-      && enabledHosts.includes(host) && provider.hosts[host] && selected.has(provider.name));
+    const extras = provider.name === 'codegraph' ? defaultCodegraph : {};
+    const scoped = [...scopeHosts, ...(extras.scope || [])];
+    const enabled = [...enabledHosts, ...(extras.enabled || [])];
+    const activeHosts = PROVIDER_CLIENTS.filter((host) => scoped.includes(host)
+      && enabled.includes(host) && provider.hosts[host] && selected.has(provider.name));
     if (activeHosts.length) provider = await resolveWslPlaywright(context, provider);
     const bindings = activeHosts.length ? await profileBindings(context, profile, provider) : {};
     for (const host of activeHosts) {
@@ -537,7 +581,7 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
       throw new PacError('PROVIDER_VERSION_INVALID', `${provider.name} version does not match the reviewed Core pin.`, version);
     }
     for (const host of PROVIDER_CLIENTS) {
-      if (!scopeHosts.includes(host) || !provider.hosts[host]) continue;
+      if (!scoped.includes(host) || !provider.hosts[host]) continue;
       const file = providerConfigPath(context, provider.hosts[host].config);
       if (activeHosts.includes(host)) {
         const binding = bindings[host] || provider;
@@ -558,6 +602,7 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
           ...(ownership.providers[provider.name]?.[host] || {}),
           config: provider.hosts[host].config, command: expectedCommand(context, binding), args: expandedArgs(context, binding),
           ...(appliedCommit ? { profileCommit: appliedCommit } : {}),
+          ...(extras.enabled?.includes(host) ? { defaultManaged: true } : {}),
         } };
         results.push({ provider: provider.name, host, action: mode === 'apply' ? 'applied' : 'checked', upgrade, version });
       } else if (ownership.providers[provider.name]?.[host]) {

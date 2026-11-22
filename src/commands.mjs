@@ -37,7 +37,7 @@ import { scanGuardStatus, reconcileScanGuard } from './scan-guard.mjs';
 import { policyStatus, synchronizePolicy } from './policy-deployment.mjs';
 import { statuslineChanges, statuslineSkill } from './statusline.mjs';
 import { atomicWriteFile } from './atomic-file.mjs';
-import { assertProfileProvidersKnown, providerStatus, reconcileProviders } from './providers.mjs';
+import { assertProfileProvidersKnown, defaultCodegraphClients, providerStatus, reconcileProviders } from './providers.mjs';
 import { providerDeploymentStatus, synchronizeProvider } from './provider-deployment.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { profileBootstrapStatus, reconcileProfileBootstrap } from './profile-bootstrap.mjs';
@@ -458,6 +458,7 @@ async function applyUnlocked(context, options = {}) {
   const unknownPlugins = effectivePlugins.filter((name) => !knownPlugins.some((entry) => entry.name === name));
   if (unknownPlugins.length) throw new PacError('PLUGIN_UNKNOWN', `Unknown Plugin(s): ${unknownPlugins.join(', ')}`);
   await assertProfileProvidersKnown(context, profile);
+  const defaultCodegraph = scope.length === HOSTS.length ? await defaultCodegraphClients(context, profile) : {};
   // Reject already-installed Plugins outside PAC's catalog before APM or host
   // projections are touched. A late rejection would require rollback while a
   // host may be loading a projected Skill.
@@ -487,6 +488,7 @@ async function applyUnlocked(context, options = {}) {
   await augmentBackup(context, backup, provisional, {
     activeHosts: scopedEnabledHosts,
     statuslineHosts: footerHosts,
+    providerConfigPaths: defaultCodegraph.configPaths,
     pluginEntries: knownPlugins,
     desiredPlugins: effectivePlugins,
   });
@@ -526,7 +528,7 @@ async function applyUnlocked(context, options = {}) {
       })),
     ]);
     const adapters = await reconcileHostAdapters(context, enabled, reconciliationScope);
-    const providers = await reconcileProviders(context, effectiveProfile, enabled, reconciliationScope, 'apply');
+    const providers = await reconcileProviders(context, effectiveProfile, enabled, reconciliationScope, 'apply', { defaultCodegraph });
     const footerChanges = [];
     for (const host of footerHosts) {
       const [change] = await statuslineChanges(context, path.join(neutral, '.agents/skills'), [host], footer);
@@ -758,7 +760,10 @@ async function status(context, options = {}) {
       code: error.code || 'SCAN_GUARD_INVALID', error: error.message, details: error.details }];
   }
   let providers;
-  try { providers = await providerStatus(context, effectiveProfile, enabled, scope); }
+  try {
+    const defaultCodegraph = scope.length === HOSTS.length ? await defaultCodegraphClients(context, effectiveProfile) : {};
+    providers = await providerStatus(context, effectiveProfile, enabled, scope, undefined, { defaultCodegraph });
+  }
   catch (error) {
     providers = [{ provider: 'catalog', host: 'core', valid: false, error: error.message, details: error.details }];
   }

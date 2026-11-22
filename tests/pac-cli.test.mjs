@@ -363,6 +363,7 @@ cp -R "$2"/. "$target"/
 async function makeProfileRepository({
   enabledPlugins = [], catalogPlugins = [], skillTargets = ['codex', 'claude'],
   bootstrap = null, scanGuard = false, materializer = null, providers = null, backupRetention = null,
+  codegraphAdapter = false,
 } = {}) {
   const root = await temporary('pac-profile-repository-');
   const skill = path.join(root, 'skills/profile-fixture');
@@ -398,6 +399,14 @@ async function makeProfileRepository({
         targets: ['codex'],
       });
     }
+  }
+  if (codegraphAdapter) {
+    const skillRoot = path.join(root, 'skills/workspace-locator');
+    await fs.mkdir(path.join(skillRoot, 'scripts'), { recursive: true });
+    await fs.writeFile(path.join(skillRoot, 'SKILL.md'), '---\nname: workspace-locator\ndescription: CodeGraph bridge fixture.\n---\n');
+    await fs.writeFile(path.join(skillRoot, 'scripts/codegraph-mcp.mjs'), 'export {};\n');
+    scanSkills.push({ name: 'workspace-locator', path: 'skills/workspace-locator',
+      contentSha256: await hashDirectory(skillRoot), targets: ['*'] });
   }
   const capabilities = [{
     id: 'skill:profile-fixture',
@@ -1530,6 +1539,46 @@ test('Profile root is passed unchanged to post-apply and standalone doctor', { t
   assert.equal(checked.status, 0, checked.stderr || checked.stdout);
   const standaloneArgs = (await fs.readFile(log, 'utf8')).trim().split('\n');
   assert.deepEqual(standaloneArgs, postArgs);
+});
+
+test('full Profile apply includes installed default CodeGraph clients and restores them on rollback', { timeout: 120_000 }, async () => {
+  const { root, home, env, doctor } = await makeRealLifecycleFixture();
+  const profile = await makeProfileRepository({ providers: ['codegraph'], codegraphAdapter: true });
+  await fs.copyFile(path.join(repo, 'catalog/providers.json'), path.join(root, 'catalog/providers.json'));
+  await fs.writeFile(path.join(root, 'catalog/files.sha256'), await sourceIntegrityManifest(root));
+  const nativeConfigs = ['.gemini/config/mcp_config.json', '.grok/config.toml'];
+  const originals = ['{"mcpServers":{"keep":{"command":"leave-alone"}}}\n', 'theme = "dark"\n'];
+  await fs.mkdir(path.join(home, '.gemini/config'), { recursive: true });
+  await fs.mkdir(path.join(home, '.grok/bin'), { recursive: true });
+  await Promise.all(nativeConfigs.map((file, index) => fs.writeFile(path.join(home, file), originals[index])));
+  const options = { ...env, PAC_PROVIDER_NO_VERSION_CHECK: '1' };
+  const attach = ['profile', 'set', profile.root, 'main', profile.commit];
+  const failed = runJsonPacUnscoped(root, home, attach, { ...options, PAC_SKIP_POST_DOCTOR: '0', PAC_DOCTOR: doctor });
+  assert.equal(failed.json?.error?.details?.rollback?.succeeded, true, failed.stderr || failed.stdout);
+  assert.deepEqual(await Promise.all(nativeConfigs.map(file => fs.readFile(path.join(home, file), 'utf8'))), originals);
+
+  const scoped = runJsonPac(root, home, attach, options, 'codex');
+  assert.equal(scoped.status, 0, scoped.stderr || scoped.stdout);
+  assert.deepEqual(await Promise.all(nativeConfigs.map(file => fs.readFile(path.join(home, file), 'utf8'))), originals);
+  const applied = runJsonPacUnscoped(root, home, ['apply'], options);
+  assert.equal(applied.status, 0, applied.stderr || applied.stdout);
+  const checked = runJsonPacUnscoped(root, home, ['status'], options);
+  assert.equal(checked.status, 0, checked.stderr || checked.stdout);
+  const codegraph = checked.json.data.providers.filter(entry => entry.provider === 'codegraph');
+  assert.deepEqual(codegraph.map(entry => entry.host), ['codex', 'claude', 'agy', 'grok']);
+  assert.ok(codegraph.every(entry => entry.valid && entry.owned && entry.profileCommit === profile.commit));
+  const diagnosed = runJsonPacUnscoped(root, home, ['doctor'], { ...options, PAC_DOCTOR: '/usr/bin/true' });
+  assert.equal(diagnosed.status, 0, diagnosed.stderr || diagnosed.stdout);
+  assert.deepEqual(diagnosed.json.data.status.providers, checked.json.data.providers);
+  const agy = JSON.parse(await fs.readFile(path.join(home, nativeConfigs[0]), 'utf8'));
+  assert.equal(agy.mcpServers.keep.command, 'leave-alone');
+  assert.match(agy.mcpServers.codegraph.args[0], /workspace-locator\/scripts\/codegraph-mcp\.mjs$/u);
+  assert.match(await fs.readFile(path.join(home, nativeConfigs[1]), 'utf8'), /theme = "dark"/u);
+
+  const removed = runJsonPacUnscoped(root, home, ['profile', 'remove'], options);
+  assert.equal(removed.status, 0, removed.stderr || removed.stdout);
+  assert.deepEqual(Object.keys(JSON.parse(await fs.readFile(path.join(home, nativeConfigs[0]), 'utf8')).mcpServers), ['keep']);
+  assert.equal(await fs.readFile(path.join(home, nativeConfigs[1]), 'utf8'), originals[1]);
 });
 
 test('late Profile apply failure rolls back Profile-only Plugin artifacts and can retry', { timeout: 120_000 }, async () => {

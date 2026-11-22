@@ -88,6 +88,7 @@ validate_path() {
             ;;
         .codex/config.toml|.codex/AGENTS.md|\
         .grok/config.toml|.gemini/antigravity-cli/settings.json|\
+        .gemini/config/mcp_config.json|\
         .codex/hooks.json|\
         .codex/agents/independent-reviewer.toml|.codex/agents/pac-reviewer.toml|\
         .claude.json|.claude/.claude.json|.claude/settings.json|\

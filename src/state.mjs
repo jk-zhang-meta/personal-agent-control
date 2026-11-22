@@ -466,6 +466,7 @@ const BACKUP_REGULAR_FILES = new Set([
   '.codex/config.toml',
   '.grok/config.toml',
   '.gemini/antigravity-cli/settings.json',
+  '.gemini/config/mcp_config.json',
   '.codex/hooks.json',
   '.codex/AGENTS.md',
   '.codex/agents/independent-reviewer.toml',
@@ -812,6 +813,7 @@ function desiredStateBackupPaths(desiredSkills, options = {}) {
   }
   if (options.statuslineHosts?.includes('agy')) paths.add('.gemini/antigravity-cli/settings.json');
   if (options.statuslineHosts?.includes('grok')) paths.add('.grok/config.toml');
+  for (const file of options.providerConfigPaths || []) paths.add(file);
 
   for (const skill of desiredSkills) {
     assertSafeName(skill.id);
