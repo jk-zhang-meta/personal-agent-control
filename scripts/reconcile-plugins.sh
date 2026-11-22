@@ -576,11 +576,17 @@ marketplace_exact() {
     desired=$4
     json_test marketplace-exact "$host_name" "$tmp/$host_name-marketplaces.json" \
         "$marketplace" "$directory" || return 1
-    while IFS="$(printf '\t')" read -r plugin row_marketplace _a _s _r _c _t version targets _rest; do
+    while IFS="$(printf '\t')" read -r plugin row_marketplace _a _s _r commit _t version targets _rest; do
         case "$plugin" in ''|'#'*) continue ;; esac
         if [ "$row_marketplace" = "$marketplace" ] && target_includes "$host_name" "$targets"; then
             json_test plugin-exact "$host_name" "$tmp/$host_name-plugins.json" \
                 "$plugin@$marketplace" "$version" "$directory" || return 1
+            if rotating_marketplace "$marketplace"; then
+                cache="$home/.$host_name/plugins/cache/$marketplace/$plugin/$version"
+                json_test plugin-exact "$host_name" "$tmp/$host_name-plugins.json" \
+                    "$plugin@$marketplace" "$version" "$directory" "$cache" || return 1
+                node "$repo/src/plugin-source-state.mjs" check-cache "$directory" "$commit" "$cache" "$host_name" "$plugin" || return 1
+            fi
         fi
     done < "$catalog"
     assert_no_unmanaged_in_marketplace "$host_name" "$marketplace" "$desired"
@@ -663,7 +669,7 @@ reconcile_current_for_host() {
             exit 1
         }
         assert_no_unmanaged_in_marketplace "$host_name" "$marketplace" "$tmp/desired-current"
-        if [ "$host_name" = claude ] && rotating_marketplace "$marketplace"; then
+        if [ "$host_name" = claude ] && rotating_marketplace "$marketplace" && marketplace_was_owned "$marketplace"; then
             # Preserve installations at project/local scopes, which may share
             # the previous version's native cache and marketplace registration.
             while IFS= read -r id; do
@@ -779,9 +785,13 @@ for host_name in codex claude; do
         assert_all_installed_managed "$host_name" true
         if [ -n "$prior_pins" ]; then
             while IFS="$(printf '\t')" read -r plugin market _acq _origin _ref _commit _tree version _rest; do
+                if source_pending_install "$market" && ! marketplace_present "$host_name" "$market" &&
+                    ! plugin_present "$host_name" "$plugin@$market"; then continue; fi
+                cache="$home/.$host_name/plugins/cache/$market/$plugin/$version"
                 if ! plugin_was_owned_for_host "$host_name" "$plugin" "$market" ||
                     ! json_test marketplace-exact "$host_name" "$tmp/$host_name-marketplaces.json" "$market" "$source_parent/$market" ||
-                    ! json_test plugin-exact "$host_name" "$tmp/$host_name-plugins.json" "$plugin@$market" "$version" "$source_parent/$market"; then
+                    ! json_test plugin-exact "$host_name" "$tmp/$host_name-plugins.json" "$plugin@$market" "$version" "$source_parent/$market" "$cache" ||
+                    ! node "$repo/src/plugin-source-state.mjs" check-cache "$source_parent/$market" "$_commit" "$cache" "$host_name" "$plugin"; then
                     echo "DRIFT: prior Plugin registration $host_name/$plugin@$market" >&2
                     exit 1
                 fi

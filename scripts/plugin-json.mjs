@@ -79,7 +79,7 @@ switch (command) {
     process.exit(plugins.some((entry) => pluginId(entry) === id) ? 0 : 1);
   }
   case 'plugin-exact': {
-    const [id, version, source] = args;
+    const [id, version, source, cache] = args;
     const entry = plugins.find((candidate) => pluginId(candidate) === id
       && (host !== 'claude' || !candidate.scope || candidate.scope === 'user'));
     if (!entry || entry.version !== version || entry.enabled !== true) process.exit(1);
@@ -88,7 +88,7 @@ switch (command) {
         samePath(entry.marketplaceSource.source, source);
       process.exit(entry.installed === true && exactSource ? 0 : 1);
     }
-    process.exit(entry.installPath && fs.existsSync(entry.installPath) ? 0 : 1);
+    process.exit(entry.installPath && fs.existsSync(entry.installPath) && (!cache || samePath(entry.installPath, cache)) ? 0 : 1);
   }
   case 'plugins-for-marketplace': {
     const [name] = args;

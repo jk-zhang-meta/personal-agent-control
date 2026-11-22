@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -57,7 +58,7 @@ function restorePluginArg(value, canonical, root) {
   return { value: canonical, changed: true, valid: true, rootRewrite: true };
 }
 
-function restorePluginJson(current, canonical, root) {
+function restorePluginJson(current, canonical, root, allowCurrentNode = false) {
   const restored = structuredClone(current);
   const expected = structuredClone(canonical);
   let changed = false;
@@ -93,7 +94,8 @@ function restorePluginJson(current, canonical, root) {
     serverRestored.args = args.map((item) => item.value);
     restored.mcpServers[name] = serverRestored;
     changed ||= command.changed || args.some((item) => item.changed);
-    rootRewrite ||= args.some((item) => item.rootRewrite === true);
+    rootRewrite ||= args.some((item) => item.rootRewrite === true)
+      || (allowCurrentNode && command.changed && currentServer.command === process.execPath);
   }
 
   if (!changed || !rootRewrite || JSON.stringify(restored) !== JSON.stringify(expected)) return null;
@@ -216,8 +218,61 @@ export function isKnownRuntimeMutation(directory) {
   return true;
 }
 
+// Verify only locally sourced marketplace entries. Refuse unsupported native
+// layouts before updating the user's installation. Source pin and ownership
+// are checked by the shell reconciler before reaching this comparison.
+function verifyCache(source, commit, cache, host, name) {
+  const manifest = host === 'claude' ? '.claude-plugin/marketplace.json' : '.agents/plugins/marketplace.json';
+  const entries = JSON.parse(git(source, ['show', `${commit}:${manifest}`])).plugins;
+  const spec = entries.find(entry => entry.name === name)?.source;
+  const relative = typeof spec === 'string' ? spec : spec?.path ?? spec?.url;
+  if (typeof relative !== 'string' || !relative.startsWith('./') || relative.split('/').includes('..')) return false;
+  const subtree = path.posix.normalize(relative).replace(/\/$/u, '');
+  const tree = subtree === '.' ? commit : `${commit}:${subtree}`;
+  const expected = new Map(git(source, ['ls-tree', '-r', '-z', tree]).split('\0').filter(Boolean).map(row => {
+    const tab = row.indexOf('\t');
+    return [row.slice(tab + 1), row.slice(0, tab).split(' ')];
+  }));
+  if (!expected.size || fs.realpathSync(cache) !== cache) return false;
+  const hasPackage = expected.has('package.json');
+  function visit(dir, prefix) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const key = prefix + entry.name;
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!prefix && (entry.name === '.git' || (entry.name === 'node_modules' && hasPackage))) continue;
+        if (!visit(file, key + '/')) return false;
+        continue;
+      }
+      const recorded = expected.get(key);
+      if (!recorded || recorded[1] !== 'blob') return false;
+      const mode = entry.isSymbolicLink() ? '120000' : entry.isFile()
+        ? (fs.statSync(file).mode & 0o100 ? '100755' : '100644') : null;
+      if (mode !== recorded[0]) return false;
+      const data = entry.isSymbolicLink() ? fs.readlinkSync(file, { encoding: 'buffer' }) : fs.readFileSync(file);
+      const actual = createHash('sha1').update(`blob ${data.length}\0`).update(data).digest('hex');
+      if (actual !== recorded[2]) {
+        if (!ALLOWED_FILES.has(key)) return false;
+        const canonical = JSON.parse(git(source, ['cat-file', 'blob', recorded[2]]));
+        const current = JSON.parse(data);
+        const restore = key === 'hooks/hooks.json' ? restoreHooksJson : restorePluginJson;
+        if (![cache, path.resolve(source, subtree)].some(root => restore(current, canonical, normalizedRoot(root), true))) return false;
+      }
+      expected.delete(key);
+    }
+    return true;
+  }
+  return visit(cache, '') && expected.size === 0;
+}
+
 function main() {
   const [command, directory] = process.argv.slice(2);
+  if (command === 'check-cache') {
+    try {
+      if (!verifyCache(...process.argv.slice(3))) process.exitCode = 1;
+    } catch { process.exitCode = 1; }
+    return;
+  }
   if (command !== 'check' || !directory || !isKnownRuntimeMutation(directory)) {
     process.exitCode = 1;
     return;

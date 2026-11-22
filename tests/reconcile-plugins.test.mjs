@@ -22,6 +22,11 @@ test('preflight permits an enabled Plugin source to be acquired during apply', a
   const catalog = path.join(tmp, 'plugins.tsv');
   try {
     await fs.mkdir(path.join(upstream, 'plugins/context-mode/skills/context-mode'), { recursive: true });
+    await fs.mkdir(path.join(upstream, '.agents/plugins'), { recursive: true });
+    await fs.writeFile(path.join(upstream, '.agents/plugins/marketplace.json'), JSON.stringify({
+      plugins: [{ name: 'context-mode', source: { source: 'local', path: './plugins/context-mode' } }],
+    }));
+    await fs.writeFile(path.join(upstream, 'plugins/context-mode/hook.mjs'), 'export const enabled = true;');
     await fs.writeFile(path.join(upstream, 'plugins/context-mode/skills/context-mode/SKILL.md'),
       '---\nname: context-mode\ndescription: fixture\n---\n');
     run('git', ['init', '--quiet', upstream]);
@@ -52,6 +57,8 @@ if (args.join(' ') === 'plugin marketplace list --json') {
   const marketplace = read(marketplacesFile)[0];
   const versionFile = path.join(marketplace.marketplaceSource.source, 'version.txt');
   const version = fs.existsSync(versionFile) ? fs.readFileSync(versionFile, 'utf8').trim() : '1.0.0';
+  const cache = path.join(process.env.HOME, '.codex/plugins/cache/context-mode/context-mode', version);
+  fs.cpSync(path.join(marketplace.marketplaceSource.source, 'plugins/context-mode'), cache, { recursive: true });
   write(pluginsFile, [{ pluginId: args[2], marketplaceName: 'context-mode', version, enabled: true, installed: true, marketplaceSource: marketplace.marketplaceSource }]);
 } else if (args.slice(0, 2).join(' ') === 'plugin remove') {
   write(pluginsFile, []);
@@ -127,6 +134,14 @@ if (args.join(' ') === 'plugin marketplace list --json') {
     await fs.writeFile(catalog, oldCatalog.replace(commit, next).replace(tree, nextTree).replace('1.0.0', '1.1.0'));
     rejectPreflight(/DRIFT/u);
     args.push('--prior-pins', priorPins);
+    const oldCache = path.join(home, '.codex/plugins/cache/context-mode/context-mode/1.0.0');
+    await fs.cp(path.join(upstream, 'plugins/context-mode'), oldCache, { recursive: true });
+    const hook = path.join(oldCache, 'hook.mjs');
+    const originalHook = await fs.readFile(hook);
+    await fs.writeFile(hook, 'unreviewed user hook');
+    rejectPreflight(/DRIFT: prior Plugin registration/u);
+    assert.equal(await fs.readFile(hook, 'utf8'), 'unreviewed user hook');
+    await fs.writeFile(hook, originalHook);
     await fs.writeFile(path.join(cachedSource, 'unreviewed.txt'), 'local drift');
     rejectPreflight(/DRIFT/u);
     assert.equal(run('git', ['-C', cachedSource, 'rev-parse', 'HEAD']), commit);

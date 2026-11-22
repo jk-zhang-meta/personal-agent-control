@@ -127,7 +127,10 @@ export async function reconcilePlugins(context, config, hosts, mode = 'apply', p
   const override = process.env.PAC_PLUGIN_RECONCILER;
   const executable = override || 'sh';
   const results = [];
-  const previous = previousProfile ? await pluginCatalog(context, previousProfile) : [];
+  const priorSelection = previousProfile?.manifest?.plugins;
+  const priorEnabled = new Set([...config.plugins.enabled, ...(priorSelection?.enabled ?? [])]);
+  const previous = previousProfile ? (await pluginCatalog(context, previousProfile)).filter(entry =>
+    priorEnabled.has(entry.name) && !(priorSelection?.disabled ?? []).includes(entry.name)) : [];
   if (mode === 'apply') await removeStalePluginCatalogs(context);
   const enabled = [...new Set([
     ...config.plugins.enabled,
