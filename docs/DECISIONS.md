@@ -1668,7 +1668,8 @@ content PAC already owns still fail closed. Policy-only homes without a full
 installation are unchanged. Removing a Skill from the installation does not
 yet remove its compatibility link, and the next delivery drops that link from
 policy ownership.
-# Profile-selected native status lines
+
+## Profile-selected native status lines
 
 An embedded `personal-statusline` Skill opts a locked Profile into native
 footer configuration. The Profile supplies four Python renderers under

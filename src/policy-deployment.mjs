@@ -239,7 +239,17 @@ export async function synchronizePolicy(context, { repository, commit, baseline,
           if (await hashDirectory(staging) !== item.sha256) throw new PacError('POLICY_SOURCE_CHANGED', `Profile Skill changed: ${item.name}`);
         } else if (item.kind === 'link') {
           await fs.symlink(item.link, staging, process.platform === 'win32' ? 'junction' : 'dir');
-        } else await fs.writeFile(staging, item.content, { mode: 0o600, flag: 'wx' });
+        } else {
+          await fs.writeFile(staging, item.content, { mode: 0o600, flag: 'wx' });
+          if (item.partialConfig && item.before) {
+            const { mode, uid, gid } = await fs.stat(target);
+            if (process.platform !== 'win32') {
+              const current = await fs.stat(staging);
+              if (current.uid !== uid || current.gid !== gid) await fs.chown(staging, uid, gid);
+            }
+            await fs.chmod(staging, mode & 0o7777);
+          }
+        }
         const prior = path.join(backup, `${index}`);
         const entry = { target, prior: item.before ? prior : null, moved: false, installed: false, staging };
         journal.push(entry);
