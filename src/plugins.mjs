@@ -119,7 +119,7 @@ async function assertSafeActivePluginSurfaces(context, host) {
   }
 }
 
-export async function reconcilePlugins(context, config, hosts, mode = 'apply', profile = null) {
+export async function reconcilePlugins(context, config, hosts, mode = 'apply', profile = null, previousProfile = null) {
   if (!['apply', 'check', 'preflight'].includes(mode)) {
     throw new PacError('PLUGIN_MODE_INVALID', `Unknown Plugin reconciliation mode: ${mode}`);
   }
@@ -127,6 +127,7 @@ export async function reconcilePlugins(context, config, hosts, mode = 'apply', p
   const override = process.env.PAC_PLUGIN_RECONCILER;
   const executable = override || 'sh';
   const results = [];
+  const previous = previousProfile ? await pluginCatalog(context, previousProfile) : [];
   if (mode === 'apply') await removeStalePluginCatalogs(context);
   const enabled = [...new Set([
     ...config.plugins.enabled,
@@ -141,6 +142,23 @@ export async function reconcilePlugins(context, config, hosts, mode = 'apply', p
       mode, '--home', context.home, '--agents', host, '--catalog', catalog.file,
     ];
     try {
+      // A locked, verified previous Profile can attest the former source. An
+      // installed checkout or a host's inventory alone cannot authorize rotation.
+      const rotations = previous.filter(old => catalog.selected.some(next =>
+        old.name === next.name && old.marketplace === next.marketplace && old.targets.split(',').includes(host)
+        && ['source', 'commit', 'tree', 'ref', 'acquisition'].some(field => old[field] !== next[field])));
+      if (rotations.length) {
+        for (const old of rotations) {
+          const next = catalog.selected.find(entry => entry.name === old.name);
+          if (next.version === old.version) throw new PacError('PLUGIN_PIN_CONFLICT', 'Rotating a Plugin source requires a new native cache version.');
+          if (old.targets.split(',').some(target => config.hosts[target]?.enabled && !hosts.includes(target))) {
+            throw new PacError('PLUGIN_PIN_CONFLICT', 'Rotate a shared Plugin source with all enabled hosts in scope.');
+          }
+        }
+        const prior = path.join(catalog.directory, 'prior.tsv');
+        await fs.writeFile(prior, rotations.map(entry => entry.line).join('\n') + '\n', { mode: 0o600 });
+        args.push('--prior-pins', prior);
+      }
       const result = await run(executable, args, {
         cwd: context.root,
         errorCode: mode === 'apply' ? 'PLUGIN_APPLY_FAILED' : 'PLUGIN_DRIFT',

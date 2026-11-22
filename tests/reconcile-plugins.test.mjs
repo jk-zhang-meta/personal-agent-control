@@ -50,7 +50,13 @@ if (args.join(' ') === 'plugin marketplace list --json') {
   write(marketplacesFile, [{ name: 'context-mode', marketplaceSource: { sourceType: 'local', source: args[3] } }]);
 } else if (args[0] === 'plugin' && args[1] === 'add') {
   const marketplace = read(marketplacesFile)[0];
-  write(pluginsFile, [{ pluginId: args[2], marketplaceName: 'context-mode', version: '1.0.0', enabled: true, installed: true, marketplaceSource: marketplace.marketplaceSource }]);
+  const versionFile = path.join(marketplace.marketplaceSource.source, 'version.txt');
+  const version = fs.existsSync(versionFile) ? fs.readFileSync(versionFile, 'utf8').trim() : '1.0.0';
+  write(pluginsFile, [{ pluginId: args[2], marketplaceName: 'context-mode', version, enabled: true, installed: true, marketplaceSource: marketplace.marketplaceSource }]);
+} else if (args.slice(0, 2).join(' ') === 'plugin remove') {
+  write(pluginsFile, []);
+} else if (args.slice(0, 3).join(' ') === 'plugin marketplace remove') {
+  write(marketplacesFile, []);
 } else {
   process.exit(2);
 }
@@ -110,6 +116,30 @@ if (args.join(' ') === 'plugin marketplace list --json') {
     run(path.join(repo, 'scripts/reconcile-plugins.sh'), ['apply', ...args], { env });
     assert.equal(await fs.readFile(path.join(home, '.local/state/personal-agent-control/owned-plugins.tsv'), 'utf8'),
       '# plugin\tmarketplace\ttargets\ncontext-mode\tcontext-mode\tcodex\n');
+    const priorPins = path.join(tmp, 'prior.tsv');
+    const oldCatalog = await fs.readFile(catalog, 'utf8');
+    await fs.writeFile(priorPins, oldCatalog.split('\n')[1] + '\n');
+    await fs.writeFile(path.join(upstream, 'version.txt'), '1.1.0');
+    run('git', ['-C', upstream, 'add', 'version.txt']);
+    run('git', ['-C', upstream, 'commit', '--quiet', '-m', 'next release']);
+    const next = run('git', ['-C', upstream, 'rev-parse', 'HEAD']);
+    const nextTree = run('git', ['-C', upstream, 'rev-parse', 'HEAD^{tree}']);
+    await fs.writeFile(catalog, oldCatalog.replace(commit, next).replace(tree, nextTree).replace('1.0.0', '1.1.0'));
+    rejectPreflight(/DRIFT/u);
+    args.push('--prior-pins', priorPins);
+    await fs.writeFile(path.join(cachedSource, 'unreviewed.txt'), 'local drift');
+    rejectPreflight(/DRIFT/u);
+    assert.equal(run('git', ['-C', cachedSource, 'rev-parse', 'HEAD']), commit);
+    await fs.unlink(path.join(cachedSource, 'unreviewed.txt'));
+    const nativeFile = path.join(home, '.fixture-native/plugins.json');
+    const installed = JSON.parse(await fs.readFile(nativeFile, 'utf8'));
+    await fs.writeFile(nativeFile, JSON.stringify([{ ...installed[0], version: 'wrong' }]));
+    rejectPreflight(/DRIFT: prior Plugin registration/u);
+    await fs.writeFile(nativeFile, JSON.stringify(installed));
+    run(path.join(repo, 'scripts/reconcile-plugins.sh'), ['preflight', ...args], { env });
+    run(path.join(repo, 'scripts/reconcile-plugins.sh'), ['apply', ...args], { env });
+    run(path.join(repo, 'scripts/reconcile-plugins.sh'), ['check', ...args], { env });
+    assert.equal(run('git', ['-C', cachedSource, 'rev-parse', 'HEAD']), next);
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

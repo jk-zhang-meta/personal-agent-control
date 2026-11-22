@@ -80,7 +80,8 @@ switch (command) {
   }
   case 'plugin-exact': {
     const [id, version, source] = args;
-    const entry = plugins.find((candidate) => pluginId(candidate) === id);
+    const entry = plugins.find((candidate) => pluginId(candidate) === id
+      && (host !== 'claude' || !candidate.scope || candidate.scope === 'user'));
     if (!entry || entry.version !== version || entry.enabled !== true) process.exit(1);
     if (host === 'codex') {
       const exactSource = entry.marketplaceSource?.sourceType === 'local' &&

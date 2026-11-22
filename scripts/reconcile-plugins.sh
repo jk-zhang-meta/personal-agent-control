@@ -14,6 +14,7 @@ esac
 home=${HOME:?HOME is required}
 agents=codex,claude
 catalog="$repo/catalog/plugins.tsv"
+prior_pins=
 migrations_catalog="$repo/catalog/plugin-migrations.tsv"
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -30,6 +31,11 @@ while [ "$#" -gt 0 ]; do
         --catalog)
             [ "$#" -ge 2 ] || { echo "--catalog needs a value" >&2; exit 2; }
             catalog=$2
+            shift 2
+            ;;
+        --prior-pins)
+            [ "$#" -ge 2 ] && [ -f "$2" ] && [ ! -L "$2" ] || exit 2
+            prior_pins=$2
             shift 2
             ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -235,6 +241,20 @@ source_current() {
     fi
 }
 
+rotating_marketplace() {
+    [ -n "$prior_pins" ] && awk -F '\t' -v m="$1" '$2 == m { found=1 } END { exit !found }' "$prior_pins"
+}
+
+prior_source_current() (
+    marketplace_was_owned "$1" || exit 1
+    while IFS="$(printf '\t')" read -r _plugin market acquisition origin ref commit tree _rest; do
+        [ "$market" = "$1" ] || continue
+        source_current "$market" "$acquisition" "$origin" "$ref" "$commit" "$tree"
+        exit $?
+    done < "$prior_pins"
+    exit 1
+)
+
 install_source() {
     marketplace=$1
     acquisition=$2
@@ -250,6 +270,10 @@ install_source() {
         if [ ! -d "$directory" ] || [ -L "$directory" ] || \
             ! marketplace_was_owned "$marketplace"; then
             echo "unowned or unsafe Plugin source conflicts with $directory" >&2
+            exit 1
+        fi
+        if rotating_marketplace "$marketplace" && ! prior_source_current "$marketplace"; then
+            echo "DRIFT: prior Plugin source $directory" >&2
             exit 1
         fi
     fi
@@ -297,6 +321,9 @@ while IFS="$(printf '\t')" read -r marketplace acquisition source ref commit tre
     elif source_pending_install "$marketplace"; then
         continue
     elif ! source_current "$marketplace" "$acquisition" "$source" "$ref" "$commit" "$tree"; then
+        if [ "$mode" = preflight ] && rotating_marketplace "$marketplace" && prior_source_current "$marketplace"; then
+            continue
+        fi
         echo "DRIFT: Plugin source $source_parent/$marketplace" >&2
         exit 1
     fi
@@ -307,6 +334,7 @@ while IFS="$(printf '\t')" read -r plugin marketplace _acquisition _source _ref 
     [ "$bundled" != - ] || continue
     source_pending_install "$marketplace" && continue
     directory="$source_parent/$marketplace"
+    if [ "$mode" = preflight ] && rotating_marketplace "$marketplace"; then continue; fi
     [ "$mode" != preflight ] || [ -e "$directory" ] || [ -L "$directory" ] || continue
     remaining=$bundled
     while [ -n "$remaining" ]; do
@@ -635,6 +663,19 @@ reconcile_current_for_host() {
             exit 1
         }
         assert_no_unmanaged_in_marketplace "$host_name" "$marketplace" "$tmp/desired-current"
+        if [ "$host_name" = claude ] && rotating_marketplace "$marketplace"; then
+            # Preserve installations at project/local scopes, which may share
+            # the previous version's native cache and marketplace registration.
+            while IFS= read -r id; do
+                run_host claude plugin update "$id" --scope user >/dev/null
+            done < "$tmp/desired-current"
+            refresh_host "$host_name"
+            marketplace_exact "$host_name" "$marketplace" "$directory" "$tmp/desired-current" || {
+                echo "Plugin update did not converge: $host_name/$marketplace" >&2
+                exit 1
+            }
+            continue
+        fi
         while IFS= read -r id; do
             if plugin_present "$host_name" "$id"; then uninstall_plugin "$host_name" "$id"; fi
         done < "$tmp/desired-current"
@@ -736,6 +777,16 @@ for host_name in codex claude; do
         # owns in the pre-transaction state. Keep that exact removal eligible;
         # reject anything known to neither the new catalog nor prior ownership.
         assert_all_installed_managed "$host_name" true
+        if [ -n "$prior_pins" ]; then
+            while IFS="$(printf '\t')" read -r plugin market _acq _origin _ref _commit _tree version _rest; do
+                if ! plugin_was_owned_for_host "$host_name" "$plugin" "$market" ||
+                    ! json_test marketplace-exact "$host_name" "$tmp/$host_name-marketplaces.json" "$market" "$source_parent/$market" ||
+                    ! json_test plugin-exact "$host_name" "$tmp/$host_name-plugins.json" "$plugin@$market" "$version" "$source_parent/$market"; then
+                    echo "DRIFT: prior Plugin registration $host_name/$plugin@$market" >&2
+                    exit 1
+                fi
+            done < "$prior_pins"
+        fi
         continue
     fi
     if host_has_desired_plugins "$host_name"; then

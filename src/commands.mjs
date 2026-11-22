@@ -431,7 +431,8 @@ async function applyUnlocked(context, options = {}) {
   const profileResolution = await resolveProfileForApply(context, options.profileRequest);
   const profile = profileResolution.profile;
   const footer = statuslineSkill(profile);
-  const previousFooter = profileResolution.descriptorAction === 'keep' ? footer : statuslineSkill(await loadActiveProfile(context));
+  const previousProfile = profileResolution.descriptorAction === 'keep' ? null : await loadActiveProfile(context);
+  const previousFooter = profileResolution.descriptorAction === 'keep' ? footer : statuslineSkill(previousProfile);
   const scope = scopedHosts(options);
   const enabled = effectiveEnabledHosts(machine);
   const scopedEnabledHosts = enabled.filter((host) => scope.includes(host));
@@ -450,7 +451,7 @@ async function applyUnlocked(context, options = {}) {
   const materializerEntries = await selectedMaterializerExceptions(profile);
   const previousMaterializerEntries = profileResolution.descriptorAction === 'keep'
     ? materializerEntries
-    : await selectedMaterializerExceptions(await loadActiveProfile(context));
+    : await selectedMaterializerExceptions(previousProfile);
   const provisional = assertUniqueSkills(provisionalSkills(canonicalLock, profile, materializerEntries));
   const knownPlugins = await pluginCatalog(context, profile);
   const effectivePlugins = effectivePluginNames(config, profile);
@@ -460,7 +461,7 @@ async function applyUnlocked(context, options = {}) {
   // Reject already-installed Plugins outside PAC's catalog before APM or host
   // projections are touched. A late rejection would require rollback while a
   // host may be loading a projected Skill.
-  await reconcilePlugins(context, effectiveConfig, scopedEnabledHosts, 'preflight', profile);
+  await reconcilePlugins(context, effectiveConfig, scopedEnabledHosts, 'preflight', profile, previousProfile);
   await preflightManagedDrift(
     context,
     effectiveConfig,
@@ -495,7 +496,7 @@ async function applyUnlocked(context, options = {}) {
     // preflight above is an early, user-friendly rejection; this apply is the
     // transaction's first host mutation so a concurrent Plugin drift cannot
     // leave a partially updated PAC projection behind.
-    const plugins = await reconcilePlugins(context, effectiveConfig, reconciliationScope, 'apply', profile);
+    const plugins = await reconcilePlugins(context, effectiveConfig, reconciliationScope, 'apply', profile, previousProfile);
     if (profileResolution.descriptorAction === 'save') {
       await saveProfileDescriptor(context, profile.descriptor);
     } else if (profileResolution.descriptorAction === 'remove') {

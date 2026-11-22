@@ -1679,3 +1679,13 @@ all primary hosts are in scope. Policy sync follows its explicit client list.
 The merge requires Python 3.11 or newer and preserves unrelated native settings
 and custom footer commands. Reapplying the Profile adopts the conventional
 per-client statusline scripts and uses the installed, digest-verified Skill.
+
+## Rotating a Profile Plugin pin
+
+During a locked Profile replacement, PAC verifies each rotating marketplace's
+owned source against the previous catalog, including its exact origin, commit,
+tree, tag and allowed runtime rewrites. It verifies the native registration
+and version for each selected host before mutation. A new pin requires a new
+cache version and includes all enabled hosts sharing the source. Claude updates
+the user-scoped installation through its native update command so project
+installations can retain their existing version.
