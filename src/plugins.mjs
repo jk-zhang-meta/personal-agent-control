@@ -119,7 +119,7 @@ async function assertSafeActivePluginSurfaces(context, host) {
   }
 }
 
-export async function reconcilePlugins(context, config, hosts, mode = 'apply', profile = null, previousProfile = null) {
+export async function reconcilePlugins(context, config, hosts, mode = 'apply', profile = null, previousProfile = null, backup = null) {
   if (!['apply', 'check', 'preflight'].includes(mode)) {
     throw new PacError('PLUGIN_MODE_INVALID', `Unknown Plugin reconciliation mode: ${mode}`);
   }
@@ -161,12 +161,21 @@ export async function reconcilePlugins(context, config, hosts, mode = 'apply', p
         const prior = path.join(catalog.directory, 'prior.tsv');
         await fs.writeFile(prior, rotations.map(entry => entry.line).join('\n') + '\n', { mode: 0o600 });
         args.push('--prior-pins', prior);
+        if (mode === 'apply' && backup) args.push('--prior-sources', path.join(backup, 'home/.local/share/agent-plugins/sources'));
       }
       const result = await run(executable, args, {
         cwd: context.root,
         errorCode: mode === 'apply' ? 'PLUGIN_APPLY_FAILED' : 'PLUGIN_DRIFT',
       });
       results.push({ host, plugins: catalog.selected.map((entry) => entry.name), output: result.stdout.trim() });
+    } catch (error) {
+      if (!override && mode === 'apply' && error.details?.status === 72) {
+        const market = await fs.readFile(path.join(catalog.directory, 'cache-conflict'), 'utf8');
+        if (catalog.selected.some(entry => entry.marketplace === market)) {
+          error.details.preservedPluginCache = `.${host}/plugins/cache/${market}`;
+        }
+      }
+      throw error;
     } finally {
       await fs.rm(catalog.directory, { recursive: true, force: true });
     }

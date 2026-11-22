@@ -221,7 +221,7 @@ export function isKnownRuntimeMutation(directory) {
 // Verify only locally sourced marketplace entries. Refuse unsupported native
 // layouts before updating the user's installation. Source pin and ownership
 // are checked by the shell reconciler before reaching this comparison.
-function verifyCache(source, commit, cache, host, name) {
+function verifyCache(source, commit, cache, host, name, liveSource = source) {
   const manifest = host === 'claude' ? '.claude-plugin/marketplace.json' : '.agents/plugins/marketplace.json';
   const entries = JSON.parse(git(source, ['show', `${commit}:${manifest}`])).plugins;
   const spec = entries.find(entry => entry.name === name)?.source;
@@ -256,7 +256,7 @@ function verifyCache(source, commit, cache, host, name) {
         const canonical = JSON.parse(git(source, ['cat-file', 'blob', recorded[2]]));
         const current = JSON.parse(data);
         const restore = key === 'hooks/hooks.json' ? restoreHooksJson : restorePluginJson;
-        if (![cache, path.resolve(source, subtree)].some(root => restore(current, canonical, normalizedRoot(root), true))) return false;
+        if (![cache, path.resolve(liveSource, subtree)].some(root => restore(current, canonical, normalizedRoot(root), true))) return false;
       }
       expected.delete(key);
     }

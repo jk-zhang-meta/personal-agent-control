@@ -171,13 +171,13 @@ async function rebuildOptionalResolver(context, profile) {
   }
 }
 
-async function restore(context, backup) {
+async function restore(context, backup, preservedPluginCache = null) {
   const override = process.env.PAC_RESTORE;
   const executable = override || 'sh';
   const args = override ? [backup] : [path.join(context.root, 'scripts/restore-backup.sh'), backup];
   return await run(executable, args, {
     cwd: context.root,
-    env: { ...process.env, HOME: context.home },
+    env: { ...process.env, HOME: context.home, PAC_PRESERVE_PLUGIN_CACHE: preservedPluginCache ?? '' },
     errorCode: 'ROLLBACK_FAILED',
   });
 }
@@ -496,7 +496,7 @@ async function applyUnlocked(context, options = {}) {
     // preflight above is an early, user-friendly rejection; this apply is the
     // transaction's first host mutation so a concurrent Plugin drift cannot
     // leave a partially updated PAC projection behind.
-    const plugins = await reconcilePlugins(context, effectiveConfig, reconciliationScope, 'apply', profile, previousProfile);
+    const plugins = await reconcilePlugins(context, effectiveConfig, reconciliationScope, 'apply', profile, previousProfile, backup);
     if (profileResolution.descriptorAction === 'save') {
       await saveProfileDescriptor(context, profile.descriptor);
     } else if (profileResolution.descriptorAction === 'remove') {
@@ -580,7 +580,7 @@ async function applyUnlocked(context, options = {}) {
     };
   } catch (error) {
     try {
-      await restore(context, backup);
+      await restore(context, backup, error.details?.preservedPluginCache);
       const resolver = options.precreatedBackupKind === 'chezmoi-outer'
         ? deferredResolverAfterOuterRestore()
         : await rebuildResolverAfterRestore(context, neutral);

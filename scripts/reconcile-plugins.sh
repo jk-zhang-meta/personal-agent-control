@@ -15,6 +15,7 @@ home=${HOME:?HOME is required}
 agents=codex,claude
 catalog="$repo/catalog/plugins.tsv"
 prior_pins=
+prior_sources=
 migrations_catalog="$repo/catalog/plugin-migrations.tsv"
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -36,6 +37,11 @@ while [ "$#" -gt 0 ]; do
         --prior-pins)
             [ "$#" -ge 2 ] && [ -f "$2" ] && [ ! -L "$2" ] || exit 2
             prior_pins=$2
+            shift 2
+            ;;
+        --prior-sources)
+            [ "$#" -ge 2 ] && [ -d "$2" ] && [ ! -L "$2" ] || exit 2
+            prior_sources=$2
             shift 2
             ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -669,6 +675,19 @@ reconcile_current_for_host() {
             exit 1
         }
         assert_no_unmanaged_in_marketplace "$host_name" "$marketplace" "$tmp/desired-current"
+        if rotating_marketplace "$marketplace" && marketplace_was_owned "$marketplace"; then
+            conflict_marker="$(dirname -- "$prior_pins")/cache-conflict"
+            while IFS="$(printf '\t')" read -r old_plugin old_market _a _s _r old_commit _t old_version _rest; do
+                [ "$old_market" = "$marketplace" ] || continue
+                old_cache="$home/.$host_name/plugins/cache/$old_market/$old_plugin/$old_version"
+                if [ -z "$prior_sources" ] || ! node "$repo/src/plugin-source-state.mjs" check-cache \
+                    "$prior_sources/$old_market" "$old_commit" "$old_cache" "$host_name" "$old_plugin" "$directory"; then
+                    printf '%s' "$old_market" > "$conflict_marker"
+                    echo "DRIFT: preserving concurrently changed Plugin cache $old_cache" >&2
+                    exit 72
+                fi
+            done < "$prior_pins"
+        fi
         if [ "$host_name" = claude ] && rotating_marketplace "$marketplace" && marketplace_was_owned "$marketplace"; then
             # Preserve installations at project/local scopes, which may share
             # the previous version's native cache and marketplace registration.

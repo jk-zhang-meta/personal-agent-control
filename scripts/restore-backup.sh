@@ -243,6 +243,12 @@ fi
 
 while IFS= read -r rel; do
     target="$home/$rel"
+    # A rotation can discover that an external process edited the old cache
+    # after backup. PAC has not touched it; restore all other managed roots.
+    case "$rel" in
+        .codex/plugins/cache/*|.claude/plugins/cache/*)
+            [ "$rel" != "${PAC_PRESERVE_PLUGIN_CACHE:-}" ] || continue ;;
+    esac
     rm -rf -- "$target"
     if [ -e "$backup/home/$rel" ] || [ -L "$backup/home/$rel" ]; then
         mkdir -p "$(dirname -- "$target")"
