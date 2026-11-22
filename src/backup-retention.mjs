@@ -13,7 +13,7 @@ const MAX_RECORDS = 4096;
 const MAX_TREE_ENTRIES = 262144;
 const TREE_DEADLINE_MS = 30000;
 const MAX_REMOVALS_PER_RUN = 8;
-const pendingRetirement = Symbol('pending snapshot retirement');
+export const pendingRetirement = Symbol('pending snapshot retirement');
 const rootFor = (context) => path.join(context.home, '.agent-work/backups/personal-agent-control');
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const digest = (value) => crypto.createHash('sha256').update(value).digest('hex');

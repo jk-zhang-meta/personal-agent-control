@@ -30,7 +30,7 @@ import {
 } from './capabilities.mjs';
 import { run } from './exec.mjs';
 import { PacError, usage } from './errors.mjs';
-import { finishManagedBackup, outerBackupProof, retainManagedBackups } from './backup-retention.mjs';
+import { finishManagedBackup, outerBackupProof, pendingRetirement, retainManagedBackups } from './backup-retention.mjs';
 import { verifyCanonicalPayload } from './integrity.mjs';
 import { hostAdapterStatus, reconcileHostAdapters } from './host-adapters.mjs';
 import { scanGuardStatus, reconcileScanGuard } from './scan-guard.mjs';
@@ -1332,18 +1332,55 @@ async function install(context, args, options) {
   });
 }
 
+async function updateHead(context) {
+  return (await run('git', ['-C', context.root, 'rev-parse', 'HEAD'], { errorCode: 'SELF_UPDATE_FAILED' })).stdout.trim();
+}
+
+async function updateChangedPaths(context) {
+  const status = (await run('git', ['-C', context.root, 'status', '--porcelain', '--untracked-files=all'], {
+    errorCode: 'SELF_UPDATE_FAILED',
+  })).stdout.trimEnd();
+  return status ? status.split(/\r?\n/u).map(line => line.slice(3)) : [];
+}
+
+async function verifyUpdatedHead(context, expected) {
+  const actual = await updateHead(context);
+  const changedPaths = await updateChangedPaths(context);
+  if (actual !== expected || changedPaths.length) {
+    throw new PacError('SELF_UPDATE_SOURCE_CHANGED', 'PAC Core changed while applying the updated revision.', { expected, actual, changedPaths });
+  }
+}
+
+async function updateLockOwner(context) {
+  const file = path.join(context.stateDir, 'pac.lock', 'owner.json');
+  await assertSafeManagedObject(context.home, file, 'PAC update lock', 'file');
+  return JSON.parse(await fs.readFile(file, 'utf8'));
+}
+
+// Called by the fresh Node process. The updater holds the same PAC lock until
+// this application and its receipt finish, so there is no lock handoff.
+export async function applyUpdatedSource(context, { revision, owner, hosts }) {
+  const current = await updateLockOwner(context);
+  if (!owner?.token || owner.token !== current.token || owner.pid !== current.pid
+      || !Number.isSafeInteger(current.pid) || current.pid < 1 || current.kind !== undefined) {
+    throw new PacError('PAC_LOCK_OWNERSHIP', 'The updated PAC process could not verify its parent transaction.');
+  }
+  try { process.kill(current.pid, 0); }
+  catch (error) { if (error.code !== 'EPERM') throw new PacError('PAC_LOCK_OWNERSHIP', 'The PAC updater is no longer running.'); }
+  await verifyUpdatedHead(context, revision);
+  return await applyUnlocked(context, { hosts });
+}
+
 async function selfUpdate(context, options) {
   return await withLock(context, async () => {
-    const dirty = (await run('git', ['-C', context.root, 'status', '--porcelain', '--untracked-files=all'], {
-      errorCode: 'SELF_UPDATE_FAILED',
-    })).stdout.trim();
-    if (dirty) {
+    const changedPaths = await updateChangedPaths(context);
+    if (changedPaths.length) {
       throw new PacError('SELF_UPDATE_DIRTY', 'Refusing to update PAC with working-tree changes or untracked files.', {
         root: context.root,
-        changedPaths: dirty.split(/\r?\n/u).map((line) => line.slice(3)),
+        changedPaths,
       });
     }
-    const before = (await run('git', ['-C', context.root, 'rev-parse', 'HEAD'], { errorCode: 'SELF_UPDATE_FAILED' })).stdout.trim();
+    const before = await updateHead(context);
     // `git pull --ff-only` needs a branch with an upstream. Name the missing
     // piece instead of surfacing Git's exit status.
     const branch = await run('git', ['-C', context.root, 'symbolic-ref', '--quiet', '--short', 'HEAD'], {
@@ -1367,7 +1404,7 @@ async function selfUpdate(context, options) {
       });
     }
     await run('git', ['-C', context.root, 'pull', '--ff-only'], { errorCode: 'SELF_UPDATE_FAILED' });
-    const after = (await run('git', ['-C', context.root, 'rev-parse', 'HEAD'], { errorCode: 'SELF_UPDATE_FAILED' })).stdout.trim();
+    const after = await updateHead(context);
     try {
       const localMiseCandidates = [
         path.join(context.home, '.local/bin/mise.exe'),
@@ -1387,7 +1424,34 @@ async function selfUpdate(context, options) {
         env: { ...process.env, MISE_PARANOID: '1', MISE_LOCKED: '1' },
         errorCode: 'TOOL_UPDATE_FAILED',
       });
-      const applied = await applyUnlocked(context, options);
+      const owner = await updateLockOwner(context);
+      if (owner.pid !== process.pid || !owner.token) {
+        throw new PacError('PAC_LOCK_OWNERSHIP', 'The PAC updater no longer owns the transaction.');
+      }
+      await verifyUpdatedHead(context, after);
+      const worker = path.join(context.root, 'src/update-worker.mjs');
+      const node = process.env.PAC_NODE;
+      const result = await run(node || mise, node ? [worker] : ['exec', '--', 'node', worker], {
+        cwd: context.root,
+        env: { ...process.env, PAC_ROOT: context.root },
+        input: JSON.stringify({ home: context.home, revision: after, owner: { pid: owner.pid, token: owner.token }, hosts: options.hosts }),
+        errorCode: 'SELF_UPDATE_WORKER_FAILED',
+      });
+      let response;
+      try { response = JSON.parse(result.stdout); }
+      catch { throw new PacError('SELF_UPDATE_WORKER_FAILED', 'The updated PAC process returned an unreadable result.'); }
+      if (response?.ok === false && typeof response.error?.code === 'string') {
+        const error = response.error;
+        throw new PacError(error.code, error.message, error.details);
+      }
+      if (response?.ok !== true || typeof response.data?.receipt !== 'string') {
+        throw new PacError('SELF_UPDATE_WORKER_FAILED', 'The updated PAC process did not return an apply receipt.');
+      }
+      const applied = response.data;
+      if (typeof response.retireBackup === 'string' && response.retireBackup === applied.backup) {
+        applied.retention[pendingRetirement] = response.retireBackup;
+      }
+      await verifyUpdatedHead(context, after);
       const receipt = await writeReceipt(context, { operation: 'self-update', source: { before, after }, applyReceipt: applied.receipt });
       return {
         ...applied,

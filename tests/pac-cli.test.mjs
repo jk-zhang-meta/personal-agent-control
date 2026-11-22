@@ -2629,6 +2629,114 @@ test('self-update refuses a dirty tracked worktree before network or apply', asy
   assert.deepEqual(untracked.error.details.changedPaths, ['untracked.txt']);
 });
 
+test('self-update applies the fetched modules under the original PAC lock and preserves transaction receipts', { timeout: 120_000 }, async (t) => {
+  const { root: upstream, home, env } = await makeRealLifecycleFixture();
+  const profile = await makeProfileRepository({ providers: [], backupRetention: 'transaction-only' });
+  const checkout = await temporary('pac-self-update-checkout-');
+  t.after(async () => {
+    await Promise.all([upstream, home, checkout, profile.root].map(file => fs.rm(file, { recursive: true, force: true })));
+  });
+  const git = (root, ...args) => {
+    const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return result.stdout.trim();
+  };
+  await copyFileTree(path.join(repo, 'src'), path.join(upstream, 'src'));
+  await fs.writeFile(path.join(upstream, 'catalog/files.sha256'), await sourceIntegrityManifest(upstream));
+  const commands = path.join(upstream, 'src/commands.mjs');
+  const original = await fs.readFile(commands, 'utf8');
+  const declaration = 'async function applyUnlocked(context, options = {}) {';
+  const writeVersion = (marker) => fs.writeFile(commands, original.replace(declaration, `${declaration}
+    if (process.env.PAC_TEST_UPDATE_MARKER) {
+      await fs.writeFile(process.env.PAC_TEST_UPDATE_MARKER, JSON.stringify({ marker: '${marker}', pid: process.pid }));
+    }`));
+  await writeVersion('predecessor');
+  git(upstream, 'init', '--quiet', '--initial-branch=main');
+  git(upstream, 'config', 'user.name', 'PAC Test');
+  git(upstream, 'config', 'user.email', 'pac@example.invalid');
+  git(upstream, 'add', '.');
+  git(upstream, 'commit', '--quiet', '-m', 'predecessor');
+  const before = git(upstream, 'rev-parse', 'HEAD');
+  git(checkout, 'clone', '--quiet', upstream, '.');
+  await writeVersion('successor');
+  git(upstream, 'add', 'src/commands.mjs');
+  git(upstream, 'commit', '--quiet', '-m', 'successor');
+  const after = git(upstream, 'rev-parse', 'HEAD');
+
+  const marker = path.join(home, 'apply-marker.json');
+  const mise = path.join(home, 'mise');
+  const doctor = path.join(home, 'doctor.cjs');
+  await fs.writeFile(mise, `#!/bin/sh
+set -eu
+case "$1" in
+  trust) ;;
+  install)
+    if [ "${'$'}{PAC_TEST_MOVE_UPDATE_HEAD:-}" = 1 ]; then
+      git -C "$PAC_ROOT" reset --hard HEAD^
+    fi
+    ;;
+  exec) shift 3; exec "$PAC_TEST_UPDATE_NODE" "$@" ;;
+  *) exit 50 ;;
+esac
+`, { mode: 0o700 });
+  await fs.writeFile(doctor, `#!/usr/bin/env node
+const fs = require('node:fs');
+const child = require('node:child_process');
+const marker = JSON.parse(fs.readFileSync(process.env.PAC_TEST_UPDATE_MARKER, 'utf8'));
+const owner = JSON.parse(fs.readFileSync(process.env.HOME + '/.local/state/personal-agent-control/pac.lock/owner.json', 'utf8'));
+if (marker.marker !== 'successor' || marker.pid === owner.pid) process.exit(51);
+const competing = child.spawnSync(process.execPath, [process.env.PAC_ROOT + '/src/entry.mjs', '--json', 'apply'], {
+  encoding: 'utf8',
+  env: { ...process.env, PAC_SKIP_POST_DOCTOR: '1' }
+});
+if (JSON.parse(competing.stdout).error?.code !== 'PAC_LOCKED') process.exit(52);
+`, { mode: 0o700 });
+  const updatedEnv = { ...env, HOME: home, PAC_ROOT: checkout, PAC_MISE: mise, PAC_NO_PLUGINS: '1',
+    PAC_HOST_ADAPTER_MODE: 'skip', PAC_DOCTOR: doctor, PAC_TEST_UPDATE_MARKER: marker,
+    PAC_TEST_UPDATE_NODE: process.execPath };
+  delete updatedEnv.PAC_NODE;
+  const runLocal = (args, overrides) => {
+    const result = spawnSync(process.execPath,
+      [path.join(checkout, 'src/entry.mjs'), '--json', '--hosts', 'codex', ...args],
+      { cwd: checkout, encoding: 'utf8', env: { ...updatedEnv, ...overrides } });
+    return { ...result, json: JSON.parse(result.stdout) };
+  };
+  const attached = runLocal(['profile', 'set', profile.root, 'main', profile.commit], {
+    PAC_DOCTOR: '/usr/bin/true', PAC_SKIP_POST_DOCTOR: '0',
+  });
+  assert.equal(attached.status, 0, attached.stderr || attached.stdout);
+  const updated = runLocal(['update'], { PAC_SKIP_POST_DOCTOR: '0' });
+  assert.equal(updated.status, 0, updated.stderr || updated.stdout);
+  assert.deepEqual(updated.json.data.source, { before, after });
+  assert.deepEqual(updated.json.data.hosts, ['codex']);
+  assert.equal(updated.json.data.verification.state, 'healthy');
+  assert.equal(updated.json.data.backup, null);
+  assert.equal(updated.json.data.retention.removed.length, 1);
+  assert.equal(await exists(updated.json.data.retention.removed[0]), false);
+  const receipt = JSON.parse(await fs.readFile(updated.json.data.selfUpdateReceipt, 'utf8'));
+  assert.equal(receipt.operation, 'self-update');
+  assert.deepEqual(receipt.source, { before, after });
+  assert.equal(receipt.applyReceipt, updated.json.data.receipt);
+  assert.equal(JSON.parse(await fs.readFile(receipt.applyReceipt, 'utf8')).operation, 'apply');
+
+  const failed = runLocal(['update'], { PAC_SKIP_POST_DOCTOR: '0', PAC_DOCTOR: path.join(checkout, 'fail-doctor') });
+  assert.equal(failed.status, 1, failed.stderr || failed.stdout);
+  assert.equal(failed.json.error.code, 'SELF_UPDATE_APPLY_FAILED');
+  assert.equal(failed.json.error.details.applyError.code, 'POST_APPLY_VERIFICATION_FAILED');
+  assert.equal(failed.json.error.details.applyError.details.rollback.succeeded, true);
+  assert.equal(git(checkout, 'rev-parse', 'HEAD'), after);
+
+  await writeVersion('third');
+  git(upstream, 'add', 'src/commands.mjs');
+  git(upstream, 'commit', '--quiet', '-m', 'third');
+  const moved = runLocal(['update'], { PAC_SKIP_POST_DOCTOR: '0', PAC_TEST_MOVE_UPDATE_HEAD: '1' });
+  assert.equal(moved.status, 1, moved.stderr || moved.stdout);
+  assert.equal(moved.json.error.code, 'SELF_UPDATE_APPLY_FAILED');
+  assert.equal(moved.json.error.details.applyError.code, 'SELF_UPDATE_SOURCE_CHANGED');
+  assert.equal(git(checkout, 'rev-parse', 'HEAD'), after);
+  assert.equal(JSON.parse(await fs.readFile(marker, 'utf8')).marker, 'successor');
+});
+
 test('an undeclared Profile provider is rejected before backup or host mutation', { timeout: 120_000 }, async () => {
   const { root, home, env } = await makeRealLifecycleFixture();
   await fs.writeFile(path.join(root, 'catalog/providers.json'), `${JSON.stringify({ schemaVersion: 1, providers: [] })}\n`);
