@@ -17,10 +17,15 @@ def merge(host, source, script, legacy, home, enabled):
         if not isinstance(binding, dict):
             return source
         prior = binding.get("command")
-        if enabled and (not binding or prior in old_commands and binding.get("type") == "command"):
+        if enabled and ((prior is None and "type" not in binding)
+                        or prior in old_commands and binding.get("type") == "command"):
             obj["statusLine"] = {**binding, "type": "command", "command": command}
         elif not enabled and prior == command:
-            del obj["statusLine"]
+            del binding["command"]
+            if binding.get("type") == "command":
+                del binding["type"]
+            if not binding:
+                del obj["statusLine"]
         else:
             return source
         return source if obj == json.loads(source or "{}") else json.dumps(obj, indent=2, ensure_ascii=False) + "\n"
@@ -65,24 +70,43 @@ def merge(host, source, script, legacy, home, enabled):
             end = start + following.start() if following else len(source)
             chunk = source[start:end]
             line = re.compile(r"(?m)^[ \t]*" + re.escape(key) + r"[ \t]*=.*$")
+            match = line.search(chunk)
+            if match:
+                stop = match.end()
+                for _ in range(128):
+                    try:
+                        tomllib.loads(chunk[match.start():stop])
+                        break
+                    except tomllib.TOMLDecodeError:
+                        if stop == len(chunk):
+                            return original
+                        newline = chunk.find("\n", stop + 1)
+                        stop = len(chunk) if newline == -1 else newline
+                else:
+                    return original
             if enabled:
                 value = ('{ server = "usage-statusline", tool = "statusline" }'
                          if isinstance(val, dict) else json.dumps(val, ensure_ascii=False))
                 assignment = key + " = " + value
-                chunk = line.sub(lambda _: assignment, chunk, count=1) if line.search(chunk) else "\n" + assignment + "\n" + chunk
+                chunk = (chunk[:match.start()] + assignment + chunk[stop:] if match
+                         else "\n" + assignment + "\n" + chunk)
                 table[key] = val
             else:
-                chunk = line.sub("", chunk, count=1)
+                if match:
+                    chunk = chunk[:match.start()] + chunk[stop:]
                 del table[key]
             source = source[:start] + chunk + source[end:]
         if not enabled and not table and "." in table_name:
             source = re.sub(r"(?m)^[ \t]*\[" + re.escape(table_name) + r"\][ \t]*(?:#.*)?$", "", source, count=1)
             parent, leaf = table_name.split(".")
             del expected[parent][leaf]
-            if not expected[parent] and parent not in tomllib.loads(source):
+            if not expected[parent] and not re.search(r"(?m)^\s*\[\s*" + re.escape(parent) + r"(?:\s*\]|\s*\.)", source):
                 del expected[parent]
-    if source != original and tomllib.loads(source) != expected:
-        raise ValueError("Cannot safely edit native TOML layout")
+    try:
+        if source != original and tomllib.loads(source) != expected:
+            return original
+    except tomllib.TOMLDecodeError:
+        return original
     return source
 
 

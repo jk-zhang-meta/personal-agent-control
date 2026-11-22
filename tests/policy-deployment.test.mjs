@@ -81,6 +81,9 @@ test('Profile footer installation preserves user config and converges for four c
   await fs.mkdir(path.join(f.root, 'scripts'));
   await fs.copyFile(new URL('../scripts/statusline-config.py', import.meta.url), path.join(f.root, 'scripts/statusline-config.py'));
   const grok = path.join(f.home, '.grok/config.toml');
+  const codex = path.join(f.home, '.codex/config.toml');
+  await fs.mkdir(path.dirname(codex));
+  await fs.writeFile(codex, `[mcp_servers.usage-statusline]\ncommand = "python3"\nargs = [\n  "-u",\n  "${f.home}/.codex/statusline/statusline.py",\n]\n`);
   await fs.mkdir(path.dirname(grok));
   await fs.writeFile(grok, '[ui.status_line]\ntype = "command"\ncommand = "my-footer"\n');
   const options = { repository: f.repository, commit, baseline };
@@ -93,6 +96,16 @@ test('Profile footer installation preserves user config and converges for four c
   await fs.writeFile(grok, '[other]\nvalue = 42\n');
   await synchronizePolicy(f.context, { ...options, agents: ['grok'] });
   assert.match(await fs.readFile(grok, 'utf8'), /value = 42[\s\S]+scripts\/grok.py/);
+  for (const file of ['.claude/settings.json', '.gemini/antigravity-cli/settings.json']) {
+    const location = path.join(f.home, file);
+    const config = JSON.parse(await fs.readFile(location));
+    config.statusLine.padding = 3;
+    await fs.writeFile(location, JSON.stringify(config));
+  }
+  await synchronizePolicy(f.context, { repository: f.repository, commit: baseline, baseline: commit });
+  for (const file of ['.claude/settings.json', '.gemini/antigravity-cli/settings.json']) {
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(f.home, file))).statusLine, { padding: 3 });
+  }
 });
 
 test('policy delivery upgrades verified files, preserves unrelated state and detects drift', async (t) => {

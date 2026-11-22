@@ -526,8 +526,14 @@ async function applyUnlocked(context, options = {}) {
     ]);
     const adapters = await reconcileHostAdapters(context, enabled, reconciliationScope);
     const providers = await reconcileProviders(context, effectiveProfile, enabled, reconciliationScope, 'apply');
-    const footerChanges = await statuslineChanges(context, path.join(neutral, '.agents/skills'), footerHosts, footer);
-    for (const change of footerChanges) await atomicWriteFile(change.file, change.content);
+    const footerChanges = [];
+    for (const host of footerHosts) {
+      const [change] = await statuslineChanges(context, path.join(neutral, '.agents/skills'), [host], footer);
+      if (change) {
+        await atomicWriteFile(change.file, change.content);
+        footerChanges.push(change.relativePath);
+      }
+    }
     const projections = await reconcileProjections(context, effectiveConfig, neutral, desired, enabled, reconciliationScope);
     const retiredLegacyCodexSkills = await retireLegacyCodexSkillDuplicates(
       context, neutral, desired, enabled, reconciliationScope,
@@ -561,7 +567,7 @@ async function applyUnlocked(context, options = {}) {
     return {
       backup, receipt, retention, hosts: scopedEnabledHosts, neutralSkillStore: neutral, skills: desired,
       materializers, profileSkills, retiredProfileSkills, retiredLegacyCodexSkills,
-      statuslineChanged: footerChanges.map(change => change.relativePath),
+      statuslineChanged: footerChanges,
       profile: profile ? { configured: true, ref: profile.descriptor.ref, lockedCommit: profile.lockedCommit } : { configured: false },
       bootstrap, profileApm, adapters, scanGuard, providers, projections, plugins, resolver, verification, sourceIntegrity,
     };
