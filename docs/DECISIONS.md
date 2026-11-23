@@ -11,7 +11,7 @@ bindings; explicit provider delivery to an unsupported platform fails.
 
 The small launcher uses preinstalled private environments, verifies the real
 installed package version on every start, and runs only stdio. It performs no
-download or automatic update and does not bridge WSL or other machines. Native
+download or automatic update and does not bridge other machines. Native
 Windows environments use `~/.agent-work/tools/reverse-engineering/<name>/Scripts/python.exe`;
 native macOS IDA uses `~/.agent-work/tools/reverse-engineering/ida/venv/bin/python`.
 The WinDbg catalog pins the separately provisioned CDB location and SHA-256;
@@ -34,6 +34,16 @@ update unrelated capabilities. Refuse a dirty or divergent checkout rather
 than resetting it. Provider-only delivery still verifies canonical integrity,
 the exact Profile revision, runtime version, native ownership and rollback.
 It does not claim that the supplied database or license has passed acceptance.
+
+WSL clients may use an explicitly enabled same-host stdio binding. Discovery
+reuses the Windows Node lookup, obtains that Windows account's real home from
+Windows Node, and converts the verified Core launcher path with `wslpath -w`.
+All launches use argument arrays. The Linux user retains ownership of client
+configuration and PAC receipts; the Windows user owns Python, debugger,
+licenses, analysis databases and runtime state. The native launcher still
+checks installed package versions and CDB bytes. No SSH, port, daemon,
+credential copying or model-account sharing is added. Ordinary Linux remains
+unsupported. WSL agents pass native Windows file paths to the Windows tools.
 
 ## Reject Core/Profile mismatch before mutation; name update blockers (2026-11-10)
 

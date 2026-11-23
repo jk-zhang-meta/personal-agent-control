@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
-import { providerSupported, reverseRuntime, reverseVersion } from '../src/reverse-provider.mjs';
+import { providerSupported, reverseRuntime, reverseVersion, reverseBinding } from '../src/reverse-provider.mjs';
 import { providerStatus, reconcileProviders } from '../src/providers.mjs';
 
 const root = process.cwd();
@@ -16,16 +16,42 @@ const ida = catalog.find(entry => entry.name === 'ida');
 const windbg = catalog.find(entry => entry.name === 'windbg');
 const selected = { manifest: { providers: { enabled: ['ida', 'windbg'] } } };
 
-test('reverse providers use native platform-specific environments and never an implicit WSL bridge', () => {
+test('reverse providers use native environments or explicitly supported same-host WSL', () => {
   assert.equal(providerSupported({ platform: 'darwin' }, ida), true);
   assert.equal(providerSupported({ platform: 'win32' }, ida), true);
   assert.equal(providerSupported({ platform: 'darwin' }, windbg), false);
   assert.equal(providerSupported({ platform: 'win32' }, windbg), true);
   for (const provider of [ida, windbg]) {
-    assert.throws(() => reverseRuntime({ home: '/test', platform: 'linux', isWsl: true }, provider), { code: 'PROVIDER_PLATFORM_UNSUPPORTED' });
+    assert.equal(providerSupported({ platform: 'linux', isWsl: false }, provider), false);
+    assert.equal(providerSupported({ platform: 'linux', isWsl: true }, provider), true);
+    assert.throws(() => reverseRuntime({ home: '/test', platform: 'linux' }, provider), { code: 'PROVIDER_PLATFORM_UNSUPPORTED' });
   }
   assert.match(reverseRuntime({ home: '/test', platform: 'win32' }, ida).python, /ida\/Scripts\/python\.exe$/u);
   assert.match(reverseRuntime({ home: '/test', platform: 'darwin' }, ida).python, /ida\/venv\/bin\/python$/u);
+});
+
+test('WSL uses argument-array local Windows discovery, distinct HOME ownership, and no credential or HTTP bridge', async () => {
+  const command = '/mnt/c/Program Files/nodejs/node.exe';
+  const home = 'C:\\Users\\Test User';
+  const source = '\\\\wsl.localhost\\Ubuntu\\root\\core space\\src\\reverse-provider.mjs';
+  const calls = [];
+  const execute = async (executable, args, options) => {
+    calls.push({ executable, args, options });
+    return { stdout: executable === 'wslpath' ? source : JSON.stringify({ home }) };
+  };
+  const context = { platform: 'linux', isWsl: true, home: '/root', root: '/root/core space' };
+  const bound = await reverseBinding(context, ida, { execute, findNode: async () => command });
+  assert.equal(bound.command, command);
+  assert.deepEqual(bound.args, [source, 'ida', '--home', home]);
+  assert.equal(context.home, '/root');
+  assert.deepEqual(calls[1].args, ['-w', '/root/core space/src/reverse-provider.mjs']);
+  assert.ok(calls.every(call => Array.isArray(call.args) && !call.options.shell));
+  assert.deepEqual(Object.keys(bound.sameHostWindows).sort(), ['command', 'home', 'source']);
+  await assert.rejects(reverseBinding(context, ida, { findNode: async () => command,
+    execute: async executable => ({ stdout: executable === 'wslpath' ? source : JSON.stringify({ home: 'relative' }) }) }),
+  { code: 'WINDOWS_PROVIDER_DISCOVERY_FAILED' });
+  await assert.rejects(reverseBinding({ ...context, isWsl: false }, ida, { execute: async () => { throw Error('unexpected discovery'); } }),
+    { code: 'PROVIDER_PLATFORM_UNSUPPORTED' });
 });
 
 test('stdio launcher closes on EOF and forwards termination to its owned process', async () => {

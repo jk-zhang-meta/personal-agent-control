@@ -68,6 +68,9 @@ async function catalog(context) {
         || provider.platforms.some(platform => !['win32', 'darwin', 'linux'].includes(platform)))) {
       throw new PacError('PROVIDER_CATALOG_INVALID', `Invalid ${provider.name} supported platforms.`);
     }
+    if (provider.sameHostWsl !== undefined && (provider.sameHostWsl !== true || !provider.platforms?.includes('win32'))) {
+      throw new PacError('PROVIDER_CATALOG_INVALID', `Invalid ${provider.name} same-host WSL support.`);
+    }
     const missingHosts = HOSTS.filter((host) => !Object.hasOwn(provider.hosts, host));
     if (missingHosts.length > 0) {
       throw new PacError('PROVIDER_CATALOG_INVALID', `${provider.name} must declare an adapter for every Core-supported Agent: ${missingHosts.join(', ')}.`);
@@ -548,7 +551,7 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
     const active = PROVIDER_CLIENTS.some((host) => scoped.includes(host)
       && enabled.includes(host) && provider.hosts[host] && selected.has(provider.name));
     if (active) provider = await resolveWslPlaywright(context, provider);
-    if (active) provider = reverseBinding(context, provider);
+    if (active) provider = await reverseBinding(context, provider);
     const bindings = active ? await profileBindings(context, profile, provider) : {};
     const version = active ? await providerVersion(context, provider) : null;
     for (const host of PROVIDER_CLIENTS) {
@@ -609,7 +612,7 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
     const activeHosts = PROVIDER_CLIENTS.filter((host) => scoped.includes(host)
       && enabled.includes(host) && provider.hosts[host] && selected.has(provider.name));
     if (activeHosts.length) provider = await resolveWslPlaywright(context, provider);
-    if (activeHosts.length) provider = reverseBinding(context, provider);
+    if (activeHosts.length) provider = await reverseBinding(context, provider);
     const bindings = activeHosts.length ? await profileBindings(context, profile, provider) : {};
     for (const host of activeHosts) {
       const file = providerConfigPath(context, provider.hosts[host].config);

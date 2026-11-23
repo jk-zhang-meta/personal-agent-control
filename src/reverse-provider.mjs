@@ -8,17 +8,20 @@ import { fileURLToPath } from 'node:url';
 
 import { run } from './exec.mjs';
 import { PacError } from './errors.mjs';
+import { findWindowsNode } from './windows-host.mjs';
 
 const PACKAGES = Object.freeze({ ida: 'ida-mcp', windbg: 'mcp-windbg' });
 
 export function providerSupported(context, provider) {
-  return !provider.platforms || provider.platforms.includes(context.platform || process.platform);
+  const platform = context.platform || process.platform;
+  return !provider.platforms || provider.platforms.includes(platform)
+    || (platform === 'linux' && context.isWsl === true && provider.sameHostWsl === true);
 }
 
 export function reverseRuntime(context, provider) {
   if (!Object.hasOwn(PACKAGES, provider.name)) return null;
-  if (!providerSupported(context, provider)) {
-    throw new PacError('PROVIDER_PLATFORM_UNSUPPORTED', `${provider.name} requires native ${provider.platforms.join(' or ')}; no cross-machine or WSL bridge is configured.`);
+  if (!provider.platforms.includes(context.platform || process.platform)) {
+    throw new PacError('PROVIDER_PLATFORM_UNSUPPORTED', `${provider.name} requires native ${provider.platforms.join(' or ')} or the explicitly resolved same-host WSL stdio binding.`);
   }
   const platform = context.platform || process.platform;
   const directory = path.join(context.home, '.agent-work/tools/reverse-engineering', provider.name);
@@ -35,13 +38,33 @@ export function reverseRuntime(context, provider) {
   };
 }
 
-export function reverseBinding(context, provider) {
+export async function reverseBinding(context, provider, { execute = run, findNode = findWindowsNode } = {}) {
+  if (!Object.hasOwn(PACKAGES, provider.name)) return provider;
+  if ((context.platform || process.platform) === 'linux' && context.isWsl && provider.sameHostWsl) {
+    const command = await findNode(execute);
+    const options = { cwd: path.dirname(command), timeoutMs: 15000, errorCode: 'WINDOWS_PROVIDER_DISCOVERY_FAILED' };
+    const discovery = await execute(command, ['-e', 'if(process.platform!=="win32")throw Error("Windows Node required");console.log(JSON.stringify({home:require("node:os").homedir()}))'], options);
+    const { home } = JSON.parse(discovery.stdout);
+    const converted = await execute('wslpath', ['-w', path.join(context.root, 'src/reverse-provider.mjs')], { timeoutMs: 5000 });
+    const source = converted.stdout.trim();
+    if (![home, source].every(value => typeof value === 'string' && path.win32.isAbsolute(value) && !/[\u0000-\u001f]/u.test(value))) {
+      throw new PacError('WINDOWS_PROVIDER_DISCOVERY_FAILED', 'Same-host Windows discovery must return absolute home and launcher paths.');
+    }
+    return { ...provider, command, args: [source, provider.name, '--home', home],
+      sameHostWindows: { command, source, home } };
+  }
   if (!reverseRuntime(context, provider)) return provider;
   return { ...provider, command: process.execPath,
     args: [path.join(context.root, 'src/reverse-provider.mjs'), provider.name, '--home', context.home] };
 }
 
 export async function reverseVersion(context, provider) {
+  if (provider.sameHostWindows) {
+    const { stdout } = await run(provider.command, [...provider.args, '--version'],
+      { cwd: path.dirname(provider.command), timeoutMs: 15000, errorCode: 'PROVIDER_VERSION_INVALID' });
+    const actual = stdout.trim();
+    return { expected: provider.version, actual, matches: actual === provider.version };
+  }
   const runtime = reverseRuntime(context, provider);
   if (!runtime) return null;
   const executable = await fs.stat(runtime.python).catch(() => null);
@@ -88,8 +111,9 @@ export function serveProcess(command, args, options) {
 }
 
 async function main(args) {
-  const [name, marker, home] = args;
-  if (!Object.hasOwn(PACKAGES, name) || marker !== '--home' || !home || args.length !== 3
+  const [name, marker, home, action] = args;
+  if (!Object.hasOwn(PACKAGES, name) || marker !== '--home' || !home
+      || (args.length !== 3 && !(args.length === 4 && action === '--version'))
       || path.resolve(home) !== path.resolve(os.homedir())) {
     throw new PacError('PROVIDER_INPUT_INVALID', 'Use the PAC-managed provider command as the target HOME owner.');
   }
@@ -100,6 +124,7 @@ async function main(args) {
   const context = { home, root };
   const version = await reverseVersion(context, provider);
   if (!version.matches) throw new PacError('PROVIDER_VERSION_INVALID', `${name} expected ${version.expected}; installed ${version.actual}.`);
+  if (action === '--version') { console.log(version.actual); return; }
   const runtime = reverseRuntime(context, provider);
   const state = path.join(home, '.agent-work/runtime/reverse-engineering', name);
   await fs.mkdir(state, { recursive: true, mode: 0o700 });

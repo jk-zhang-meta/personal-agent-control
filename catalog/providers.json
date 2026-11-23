@@ -3,6 +3,7 @@
   "providers": [
     {
       "name": "ida",
+      "sameHostWsl": true,
       "kind": "mcp-server",
       "versionPolicy": "pinned",
       "version": "20261028.0.3",
@@ -22,6 +23,7 @@
     },
     {
       "name": "windbg",
+      "sameHostWsl": true,
       "kind": "mcp-server",
       "versionPolicy": "pinned",
       "version": "1.6.0",
