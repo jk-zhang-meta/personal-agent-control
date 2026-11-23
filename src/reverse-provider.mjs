@@ -47,8 +47,11 @@ export async function reverseBinding(context, provider, { execute = run, findNod
     const { home } = JSON.parse(discovery.stdout);
     const converted = await execute('wslpath', ['-w', path.join(context.root, 'src/reverse-provider.mjs')], { timeoutMs: 5000 });
     const source = converted.stdout.trim();
-    if (![home, source].every(value => typeof value === 'string' && path.win32.isAbsolute(value) && !/[\u0000-\u001f]/u.test(value))) {
-      throw new PacError('WINDOWS_PROVIDER_DISCOVERY_FAILED', 'Same-host Windows discovery must return absolute home and launcher paths.');
+    const localDrive = value => typeof value === 'string' && /^[a-z]:[\\/]/iu.test(value);
+    const localWsl = value => typeof value === 'string' && /^\\\\(?:wsl\.localhost|wsl\$)\\[^\\]+\\/iu.test(value);
+    if (!localDrive(home) || !(localDrive(source) || localWsl(source))
+        || [home, source].some(value => /[\u0000-\u001f]/u.test(value))) {
+      throw new PacError('WINDOWS_PROVIDER_DISCOVERY_FAILED', 'Same-host Windows discovery requires a local-drive HOME and a local-drive or WSL launcher; remote UNC paths are not permitted.');
     }
     return { ...provider, command, args: [source, provider.name, '--home', home],
       sameHostWindows: { command, source, home } };

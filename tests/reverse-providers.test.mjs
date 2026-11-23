@@ -50,6 +50,13 @@ test('WSL uses argument-array local Windows discovery, distinct HOME ownership, 
   await assert.rejects(reverseBinding(context, ida, { findNode: async () => command,
     execute: async executable => ({ stdout: executable === 'wslpath' ? source : JSON.stringify({ home: 'relative' }) }) }),
   { code: 'WINDOWS_PROVIDER_DISCOVERY_FAILED' });
+  for (const [candidateHome, candidateSource] of [
+    ['\\\\remote\\users\\person', source], [home, '\\\\remote\\share\\core.mjs'],
+  ]) {
+    await assert.rejects(reverseBinding(context, ida, { findNode: async () => command,
+      execute: async executable => ({ stdout: executable === 'wslpath' ? candidateSource : JSON.stringify({ home: candidateHome }) }) }),
+    { code: 'WINDOWS_PROVIDER_DISCOVERY_FAILED' });
+  }
   await assert.rejects(reverseBinding({ ...context, isWsl: false }, ida, { execute: async () => { throw Error('unexpected discovery'); } }),
     { code: 'PROVIDER_PLATFORM_UNSUPPORTED' });
 });
