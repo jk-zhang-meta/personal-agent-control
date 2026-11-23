@@ -109,7 +109,7 @@ test('supported platform requires real installed metadata, preserves unrelated c
   const original = { theme: 'dark', mcpServers: { other: { command: 'keep', args: [] } } };
   try {
     await fs.writeFile(file, JSON.stringify(original));
-    await assert.rejects(reconcileProviders(context, selected, ['claude'], ['claude']), { code: 'PROVIDER_RUNTIME_MISSING' });
+    await assert.rejects(reconcileProviders(context, selected, ['claude'], ['claude'], 'apply', { installRuntime: false }), { code: 'PROVIDER_RUNTIME_MISSING' });
     assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), original);
     execFileSync('python3', ['-m', 'venv', '--without-pip', path.dirname(path.dirname(runtime.python))]);
     const site = execFileSync(runtime.python, ['-I', '-c', 'import sysconfig; print(sysconfig.get_path("purelib"))'], { encoding: 'utf8' }).trim();
@@ -118,7 +118,7 @@ test('supported platform requires real installed metadata, preserves unrelated c
     const metadata = version => `Metadata-Version: 2.1\nName: ida-mcp\nVersion: ${version}\n`;
     await fs.writeFile(path.join(dist, 'METADATA'), metadata(ida.version));
     assert.deepEqual(await reverseVersion(context, ida), { expected: ida.version, actual: ida.version, matches: true });
-    const applied = await reconcileProviders(context, selected, ['claude'], ['claude']);
+    const applied = await reconcileProviders(context, selected, ['claude'], ['claude'], 'apply', { installRuntime: false });
     assert.equal(applied.providers[0].version.matches, true);
     assert.equal(applied.providers[1].action, 'unsupported');
     const value = JSON.parse(await fs.readFile(file, 'utf8'));
@@ -127,16 +127,16 @@ test('supported platform requires real installed metadata, preserves unrelated c
     assert.equal(value.mcpServers.ida.command, process.execPath);
     assert.deepEqual(value.mcpServers.ida.args, [path.join(root, 'src/reverse-provider.mjs'), 'ida', '--home', home]);
     await fs.writeFile(path.join(dist, 'METADATA'), metadata('0.0.1'));
-    await assert.rejects(reconcileProviders(context, selected, ['claude'], ['claude']), { code: 'PROVIDER_VERSION_INVALID' });
+    await assert.rejects(reconcileProviders(context, selected, ['claude'], ['claude'], 'apply', { installRuntime: false }), { code: 'PROVIDER_VERSION_INVALID' });
     assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), value);
     await fs.writeFile(path.join(dist, 'METADATA'), metadata(ida.version));
     value.mcpServers.legacy = { command: 'uvx', args: ['ida-pro-mcp'] };
     await fs.writeFile(file, JSON.stringify(value));
-    await assert.rejects(reconcileProviders(context, selected, ['claude'], ['claude']), { code: 'PROVIDER_DUPLICATE' });
+    await assert.rejects(reconcileProviders(context, selected, ['claude'], ['claude'], 'apply', { installRuntime: false }), { code: 'PROVIDER_DUPLICATE' });
     assert.deepEqual(JSON.parse(await fs.readFile(file, 'utf8')), value);
     const codex = path.join(home, '.codex/config.toml');
     await fs.mkdir(path.dirname(codex));
     await fs.writeFile(codex, '[mcp_servers.legacy]\ncommand="uvx"\nargs=["ida-pro-mcp"]\n');
-    await assert.rejects(reconcileProviders(context, selected, ['codex'], ['codex']), { code: 'PROVIDER_DUPLICATE' });
+    await assert.rejects(reconcileProviders(context, selected, ['codex'], ['codex'], 'apply', { installRuntime: false }), { code: 'PROVIDER_DUPLICATE' });
   } finally { await fs.rm(home, { recursive: true, force: true }); }
 });

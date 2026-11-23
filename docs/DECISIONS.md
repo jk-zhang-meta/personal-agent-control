@@ -9,14 +9,25 @@ path. The Core catalog records supported native platforms. Full reconciliation
 reports unsupported platforms without installing, launching or retiring their
 bindings; explicit provider delivery to an unsupported platform fails.
 
-The small launcher uses preinstalled private environments, verifies the real
+Windows apply/provider sync automatically provisions private environments from
+the committed full dependency/hash locks, pinned managed Python and the existing
+Core mise.lock Node/uv artifacts. Same-host WSL shares one Windows runtime under
+an exclusive file handle. SDK download verifies SHA-256 and Microsoft signature;
+extracted CDB verifies its own digest. Existing mismatched environments are
+preserved and reported, never silently replaced. Status and launcher perform no
+installation. macOS existing environments remain supported; fresh macOS automatic
+provisioning is not yet validated and fails explicitly.
+
+The small launcher verifies the real
 installed package version on every start, and runs only stdio. It performs no
 download or automatic update and does not bridge other machines. Native
 Windows environments use `~/.agent-work/tools/reverse-engineering/<name>/Scripts/python.exe`;
 native macOS IDA uses `~/.agent-work/tools/reverse-engineering/ida/venv/bin/python`.
 The WinDbg catalog pins the separately provisioned CDB location and SHA-256;
 startup verifies its bytes. Licensing,
-IDA installation and complete analysis acceptance are separate requirements;
+IDA application/license installation and complete analysis acceptance are separate requirements;
+the launcher reads valid IDADIR/vendor selection first, then bounded native installation
+roots, and supplies discovered IDADIR only to the child without writing vendor config;
 metadata/version success is not evidence that decompilation works.
 
 Before delivery, known competing IDA/WinDbg server entries in the target native

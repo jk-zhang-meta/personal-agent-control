@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 
 import { run } from './exec.mjs';
 import { PacError } from './errors.mjs';
-import { findWindowsNode } from './windows-host.mjs';
+import { discoverIda } from './ida-installation.mjs';
+import { windowsReverseSetup } from './reverse-install.mjs';
 
 const PACKAGES = Object.freeze({ ida: 'ida-mcp', windbg: 'mcp-windbg' });
 
@@ -38,10 +39,12 @@ export function reverseRuntime(context, provider) {
   };
 }
 
-export async function reverseBinding(context, provider, { execute = run, findNode = findWindowsNode } = {}) {
+export async function reverseBinding(context, provider, { execute = run, findNode } = {}) {
   if (!Object.hasOwn(PACKAGES, provider.name)) return provider;
   if ((context.platform || process.platform) === 'linux' && context.isWsl && provider.sameHostWsl) {
-    const command = await findNode(execute);
+    const setup = findNode ? null : await windowsReverseSetup(context, 'Probe', provider.name, execute);
+    const command = setup?.node || (findNode && await findNode(execute));
+    if (!command) throw new PacError('PROVIDER_RUNTIME_MISSING', 'Run PAC apply or provider sync to provision the pinned Windows runtime.');
     const options = { cwd: path.dirname(command), timeoutMs: 15000, errorCode: 'WINDOWS_PROVIDER_DISCOVERY_FAILED' };
     const discovery = await execute(command, ['-e', 'if(process.platform!=="win32")throw Error("Windows Node required");console.log(JSON.stringify({home:require("node:os").homedir()}))'], options);
     const { home } = JSON.parse(discovery.stdout);
@@ -72,7 +75,7 @@ export async function reverseVersion(context, provider) {
   if (!runtime) return null;
   const executable = await fs.stat(runtime.python).catch(() => null);
   if (!executable?.isFile()) {
-    throw new PacError('PROVIDER_RUNTIME_MISSING', `Install the pinned ${runtime.package} environment at ${runtime.directory} before enabling ${provider.name}.`);
+    throw new PacError('PROVIDER_RUNTIME_MISSING', `Run PAC apply or provider sync to provision ${runtime.package} at ${runtime.directory}.`);
   }
   if (runtime.debugger && !(await fs.stat(runtime.debugger).catch(() => null))?.isFile()) {
     throw new PacError('PROVIDER_RUNTIME_MISSING', `Install reviewed Windows debugger ${provider.debuggerVersion} at ${runtime.debugger} before enabling windbg.`);
@@ -135,6 +138,8 @@ async function main(args) {
     TMPDIR: state, TMP: state, TEMP: state };
   let serverArgs;
   if (name === 'ida') {
+    const installation = await discoverIda({ home, env });
+    if (installation) env.IDADIR = installation;
     env.IDA_NEXUS_IDALIB_ONLY = '1';
     env.IDA_MCP_STATE_DIR = path.join(state, 'mcp');
     env.IDA_NEXUS_STATE_DIR = path.join(state, 'nexus');

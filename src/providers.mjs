@@ -7,6 +7,7 @@ import { run } from './exec.mjs';
 import { PacError } from './errors.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { resolveWslPlaywright, installWslPlaywright } from './playwright-wsl.mjs';
+import { provisionReverse } from './reverse-install.mjs';
 import { providerSupported, reverseBinding, reverseVersion } from './reverse-provider.mjs';
 
 const PROVIDER_CATALOG = 'catalog/providers.json';
@@ -611,6 +612,7 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
     const enabled = [...enabledHosts, ...(extras.enabled || [])];
     const activeHosts = PROVIDER_CLIENTS.filter((host) => scoped.includes(host)
       && enabled.includes(host) && provider.hosts[host] && selected.has(provider.name));
+    if (mode === 'apply' && installRuntime && activeHosts.length) await provisionReverse(context, provider);
     if (activeHosts.length) provider = await resolveWslPlaywright(context, provider);
     if (activeHosts.length) provider = await reverseBinding(context, provider);
     const bindings = activeHosts.length ? await profileBindings(context, profile, provider) : {};

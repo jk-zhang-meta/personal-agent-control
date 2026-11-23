@@ -3,6 +3,8 @@
   "providers": [
     {
       "name": "ida",
+      "pythonVersion": "3.12.10",
+      "requirements": "catalog/reverse-ida.lock",
       "sameHostWsl": true,
       "kind": "mcp-server",
       "versionPolicy": "pinned",
@@ -23,6 +25,8 @@
     },
     {
       "name": "windbg",
+      "pythonVersion": "3.12.10",
+      "requirements": "catalog/reverse-windbg.lock",
       "sameHostWsl": true,
       "kind": "mcp-server",
       "versionPolicy": "pinned",
@@ -32,6 +36,10 @@
       "source": "https://github.com/svnscha/mcp-windbg",
       "debuggerVersion": "10.0.28000.2957",
       "debuggerSha256": "fe5377bb6e6be8777e81cd42e2cf31c79debe219a954154887dccfa77930ffd6",
+      "sdkInstaller": {
+        "url": "https://download.microsoft.com/download/e6cfffdc-0d3e-4c6c-96d7-d491da459a07/KIT_BUNDLE_WINDOWSSDK_MEDIACREATION/winsdksetup.exe",
+        "sha256": "e8e264aca8bc34abdf592352bf09f986a85cdb96db0efba405ca9e149181fe61"
+      },
       "debuggerPath": ".agent-work/tools/reverse-engineering/debuggers-10.0.28000.2957/Windows Kits/10/Debuggers/x64/cdb.exe",
       "command": "node",
       "args": ["{{PAC_ROOT}}/src/reverse-provider.mjs", "windbg", "--home", "{{PAC_HOME}}"],

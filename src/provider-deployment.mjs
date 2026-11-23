@@ -10,6 +10,7 @@ import { verifyCanonicalPayload } from './integrity.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { acquireProfile } from './profile.mjs';
 import { PROVIDER_CLIENTS, providerConfigurationFiles, providerStatus, reconcileProviders } from './providers.mjs';
+import { provisionReverse } from './reverse-install.mjs';
 import { withLock } from './state.mjs';
 
 const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -73,6 +74,10 @@ export async function synchronizeProvider(context, { name, repository, commit, c
     const profile = await acquireProfile(context, { repository, ref: commit, expectedCommit: commit });
     if (!profile.manifest.providers.enabled.includes(name)) {
       throw new PacError('PROVIDER_NOT_SELECTED', `${name} is not enabled by the verified Profile commit.`);
+    }
+    if (['ida', 'windbg'].includes(name)) {
+      const catalog = JSON.parse(await fs.readFile(path.join(context.root, 'catalog/providers.json'), 'utf8'));
+      await provisionReverse(context, catalog.providers.find(entry => entry.name === name));
     }
     const previousProviders = await providerStatus(context, profile, clients, clients, [name]);
     const files = [...new Set([...await providerConfigurationFiles(context, name, clients), path.join(context.stateDir, 'owned-providers.json')])];

@@ -6,7 +6,7 @@ import { PacError } from './errors.mjs';
 import { assertRealDirectory } from './path-safety.mjs';
 
 const REQUIRED_CATALOG_FILES = ['catalog/capabilities.jsonl', 'catalog/taxonomy.json'];
-const OPTIONAL_CATALOG_FILES = ['catalog/providers.json'];
+const OPTIONAL_CATALOG_FILES = ['catalog/providers.json', 'catalog/reverse-ida.lock', 'catalog/reverse-windbg.lock'];
 // The host hook is executable PAC control code rather than a Profile payload.
 // Keep its reviewed digests in the same canonical inventory when present; the
 // optional shape preserves the small synthetic fixtures used by unit tests.
