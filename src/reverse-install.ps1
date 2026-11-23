@@ -21,7 +21,7 @@ while ($ancestor) {
   $ancestor = Split-Path $ancestor -Parent
 }
 $toolsRoot = Join-Path $RuntimeHome '.agent-work\tools\reverse-engineering'
-$workRoot = Join-Path $RuntimeHome '.agent-work\runtime\reverse-provision'
+$workRoot = Join-Path $nativeHome '.agent-work\runtime\reverse-provision'
 $manifest = Get-Content -LiteralPath (Join-Path $CoreRoot 'catalog\providers.json') -Raw | ConvertFrom-Json
 $spec = $manifest.providers | Where-Object name -eq $Provider
 if (!$spec -or $spec.versionPolicy -ne 'pinned') { throw 'A pinned provider is required.' }
@@ -49,6 +49,29 @@ if ($Action -eq 'Probe') {
   exit 0
 }
 if (![Environment]::Is64BitOperatingSystem -or $env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { throw 'Windows provisioning is verified for x64 only.' }
+function Assert-SafeTree([string]$target) {
+  $cursor = $target
+  while ($cursor) {
+    if (Test-Path -LiteralPath $cursor) {
+      if ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Provider paths must not traverse reparse points.' }
+    }
+    $cursor = Split-Path $cursor -Parent
+  }
+  if (!(Test-Path -LiteralPath $target)) { return }
+  $pending = New-Object 'System.Collections.Generic.Stack[string]'
+  $pending.Push($target)
+  $count = 0
+  while ($pending.Count) {
+    foreach ($item in Get-ChildItem -LiteralPath $pending.Pop() -Force) {
+      $count++
+      if ($count -gt 100000) { throw 'Provider safety inventory exceeded its bounded limit.' }
+      if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Provider paths must not contain reparse points.' }
+      if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+    }
+  }
+}
+Assert-SafeTree $toolsRoot
+Assert-SafeTree $workRoot
 foreach ($directory in @($toolsRoot, $workRoot)) { New-Item -ItemType Directory -Force -Path $directory | Out-Null }
 $lockPath = Join-Path $toolsRoot '.provision.lock'
 $lock = $null
@@ -60,7 +83,7 @@ while (!$lock) {
     Start-Sleep -Milliseconds 500
   }
 }
-$attempt = Join-Path $workRoot ([Guid]::NewGuid().ToString('N'))
+$attempt = Join-Path $workRoot ([Guid]::NewGuid().ToString('N').Substring(0,12))
 New-Item -ItemType Directory -Path $attempt | Out-Null
 $env:TEMP = $attempt
 $env:TMP = $attempt
@@ -89,14 +112,17 @@ function Ensure-ZipTool($pin, [string]$destination, [string]$executable) {
     Move-Item -LiteralPath $stage -Destination $destination
   } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force } }
 }
-function Wait-OwnedProcess($process) {
+function Wait-OwnedProcess($process, [string]$label, [string]$log = '') {
   if (!$process.WaitForExit(900000)) {
     try { $process.Kill() } catch {}
-    throw 'Owned SDK process exceeded its 15 minute timeout.'
+    throw "Owned $label process exceeded its 15 minute timeout."
   }
   $process.WaitForExit()
   $process.Refresh()
-  if ($process.ExitCode -ne 0) { throw "SDK process failed: $($process.ExitCode)" }
+  if ($process.ExitCode -ne 0) {
+    $detail = if ($log -and (Test-Path -LiteralPath $log)) { (Get-Content -LiteralPath $log -Tail 40) -join "`n" } else { '' }
+    throw "$label process failed: $($process.ExitCode)`n$detail"
+  }
 }
 function Expected-Packages([string]$requirements) {
   $expected = @{}
@@ -157,13 +183,16 @@ try {
       if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'SDK installer lacks a valid Microsoft signature.' }
       $layout = Join-Path $attempt 'sdk-layout'
       $process = Start-Process -FilePath $setup -ArgumentList @('/layout', ('"' + $layout + '"'), '/features','OptionId.WindowsDesktopDebuggers','/quiet','/norestart') -WindowStyle Hidden -PassThru
-      Wait-OwnedProcess $process
+      Wait-OwnedProcess $process 'SDK layout'
       $msi = @(Get-ChildItem -LiteralPath $layout -Filter 'X64 Debuggers And Tools-x64_en-us.msi' -Recurse -File)
       if ($msi.Count -ne 1) { throw 'The pinned SDK did not provide its expected x64 debugger MSI.' }
-      $stage = Join-Path $toolsRoot ('.debuggers-' + [Guid]::NewGuid().ToString('N'))
+      $msiSignature = Get-AuthenticodeSignature -LiteralPath $msi[0].FullName
+      if ($msiSignature.Status -ne 'Valid' -or $msiSignature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'SDK debugger MSI lacks a valid Microsoft signature.' }
+      $stage = Join-Path $attempt 'debuggers'
       try {
-        $process = Start-Process -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') -ArgumentList @('/a', ('"' + $msi[0].FullName + '"'), '/qn', ('TARGETDIR="' + $stage + '"')) -WindowStyle Hidden -PassThru
-        Wait-OwnedProcess $process
+        $msiLog = Join-Path $attempt 'msi.log'
+        $process = Start-Process -FilePath (Join-Path $env:WINDIR 'System32\msiexec.exe') -ArgumentList @('/a', ('"' + $msi[0].FullName + '"'), '/qn', '/L*v', ('"' + $msiLog + '"'), ('TARGETDIR="' + $stage + '"')) -WindowStyle Hidden -PassThru
+        Wait-OwnedProcess $process 'SDK administrative extraction' $msiLog
         $stageCdb = Join-Path $stage 'Windows Kits\10\Debuggers\x64\cdb.exe'
         if ((Get-FileHash -LiteralPath $stageCdb -Algorithm SHA256).Hash.ToLowerInvariant() -ne $spec.debuggerSha256) { throw 'Extracted CDB differs from the reviewed pin.' }
         Move-Item -LiteralPath $stage -Destination $debuggerRoot

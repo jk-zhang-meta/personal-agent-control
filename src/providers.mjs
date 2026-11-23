@@ -178,7 +178,7 @@ async function profileBindings(context, profile, provider) {
 // Full Profile application can enable the vendored bridge on native
 // compatibility clients. Provider-only deployments remain independently owned
 // until they are selected by a full application.
-export async function defaultCodegraphClients(context, profile) {
+async function codegraphCompatibilityClients(context, profile) {
   const owned = (await readOwnership(context)).providers.codegraph || {};
   const scope = Object.keys(COMPATIBILITY_INSTALL_MARKERS).filter(host => owned[host]?.defaultManaged === true);
   const requested = selectedNames(profile).has('codegraph')
@@ -207,6 +207,39 @@ export async function defaultCodegraphClients(context, profile) {
   }
   const included = [...new Set([...scope, ...enabled])];
   return { scope: included, enabled, configPaths: included.map(host => provider.hosts[host].config) };
+}
+
+// Include native compatibility clients for selected reverse providers during a
+// full apply, while preserving independently deployed bindings outside scope.
+export async function defaultCodegraphClients(context, profile) {
+  const codegraph = await codegraphCompatibilityClients(context, profile);
+  const selected = selectedNames(profile);
+  const ownership = await readOwnership(context);
+  const reverse = {};
+  const configPaths = [...(codegraph.configPaths || [])];
+  for (const provider of (await catalog(context)).filter(entry => ['ida', 'windbg'].includes(entry.name))) {
+    if (!providerSupported(context, provider)) continue;
+    const owned = ownership.providers[provider.name] || {};
+    const scope = Object.keys(COMPATIBILITY_INSTALL_MARKERS).filter(host => owned[host]?.defaultManaged === true);
+    const enabled = [];
+    if (selected.has(provider.name)) {
+      for (const [host, markers] of Object.entries(COMPATIBILITY_INSTALL_MARKERS)) {
+        const candidates = [...markers];
+        if (host === 'agy' || owned[host]) candidates.push(provider.hosts[host].config);
+        for (const marker of candidates) {
+          const stat = await fs.lstat(path.join(context.home, marker)).catch(error => {
+            if (!['ENOENT', 'ENOTDIR'].includes(error.code)) throw error;
+            return null;
+          });
+          if (stat?.isFile() || stat?.isDirectory()) { enabled.push(host); break; }
+        }
+      }
+    }
+    const included = [...new Set([...scope, ...enabled])];
+    reverse[provider.name] = { scope: included, enabled };
+    configPaths.push(...included.map(host => provider.hosts[host].config));
+  }
+  return { ...codegraph, reverse, configPaths: [...new Set(configPaths)] };
 }
 
 function ownedBinding(provider, ownership, host) {
@@ -546,7 +579,7 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
       }
       continue;
     }
-    const extras = provider.name === 'codegraph' ? defaultCodegraph : {};
+    const extras = provider.name === 'codegraph' ? defaultCodegraph : defaultCodegraph.reverse?.[provider.name] || {};
     const scoped = [...scopeHosts, ...(extras.scope || [])];
     const enabled = [...enabledHosts, ...(extras.enabled || [])];
     const active = PROVIDER_CLIENTS.some((host) => scoped.includes(host)
@@ -607,7 +640,7 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
       results.push({ provider: provider.name, action: 'unsupported', supportedPlatforms: provider.platforms });
       continue;
     }
-    const extras = provider.name === 'codegraph' ? defaultCodegraph : {};
+    const extras = provider.name === 'codegraph' ? defaultCodegraph : defaultCodegraph.reverse?.[provider.name] || {};
     const scoped = [...scopeHosts, ...(extras.scope || [])];
     const enabled = [...enabledHosts, ...(extras.enabled || [])];
     const activeHosts = PROVIDER_CLIENTS.filter((host) => scoped.includes(host)

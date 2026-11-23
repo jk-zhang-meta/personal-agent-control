@@ -18,6 +18,7 @@ export async function discoverIda({ home, platform = process.platform, env = pro
   const candidates = [];
   for (const root of search) {
     for (const entry of (await fs.readdir(root, { withFileTypes: true }).catch(() => [])).slice(0, 512)) {
+      if (/(?:beta|preview|nightly|dev|rc)/iu.test(entry.name)) continue;
       const match = /^IDA(?: Professional| Pro)?[ -]?(\d+)\.(\d+).*?(?:\.app)?$/iu.exec(entry.name);
       if (!entry.isDirectory() || !match || Number(match[1]) < 9 || (Number(match[1]) === 9 && Number(match[2]) < 4)) continue;
       candidates.push({ version: Number(match[1]) * 1000 + Number(match[2]), directory: p.join(root, entry.name, platform === 'darwin' ? 'Contents/MacOS' : '') });

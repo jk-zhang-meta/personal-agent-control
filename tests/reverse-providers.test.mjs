@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { providerSupported, reverseRuntime, reverseVersion, reverseBinding } from '../src/reverse-provider.mjs';
-import { providerStatus, reconcileProviders } from '../src/providers.mjs';
+import { providerStatus, reconcileProviders, defaultCodegraphClients } from '../src/providers.mjs';
 
 const root = process.cwd();
 const catalog = JSON.parse(await fs.readFile(path.join(root, 'catalog/providers.json'), 'utf8')).providers;
@@ -118,9 +118,16 @@ test('supported platform requires real installed metadata, preserves unrelated c
     const metadata = version => `Metadata-Version: 2.1\nName: ida-mcp\nVersion: ${version}\n`;
     await fs.writeFile(path.join(dist, 'METADATA'), metadata(ida.version));
     assert.deepEqual(await reverseVersion(context, ida), { expected: ida.version, actual: ida.version, matches: true });
-    const applied = await reconcileProviders(context, selected, ['claude'], ['claude'], 'apply', { installRuntime: false });
+    await fs.mkdir(path.join(home, '.gemini/antigravity-cli/bin'), { recursive: true });
+    await fs.mkdir(path.join(home, '.grok/bin'), { recursive: true });
+    const defaults = await defaultCodegraphClients(context, selected);
+    assert.deepEqual(defaults.reverse.ida.enabled, ['agy', 'grok']);
+    assert.equal(defaults.reverse.windbg, undefined);
+    const applied = await reconcileProviders(context, selected, ['claude'], ['claude'], 'apply', { installRuntime: false, defaultCodegraph: defaults });
+    assert.ok(JSON.parse(await fs.readFile(path.join(home, '.gemini/config/mcp_config.json'), 'utf8')).mcpServers.ida);
+    assert.match(await fs.readFile(path.join(home, '.grok/config.toml'), 'utf8'), /mcp_servers\.ida/u);
     assert.equal(applied.providers[0].version.matches, true);
-    assert.equal(applied.providers[1].action, 'unsupported');
+    assert.equal(applied.providers.find(entry => entry.provider === 'windbg').action, 'unsupported');
     const value = JSON.parse(await fs.readFile(file, 'utf8'));
     assert.equal(value.theme, 'dark');
     assert.deepEqual(value.mcpServers.other, original.mcpServers.other);

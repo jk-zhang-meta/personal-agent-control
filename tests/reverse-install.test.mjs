@@ -34,7 +34,11 @@ test('IDA discovery preserves valid selection, finds later installation, never c
     const install = path.join(root, 'IDA Professional 9.5.app', 'Contents/MacOS');
     await fs.mkdir(install, { recursive: true });
     await fs.writeFile(path.join(install, 'libidalib.dylib'), 'fixture');
+    const beta = path.join(root, 'IDA Professional 9.6 beta.app', 'Contents/MacOS');
+    await fs.mkdir(beta, { recursive: true });
+    await fs.writeFile(path.join(beta, 'libidalib.dylib'), 'fixture');
     assert.equal(await discoverIda({ home, platform: 'darwin', env: {}, roots: [root] }), install);
+    assert.equal(await discoverIda({ home, platform: 'darwin', env: { IDADIR: beta }, roots: [root] }), beta);
     assert.equal(await fs.stat(path.join(home, '.idapro')).catch(() => null), null);
     const selected = path.join(home, 'chosen');
     await fs.mkdir(selected);
