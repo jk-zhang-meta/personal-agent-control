@@ -158,7 +158,7 @@ try {
       $layout = Join-Path $attempt 'sdk-layout'
       $process = Start-Process -FilePath $setup -ArgumentList @('/layout', ('"' + $layout + '"'), '/features','OptionId.WindowsDesktopDebuggers','/quiet','/norestart') -WindowStyle Hidden -PassThru
       Wait-OwnedProcess $process
-      $msi = @(Get-ChildItem -LiteralPath $layout -Filter 'Windows Debugging Tools-x64_en-us.msi' -Recurse -File)
+      $msi = @(Get-ChildItem -LiteralPath $layout -Filter 'X64 Debuggers And Tools-x64_en-us.msi' -Recurse -File)
       if ($msi.Count -ne 1) { throw 'The pinned SDK did not provide its expected x64 debugger MSI.' }
       $stage = Join-Path $toolsRoot ('.debuggers-' + [Guid]::NewGuid().ToString('N'))
       try {
