@@ -215,6 +215,8 @@ export async function defaultCodegraphClients(context, profile) {
   const codegraph = await codegraphCompatibilityClients(context, profile);
   const selected = selectedNames(profile);
   const ownership = await readOwnership(context);
+  if (!['ida', 'windbg'].some(name => selected.has(name)
+      || Object.values(ownership.providers[name] || {}).some(entry => entry.defaultManaged === true))) return codegraph;
   const reverse = {};
   const configPaths = [...(codegraph.configPaths || [])];
   for (const provider of (await catalog(context)).filter(entry => ['ida', 'windbg'].includes(entry.name))) {
