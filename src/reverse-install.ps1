@@ -62,6 +62,8 @@ while (!$lock) {
 }
 $attempt = Join-Path $workRoot ([Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $attempt | Out-Null
+$env:TEMP = $attempt
+$env:TMP = $attempt
 function Checked-Run([string]$program, [string[]]$arguments) {
   $output = & $program @arguments 2>&1
   if ($LASTEXITCODE -ne 0) { throw "Provider prerequisite command failed ($LASTEXITCODE): $program`n$($output | Out-String)" }
