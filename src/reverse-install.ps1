@@ -65,7 +65,18 @@ function Assert-SafeTree([string]$target) {
     foreach ($item in Get-ChildItem -LiteralPath $pending.Pop() -Force) {
       $count++
       if ($count -gt 100000) { throw 'Provider safety inventory exceeded its bounded limit.' }
-      if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Provider paths must not contain reparse points.' }
+      if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        # uv creates one managed minor-version alias. Permit only this exact
+        # reviewed alias to the real pinned Python directory in the same root.
+        $alias = Join-Path $toolsRoot 'python\cpython-3.12-windows-x86_64-none'
+        $expectedTarget = Join-Path $toolsRoot ('python\cpython-' + $spec.pythonVersion + '-windows-x86_64-none')
+        $targets = @($item.Target)
+        if ($item.FullName -eq $alias -and $item.LinkType -eq 'Junction' -and $targets.Count -eq 1 -and $targets[0] -eq $expectedTarget) {
+          $resolved = Get-Item -LiteralPath $expectedTarget -Force
+          if ($resolved.PSIsContainer -and !($resolved.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
+        }
+        throw 'Provider paths must not contain reparse points.'
+      }
       if ($item.PSIsContainer) { $pending.Push($item.FullName) }
     }
   }
