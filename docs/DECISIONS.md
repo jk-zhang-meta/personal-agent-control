@@ -1,5 +1,40 @@
 # Architecture Decisions
 
+## Native reverse-engineering providers use explicit opt-in delivery (2026-11-23)
+
+IDA uses the official HexRaysSA `ida-mcp` distribution, pinned to
+`20261028.0.3`; WinDbg uses `svnscha/mcp-windbg` `1.6.0`. Existing PAC
+provider transactions, ownership and client adapters remain the only delivery
+path. The Core catalog records supported native platforms. Full reconciliation
+reports unsupported platforms without installing, launching or retiring their
+bindings; explicit provider delivery to an unsupported platform fails.
+
+The small launcher uses preinstalled private environments, verifies the real
+installed package version on every start, and runs only stdio. It performs no
+download or automatic update and does not bridge WSL or other machines. Native
+Windows environments use `~/.agent-work/tools/reverse-engineering/<name>/Scripts/python.exe`;
+native macOS IDA uses `~/.agent-work/tools/reverse-engineering/ida/venv/bin/python`.
+The WinDbg catalog pins the separately provisioned CDB location and SHA-256;
+startup verifies its bytes. Licensing,
+IDA installation and complete analysis acceptance are separate requirements;
+metadata/version success is not evidence that decompilation works.
+
+Before delivery, known competing IDA/WinDbg server entries in the target native
+MCP config cause a conflict rather than being removed. Plugin-bundled servers
+and arbitrarily named remote endpoints still require the installation inventory;
+PAC cannot infer which database an opaque remote service exposes. The launcher
+does not enable GUI, attach, remote debugging, kernel debugging or binary
+execution; those tools remain subject to the host and task's authorization.
+
+For a provider-only rollout, a clean installed Core checkout can fast-forward
+to the reviewed exact Git commit before `pac provider sync NAME PROFILE_REPO
+PROFILE_COMMIT CLIENTS`. This deploys committed source through the existing
+launcher without running `pac update`, whose full reconciliation would also
+update unrelated capabilities. Refuse a dirty or divergent checkout rather
+than resetting it. Provider-only delivery still verifies canonical integrity,
+the exact Profile revision, runtime version, native ownership and rollback.
+It does not claim that the supplied database or license has passed acceptance.
+
 ## Reject Core/Profile mismatch before mutation; name update blockers (2026-11-10)
 
 Status: accepted; owner: user-requested review of the PAC workflow.

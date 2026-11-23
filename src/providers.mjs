@@ -7,6 +7,7 @@ import { run } from './exec.mjs';
 import { PacError } from './errors.mjs';
 import { assertSafeManagedObject } from './path-safety.mjs';
 import { resolveWslPlaywright, installWslPlaywright } from './playwright-wsl.mjs';
+import { providerSupported, reverseBinding, reverseVersion } from './reverse-provider.mjs';
 
 const PROVIDER_CATALOG = 'catalog/providers.json';
 const OWNERSHIP_SCHEMA = 1;
@@ -63,6 +64,10 @@ async function catalog(context) {
       throw new PacError('PROVIDER_CATALOG_INVALID', `Invalid provider entry in ${file}.`);
     }
     names.add(provider.name);
+    if (provider.platforms !== undefined && (!Array.isArray(provider.platforms) || !provider.platforms.length
+        || provider.platforms.some(platform => !['win32', 'darwin', 'linux'].includes(platform)))) {
+      throw new PacError('PROVIDER_CATALOG_INVALID', `Invalid ${provider.name} supported platforms.`);
+    }
     const missingHosts = HOSTS.filter((host) => !Object.hasOwn(provider.hosts, host));
     if (missingHosts.length > 0) {
       throw new PacError('PROVIDER_CATALOG_INVALID', `${provider.name} must declare an adapter for every Core-supported Agent: ${missingHosts.join(', ')}.`);
@@ -444,6 +449,32 @@ async function inspect(context, provider, host, file) {
   return format.endsWith('-toml') ? readCodex(context, provider, file) : readClaude(context, provider, file, format);
 }
 
+async function rejectDuplicateReverseProvider(context, provider, file, format) {
+  if (!['ida', 'windbg'].includes(provider.name)) return;
+  await assertSafeManagedObject(context.home, file, 'reverse-engineering provider config', 'file');
+  let entries;
+  if (format.endsWith('-toml')) {
+    const text = await fs.readFile(file, 'utf8').catch(error => {
+      if (error.code === 'ENOENT') return '';
+      throw error;
+    });
+    const blocks = [...text.matchAll(/^\s*\[\s*(?:mcp_servers|"mcp_servers"|'mcp_servers')\s*\.\s*([\w-]+|"[^"\n]+"|'[^'\n]+')\s*\]\s*(?:#.*)?$/gmu)];
+    entries = blocks.map((match) => {
+      const block = text.slice(match.index + match[0].length).split(/^\s*\[/mu, 1)[0];
+      return [match[1].replace(/^["']|["']$/gu, ''), {
+        disabled: /^\s*enabled\s*=\s*false\b/mu.test(block),
+        command: tomlBinding(block, 'command')?.value,
+        args: tomlBinding(block, 'args')?.value,
+      }];
+    });
+  } else entries = Object.entries((await readJsonConfig(file, format)).mcpServers || {});
+  const pattern = provider.name === 'ida' ? /(?:^|[^a-z])(?:ida|ida-pro-mcp|ida-mcp|hexrays)(?:$|[^a-z])/iu : /(?:windbg|mcp-windbg)/iu;
+  const conflicts = entries.filter(([name, entry]) => name !== provider.name && entry
+    && entry.disabled !== true && entry.enabled !== false
+    && pattern.test([name, entry.command, ...(Array.isArray(entry.args) ? entry.args : [])].join(' '))).map(([name]) => name);
+  if (conflicts.length) throw new PacError('PROVIDER_DUPLICATE', `Existing ${provider.name} MCP connection(s): ${conflicts.join(', ')}. Select one connection before enabling another; existing configuration was not removed.`);
+}
+
 async function retireProvider(context, provider, host, file, write, runtime) {
   await assertSafeManagedObject(context.home, file, `${provider.name} ${host} config`, 'file');
   if (provider.hosts[host].format.endsWith('-toml')) {
@@ -471,6 +502,8 @@ async function upgradeLatest(provider) {
 }
 
 async function providerVersion(context, provider) {
+  const reverse = await reverseVersion(context, provider);
+  if (reverse) return reverse;
   if (process.env.PAC_PROVIDER_NO_VERSION_CHECK === '1') {
     return { expected: provider.version || provider.versionPolicy, actual: null, matches: true, skipped: true };
   }
@@ -501,12 +534,21 @@ export async function providerStatus(context, profile, enabledHosts, scopeHosts,
   const results = [];
   for (let provider of providers) {
     if (names && !names.includes(provider.name)) continue;
+    if (selected.has(provider.name) && !providerSupported(context, provider)) {
+      if (names) throw new PacError('PROVIDER_PLATFORM_UNSUPPORTED', `${provider.name} supports native ${provider.platforms.join(', ')} only.`);
+      for (const host of scopeHosts.filter(host => enabledHosts.includes(host))) {
+        results.push({ provider: provider.name, host, expected: 'unsupported', valid: true,
+          supportedPlatforms: provider.platforms });
+      }
+      continue;
+    }
     const extras = provider.name === 'codegraph' ? defaultCodegraph : {};
     const scoped = [...scopeHosts, ...(extras.scope || [])];
     const enabled = [...enabledHosts, ...(extras.enabled || [])];
     const active = PROVIDER_CLIENTS.some((host) => scoped.includes(host)
       && enabled.includes(host) && provider.hosts[host] && selected.has(provider.name));
     if (active) provider = await resolveWslPlaywright(context, provider);
+    if (active) provider = reverseBinding(context, provider);
     const bindings = active ? await profileBindings(context, profile, provider) : {};
     const version = active ? await providerVersion(context, provider) : null;
     for (const host of PROVIDER_CLIENTS) {
@@ -556,15 +598,22 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
   const results = [];
   for (let provider of providers) {
     if (names && !names.includes(provider.name)) continue;
+    if (selected.has(provider.name) && !providerSupported(context, provider)) {
+      if (names) throw new PacError('PROVIDER_PLATFORM_UNSUPPORTED', `${provider.name} supports native ${provider.platforms.join(', ')} only.`);
+      results.push({ provider: provider.name, action: 'unsupported', supportedPlatforms: provider.platforms });
+      continue;
+    }
     const extras = provider.name === 'codegraph' ? defaultCodegraph : {};
     const scoped = [...scopeHosts, ...(extras.scope || [])];
     const enabled = [...enabledHosts, ...(extras.enabled || [])];
     const activeHosts = PROVIDER_CLIENTS.filter((host) => scoped.includes(host)
       && enabled.includes(host) && provider.hosts[host] && selected.has(provider.name));
     if (activeHosts.length) provider = await resolveWslPlaywright(context, provider);
+    if (activeHosts.length) provider = reverseBinding(context, provider);
     const bindings = activeHosts.length ? await profileBindings(context, profile, provider) : {};
     for (const host of activeHosts) {
       const file = providerConfigPath(context, provider.hosts[host].config);
+      await rejectDuplicateReverseProvider(context, provider, file, provider.hosts[host].format);
       const owned = ownership.providers[provider.name]?.[host];
       const inspected = await inspect(context, owned ? ownedBinding(provider, ownership, host) : bindings[host] || provider, host, file);
       // An already matching entry is safe to adopt; conflicting native config is not.
@@ -624,5 +673,5 @@ export async function reconcileProviders(context, profile, enabledHosts, scopeHo
     else delete ownership.codexRuntimeRoots;
   }
   if (mode === 'apply') await writeOwnership(context, ownership, write);
-  return { valid: mode === 'apply' || results.every((entry) => entry.action === 'checked'), providers: results };
+  return { valid: mode === 'apply' || results.every((entry) => ['checked', 'unsupported'].includes(entry.action)), providers: results };
 }
