@@ -5,6 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { hashDirectory } from '../src/profile.mjs';
 import { policyStatus, synchronizePolicy } from '../src/policy-deployment.mjs';
 
@@ -82,29 +83,59 @@ test('Profile footer installation preserves user config and converges for four c
   await fs.copyFile(new URL('../scripts/statusline-config.py', import.meta.url), path.join(f.root, 'scripts/statusline-config.py'));
   const grok = path.join(f.home, '.grok/config.toml');
   const codex = path.join(f.home, '.codex/config.toml');
+  const scripts = path.join(f.home, '.local/share/agent-skills/.agents/skills', name, 'scripts');
+  const claude = path.join(f.home, '.claude/settings.json');
+  await fs.mkdir(path.dirname(claude));
+  await fs.writeFile(claude, JSON.stringify({
+    statusLine: { type: 'command', command: `python3 ${path.join(scripts, 'claude.py')}`, padding: 3 },
+  }));
   await fs.mkdir(path.dirname(codex));
-  await fs.writeFile(codex, `[mcp_servers.usage-statusline]\ncommand = "python3"\nargs = [\n  "-u",\n  "${f.home}/.codex/statusline/statusline.py",\n]\n`);
+  await fs.writeFile(codex, `[tui]\nanimations = false\n\n[mcp_servers.usage-statusline]\ncommand = "python3"\nargs = [\n  "-u",\n  "${f.home}/.codex/statusline/statusline.py",\n]\n`);
   await fs.mkdir(path.dirname(grok));
   await fs.writeFile(grok, '[ui.status_line]\ntype = "command"\ncommand = "my-footer"\n');
   const options = { repository: f.repository, commit, baseline };
   await synchronizePolicy(f.context, options);
-  for (const [file, expected] of [
-    ['.codex/config.toml', 'scripts/codex.py'], ['.claude/settings.json', 'scripts/claude.py'],
-    ['.gemini/antigravity-cli/settings.json', 'scripts/agy.py'], ['.grok/config.toml', 'my-footer'],
-  ]) assert.ok((await fs.readFile(path.join(f.home, file), 'utf8')).includes(expected));
+  const codexConfig = await fs.readFile(codex, 'utf8');
+  assert.match(codexConfig, /args = \["-B", "-u", ".+\/scripts\/codex\.py"\]/u);
+  assert.match(codexConfig, /animations = false/u);
+  assert.deepEqual(JSON.parse(await fs.readFile(claude)).statusLine,
+    { type: 'command', command: `python3 -B ${path.join(scripts, 'claude.py')}`, padding: 3 });
+  const agy = path.join(f.home, '.gemini/antigravity-cli/settings.json');
+  assert.equal(JSON.parse(await fs.readFile(agy)).statusLine.command, `python3 -B ${path.join(scripts, 'agy.py')}`);
+  assert.equal(await fs.readFile(grok, 'utf8'), '[ui.status_line]\ntype = "command"\ncommand = "my-footer"\n');
   assert.equal((await synchronizePolicy(f.context, options)).changed, 0);
-  await fs.writeFile(grok, '[other]\nvalue = 42\n');
+  await fs.writeFile(grok, `[other]\nvalue = 42\n\n[ui.status_line]\ntype = "command"\ncommand = "python3 ${path.join(scripts, 'grok.py')}"\n`);
   await synchronizePolicy(f.context, { ...options, agents: ['grok'] });
-  assert.match(await fs.readFile(grok, 'utf8'), /value = 42[\s\S]+scripts\/grok.py/);
-  for (const file of ['.claude/settings.json', '.gemini/antigravity-cli/settings.json']) {
-    const location = path.join(f.home, file);
-    const config = JSON.parse(await fs.readFile(location));
-    config.statusLine.padding = 3;
-    await fs.writeFile(location, JSON.stringify(config));
-  }
+  assert.match(await fs.readFile(grok, 'utf8'), /value = 42[\s\S]+command = "python3 -B .+\/scripts\/grok\.py"/u);
+  await fs.writeFile(codex, `[other]\nvalue = 42\n\n[mcp_servers.usage-statusline]\ncommand = "python3"\nargs = ${JSON.stringify(['-u', path.join(scripts, 'codex.py')])}\n`);
   await synchronizePolicy(f.context, { repository: f.repository, commit: baseline, baseline: commit });
-  for (const file of ['.claude/settings.json', '.gemini/antigravity-cli/settings.json']) {
-    assert.deepEqual(JSON.parse(await fs.readFile(path.join(f.home, file))).statusLine, { padding: 3 });
+  assert.deepEqual(JSON.parse(await fs.readFile(claude)).statusLine, { padding: 3 });
+  assert.equal(JSON.parse(await fs.readFile(agy)).statusLine, undefined);
+  assert.match(await fs.readFile(codex, 'utf8'), /value = 42/u);
+  assert.doesNotMatch(await fs.readFile(codex, 'utf8'), /usage-statusline|status_line_provider/u);
+  assert.match(await fs.readFile(grok, 'utf8'), /value = 42/u);
+  assert.doesNotMatch(await fs.readFile(grok, 'utf8'), /status_line/u);
+});
+
+test('Codex migrates its managed server independently of a custom footer provider', () => {
+  const home = '/home/pac';
+  const script = `${home}/.local/share/agent-skills/.agents/skills/personal-statusline/scripts/codex.py`;
+  const merger = fileURLToPath(new URL('../scripts/statusline-config.py', import.meta.url));
+  const merge = (source, enabled) => JSON.parse(execFileSync('python3', ['-I', '-B', merger], {
+    input: JSON.stringify({ host: 'codex', source, script, legacy: '~/.codex/statusline/statusline.py', home, enabled }),
+  }));
+  const managed = `[mcp_servers.usage-statusline]\ncommand = "python3"\nargs = ${JSON.stringify(['-u', script])}\n`;
+  for (const server of ['another-server', 'usage-statusline']) {
+    const custom = `[tui.status_line_provider]\nserver = "${server}"\ntool = "custom-footer"\n`;
+    assert.equal(merge(custom, true), custom);
+    assert.equal(merge(custom, false), custom);
+    const source = `${custom}\n${managed}`;
+    const migrated = merge(source, true);
+    assert.equal(migrated, source.replace('args = ["-u",', 'args = ["-B", "-u", '));
+    for (const config of [source, migrated]) {
+      const expected = server === 'usage-statusline' ? config.trim() : custom.trim();
+      assert.equal(merge(config, false).trim(), expected);
+    }
   }
 });
 

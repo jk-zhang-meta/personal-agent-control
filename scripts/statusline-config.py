@@ -8,9 +8,11 @@ import tomllib
 
 
 def merge(host, source, script, legacy, home, enabled):
-    command = "python3 " + shlex.quote(script)
+    script_path = shlex.quote(script)
+    command = "python3 -B " + script_path
     absolute_legacy = home + legacy[1:]
-    old_commands = {legacy, absolute_legacy, command}
+    owned_commands = (command, "python3 " + script_path)
+    known_commands = (*owned_commands, legacy, absolute_legacy)
     if host in ("claude", "agy"):
         obj = json.loads(source or "{}")
         binding = obj.get("statusLine", {})
@@ -18,12 +20,11 @@ def merge(host, source, script, legacy, home, enabled):
             return source
         prior = binding.get("command")
         if enabled and ((prior is None and "type" not in binding)
-                        or prior in old_commands and binding.get("type") == "command"):
+                        or prior in known_commands and binding.get("type") == "command"):
             obj["statusLine"] = {**binding, "type": "command", "command": command}
-        elif not enabled and prior == command:
+        elif not enabled and prior in owned_commands and binding.get("type") == "command":
             del binding["command"]
-            if binding.get("type") == "command":
-                del binding["type"]
+            del binding["type"]
             if not binding:
                 del obj["statusLine"]
         else:
@@ -34,23 +35,30 @@ def merge(host, source, script, legacy, home, enabled):
     expected = copy.deepcopy(doc)
     if host == "grok":
         table = doc.get("ui", {}).get("status_line", {})
-        if table and (table.get("type") != "command" or table.get("command") not in old_commands):
+        if table and (table.get("type") != "command" or table.get("command") not in known_commands):
             return source
-        if not enabled and table.get("command") != command:
+        if not enabled and table.get("command") not in owned_commands:
             return source
         changes = {"ui.status_line": {"type": "command", "command": command}}
     else:
         provider = {"server": "usage-statusline", "tool": "statusline"}
         server = doc.get("mcp_servers", {}).get("usage-statusline", {})
         binding = doc.get("tui", {}).get("status_line_provider")
-        args = ["-u", script]
-        if server and (server.get("command") != "python3" or server.get("args") not in (args, ["-u", absolute_legacy])):
+        args = ["-B", "-u", script]
+        owned_args = (args, ["-u", script])
+        known_args = (*owned_args, ["-u", absolute_legacy])
+        prior_args = server.get("args")
+        custom_provider = binding not in (None, provider)
+        if server and (server.get("command") != "python3" or prior_args not in known_args):
             return source
-        if binding not in (None, provider) or (not enabled and server.get("args") != args):
+        if (not enabled or custom_provider) and prior_args not in owned_args:
             return source
-        changes = {"mcp_servers.usage-statusline": {"command": "python3", "args": args},
-                   "tui": {"status_line_provider": provider}}
-        if enabled:
+        if not enabled and custom_provider and isinstance(binding, dict) and binding.get("server") == provider["server"]:
+            return source
+        changes = {"mcp_servers.usage-statusline": {"command": "python3", "args": args}}
+        if not custom_provider and (enabled or binding is not None):
+            changes["tui"] = {"status_line_provider": provider}
+        if enabled and not custom_provider:
             changes["features"] = {"tui_extensions_statusline": True}
     original = source
     for table_name, fields in changes.items():
