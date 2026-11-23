@@ -17,7 +17,7 @@ test('WSL provisioning uses built-in PowerShell and argv before any Windows Node
   const result = await provisionReverse(context, { name: 'ida' }, { execute });
   assert.equal(result.node, '/mnt/c/node.exe');
   const invocation = calls.find(([command]) => command.endsWith('powershell.exe'));
-  assert.deepEqual(invocation[1], ['-NoProfile','-NonInteractive','-File','C:\\Core space\\src\\reverse-install.ps1','-Action','Install','-Provider','ida','-CoreRoot','C:\\Core space']);
+  assert.deepEqual(invocation[1], ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','C:\\Core space\\src\\reverse-install.ps1','-Action','Install','-Provider','ida','-CoreRoot','C:\\Core space']);
   assert.equal(calls.some(([command]) => command.endsWith('node.exe')), false);
   calls.length = 0;
   await windowsReverseSetup(context, 'Probe', 'ida', execute);

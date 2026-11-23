@@ -11,8 +11,9 @@ export async function windowsReverseSetup(context, action, provider = 'ida', exe
   const root = wsl ? await convert('-w', context.root) : context.root;
   const command = wsl ? await convert('-u', 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
     : path.join(process.env.WINDIR || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
-  const result = await execute(command, ['-NoProfile', '-NonInteractive', '-File', path.win32.join(root, 'src/reverse-install.ps1'),
-    '-Action', action, '-Provider', provider, '-CoreRoot', root],
+  const result = await execute(command, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.win32.join(root, 'src/reverse-install.ps1'),
+    '-Action', action, '-Provider', provider, '-CoreRoot', root,
+    ...(!wsl ? ['-RuntimeHome', context.home] : [])],
   { timeoutMs: action === 'Probe' ? 15000 : 1800000, errorCode: 'REVERSE_PROVISION_FAILED' });
   const value = JSON.parse(result.stdout.trim());
   if (wsl && value.node) value.node = await convert('-u', value.node);
