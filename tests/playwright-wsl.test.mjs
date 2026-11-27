@@ -27,7 +27,7 @@ test('WSL resolves Windows-only arguments without installing; apply installs the
   const calls = [];
   const execute = async (command, args, options) => {
     assert.equal(options.cwd, '/mnt/c/Program Files/nodejs');
-    assert.ok(options.timeoutMs > 0);
+    assert.equal(options.timeoutMs, args[1] === 'install' ? undefined : 15000);
     calls.push({ command, args });
     if (args.at(-1) === '--version') return { stdout: 'Version 0.0.83\n' };
     return { stdout: JSON.stringify(calls.length === 1 ? host : { exists: false, version: null }) };

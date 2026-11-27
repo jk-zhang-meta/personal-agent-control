@@ -14,7 +14,7 @@ export async function windowsReverseSetup(context, action, provider = 'ida', exe
   const result = await execute(command, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.win32.join(root, 'src/reverse-install.ps1'),
     '-Action', action, '-Provider', provider, '-CoreRoot', root,
     ...(!wsl ? ['-RuntimeHome', context.home] : [])],
-  { timeoutMs: action === 'Probe' ? 15000 : 1800000, errorCode: 'REVERSE_PROVISION_FAILED' });
+  { timeoutMs: action === 'Probe' ? 15000 : undefined, errorCode: 'REVERSE_PROVISION_FAILED' });
   const value = JSON.parse(result.stdout.trim());
   if (wsl && value.node) value.node = await convert('-u', value.node);
   return value;

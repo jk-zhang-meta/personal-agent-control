@@ -11,7 +11,6 @@ const MAX_RECORDS = 4096;
 // A real apply snapshot holds tens of thousands of entries: the Skill store
 // alone exceeds 12,000. A budget below that never seals, so nothing is pruned.
 const MAX_TREE_ENTRIES = 262144;
-const TREE_DEADLINE_MS = 30000;
 const MAX_REMOVALS_PER_RUN = 8;
 export const pendingRetirement = Symbol('pending snapshot retirement');
 const rootFor = (context) => path.join(context.home, '.agent-work/backups/personal-agent-control');
@@ -42,13 +41,12 @@ async function writeRegistry(context, registry) {
   await atomicWriteFile(file, `${JSON.stringify(registry, null, 2)}\n`);
 }
 
-function budget() { return { entries: 0, deadline: Date.now() + TREE_DEADLINE_MS }; }
-
 // ponytail: bounded lstat identities under the PAC lock; oversized trees stay protected.
-async function fingerprint(directory, limits = budget()) {
+async function fingerprint(directory) {
+  let entries = 0;
   const rows = [];
   const walk = async (file, relative) => {
-    if (++limits.entries > MAX_TREE_ENTRIES || Date.now() > limits.deadline) fail('Backup fingerprint budget exceeded.');
+    if (++entries > MAX_TREE_ENTRIES) fail('Backup fingerprint budget exceeded.');
     const stat = await fs.lstat(file);
     const row = { path: relative, dev: stat.dev, ino: stat.ino, mode: stat.mode, uid: stat.uid, gid: stat.gid,
       size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs };
@@ -57,7 +55,7 @@ async function fingerprint(directory, limits = budget()) {
       const handle = await fs.opendir(file);
       try {
         for await (const entry of handle) {
-          if (names.length + limits.entries >= MAX_TREE_ENTRIES || Date.now() > limits.deadline) fail('Backup directory budget exceeded.');
+          if (names.length + entries >= MAX_TREE_ENTRIES) fail('Backup directory budget exceeded.');
           names.push(entry.name);
         }
       } finally { await handle.close().catch((e) => { if (e.code !== 'ERR_DIR_CLOSED') throw e; }); }

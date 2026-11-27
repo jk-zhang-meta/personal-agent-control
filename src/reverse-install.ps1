@@ -124,10 +124,6 @@ function Ensure-ZipTool($pin, [string]$destination, [string]$executable) {
   } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force } }
 }
 function Wait-OwnedProcess($process, [string]$label, [string]$log = '') {
-  if (!$process.WaitForExit(900000)) {
-    try { $process.Kill() } catch {}
-    throw "Owned $label process exceeded its 15 minute timeout."
-  }
   $process.WaitForExit()
   $process.Refresh()
   if ($process.ExitCode -ne 0) {

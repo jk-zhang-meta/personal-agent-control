@@ -29,6 +29,13 @@ async function fixture(t) {
   return { context, create, registry: path.join(context.stateDir, 'backup-retention.json') };
 }
 
+test('slow fingerprint can seal a complete snapshot', async t => {
+  const { create } = await fixture(t);
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => (now += 31000));
+  await create();
+});
+
 test('retention bounds terminal snapshots per mode while retaining originals, active and unknown data', async t => {
   const f = await fixture(t);
   const original = await f.create({ containsUnownedOriginals: true });

@@ -81,9 +81,9 @@ snapshot within a budget that was 8,192 entries and 3 seconds, while a real
 apply snapshot holds 15,000 to 35,000 entries (the Skill store alone exceeds
 12,000) and takes about 4 seconds to walk. Every seal failed, the record stayed
 `active`, and only sealed records are removal candidates; one machine reached
-60 snapshots and 13 GB. The budget is now 262,144 entries and 30 seconds per
-tree, each candidate gets its own budget, one run removes at most 8 snapshots,
-and human output shows retention warnings. Snapshots that predate this change
+60 snapshots and 13 GB. Each candidate may contain up to 262,144 entries. Slow
+filesystems can complete the fingerprint without an elapsed-time cutoff. One
+run removes at most 8 snapshots, and human output shows retention warnings. Snapshots that predate this change
 stay unsealed or unregistered and are still never adopted; removing them is an
 explicit owner action.
 

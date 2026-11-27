@@ -53,7 +53,7 @@ export async function installWslPlaywright(provider, execute = run) {
   await execute(runtime.command, [runtime.npm, 'install', '--prefix', runtime.prefix,
     `@playwright/mcp@${provider.version}`, '--save-exact', '--ignore-scripts', '--no-audit', '--no-fund'], {
     errorCode: 'WINDOWS_BROWSER_INSTALL_FAILED',
-    cwd: path.dirname(runtime.command), timeoutMs: 180000,
+    cwd: path.dirname(runtime.command),
   });
   const version = await execute(runtime.command, [runtime.cli, '--version'], {
     cwd: path.dirname(runtime.command), timeoutMs: 15000, errorCode: 'PROVIDER_VERSION_INVALID',

@@ -8,8 +8,8 @@ import { discoverIda } from '../src/ida-installation.mjs';
 
 test('WSL provisioning uses built-in PowerShell and argv before any Windows Node exists', async () => {
   const calls = [];
-  const execute = async (command, args) => {
-    calls.push([command, args]);
+  const execute = async (command, args, options) => {
+    calls.push([command, args, options]);
     if (command === 'wslpath') return { stdout: args[0] === '-w' ? 'C:\\Core space' : '/mnt/c/' + path.win32.basename(args[1]) };
     return { stdout: JSON.stringify({ home: 'C:\\Users\\owner', node: 'C:\\tools\\node.exe' }) };
   };
@@ -17,11 +17,14 @@ test('WSL provisioning uses built-in PowerShell and argv before any Windows Node
   const result = await provisionReverse(context, { name: 'ida' }, { execute });
   assert.equal(result.node, '/mnt/c/node.exe');
   const invocation = calls.find(([command]) => command.endsWith('powershell.exe'));
+  assert.equal(invocation[2].timeoutMs, undefined);
   assert.deepEqual(invocation[1], ['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','C:\\Core space\\src\\reverse-install.ps1','-Action','Install','-Provider','ida','-CoreRoot','C:\\Core space']);
   assert.equal(calls.some(([command]) => command.endsWith('node.exe')), false);
   calls.length = 0;
   await windowsReverseSetup(context, 'Probe', 'ida', execute);
-  assert.equal(calls.find(([command]) => command.endsWith('powershell.exe'))[1].includes('Install'), false);
+  const probe = calls.find(([command]) => command.endsWith('powershell.exe'));
+  assert.equal(probe[1].includes('Install'), false);
+  assert.equal(probe[2].timeoutMs, 15000);
   calls.length = 0;
   await provisionReverse(context, { name: 'codegraph' }, { execute });
   assert.equal(calls.length, 0);
